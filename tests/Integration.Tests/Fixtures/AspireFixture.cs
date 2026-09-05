@@ -18,6 +18,28 @@ namespace SmartSentinelEye.Integration.Tests.Fixtures;
 /// </summary>
 public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
 {
+    /// <summary>
+    /// The one RTSP source this stack serves, published by the
+    /// <c>fixture-video</c> container (spec 056) — a single H.264 clip looping
+    /// on the <c>loop</c> path, with a permissive internal user that grants the
+    /// anonymous read.
+    ///
+    /// <para>
+    /// The host is a <em>container-network DNS name</em>, so this URL is
+    /// reachable from the SFU container and <strong>not</strong> from the test
+    /// process. A test uses it by registering a camera at it and watching the
+    /// stream state, never by dialling it directly. The analogous form already
+    /// in the repository is <c>SimulatorOptions.RtspHost</c>, which defaults to
+    /// <c>camera-sim:8554</c> for the same reason.
+    /// </para>
+    ///
+    /// <para>
+    /// One spelling, in one place (spec 076, #198): a test that hard-codes the
+    /// string is a second spelling that drifts from the AppHost resource name.
+    /// </para>
+    /// </summary>
+    public const string RtspTestSourceUrl = "rtsp://fixture-video:8554/loop";
+
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromMinutes(8);
 
     private DistributedApplication? _app;

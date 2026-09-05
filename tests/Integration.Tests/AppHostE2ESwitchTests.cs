@@ -17,10 +17,19 @@ namespace SmartSentinelEye.Integration.Tests;
 /// <para>
 /// Also guards the <c>ScenarioSimulator</c> switch (#2013), which is a
 /// <em>different</em> switch on purpose. <c>E2ETests</c> means "this is the
-/// integration fixture" and also removes the Vite apps and
-/// <c>fixture-video</c>; the end-to-end job needs those and needs the
-/// simulator gone, so it cannot use <c>E2ETests</c>. The separation is not a
-/// detail a reader can infer from the guard expression, so it is asserted here.
+/// integration fixture" and also removes the Vite apps; the end-to-end job
+/// needs those and needs the simulator gone, so it cannot use <c>E2ETests</c>.
+/// The separation is not a detail a reader can infer from the guard
+/// expression, so it is asserted here.
+/// </para>
+///
+/// <para>
+/// <c>fixture-video</c> was named in that removal list and is no longer part
+/// of it (spec 076, #198). It spans both lanes: the end-to-end job needs a
+/// picture for the wall, and the integration lane now reads the same RTSP
+/// source to observe a camera reaching <c>Healthy</c>. So the <c>E2ETests</c>
+/// guard asserts both directions — the three dev-only resources absent, and
+/// <c>fixture-video</c> present.
 /// </para>
 /// </summary>
 [Trait("Category", "FixtureLogic")]
@@ -69,6 +78,13 @@ public class AppHostE2ESwitchTests
         names.ShouldNotContain("camera-sim");
         names.ShouldNotContain("scenario-simulator");
         names.ShouldNotContain("pgadmin");
+
+        names.ShouldContain(
+            "fixture-video",
+            "the integration fixture reads this resource's RTSP path to observe a camera "
+            + "reaching Healthy (spec 076, #198; the URL is AspireFixture.RtspTestSourceUrl), "
+            + "so E2ETests must leave the video source in place — it is a both-lanes "
+            + "resource, not a dev-only one.");
     }
 
     [Fact]
