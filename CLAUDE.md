@@ -83,7 +83,7 @@ user to confirm before continuing.
 | 4 | Implement | `/speckit-implement` | Code + tests; format & analyzers clean | Tests green; **new-behaviour tests observed red first, failure quoted in the PR** (ADR-0139); commits follow ADR-0030. |
 | 5 | Verify | `/verify` or explicit run/test | Verification note on the PR | Behaviour observed end-to-end. Latency cited if on SLO path. |
 | 6 | QA | `/code-review`; `/security-review` if security-sensitive | Findings addressed | All findings resolved or accepted in writing. |
-| 7 | PR | `gh pr create` with template | PR to `develop`, CI green | Reviewer approval + green CI. |
+| 7 | PR | `gh pr create` with template | PR to `develop`, CI green | Reviewer approval + green CI. In the autonomous lane the *wait* is not a gate — see below. |
 
 **Phase 3 stopped creating per-task issues after spec 028, and this file
 said otherwise for sixteen specs.** The row above now records what the repo
@@ -144,6 +144,31 @@ The **autonomous lane** runs phases 1–6 without stopping and merges at
 phase 7 on green CI. An issue enters it **only** by carrying
 `agent:ready` — on Project #13, status Todo, without `agent:blocked`.
 Absence of the label is a hold, so nothing is picked up by accident.
+
+**The lane does not wait for CI** (2026-09-05). Phase 7 opens the PR,
+starts a background watcher and takes the next issue; the PR is *parked*
+until its checks conclude. Green merges immediately, mid-phase if need
+be. Red waits for the issue in hand to reach its own ending first — this
+workflow resumes worst from a phase abandoned halfway — then gets one
+retry with the CI log, then `agent:blocked`.
+
+The green gate itself is unchanged. **Nothing merges that CI has not
+passed**; the loop simply stops standing still for the twenty-plus
+minutes the Docker integration and full-stack e2e jobs take.
+
+Two constraints make it safe rather than merely fast:
+
+- **At most three PRs parked at once.** At three, settle one before
+  taking a fourth. The cap exists so a branch that cannot rebase is
+  found in hours, not at the end of a run.
+- **Rebase every parked branch after every merge**, not once at the end
+  — `git fetch origin && git rebase origin/develop && git push
+  --force-with-lease`. Rebase-merge renames the SHAs (ADR-0087), so a
+  parked branch still carries the **old copies** of whatever just
+  landed, and they replay as conflicts against themselves.
+
+A run that ends with PRs still parked has ended normally. Report their
+numbers; never report a parked PR as delivered.
 
 - `/next-issue` — deliver one eligible issue end to end.
 - `/deliver-board` — repeat until none remain.

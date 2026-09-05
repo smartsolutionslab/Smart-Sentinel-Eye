@@ -217,25 +217,61 @@ Fill the template completely. The PR body must contain:
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ```
 
-Then wait for CI and read the **conclusions**, not a watcher's exit —
-`gh run watch` exits on cancellation too, and may not even be watching
-the PR's tip:
+**Do not wait for CI.** Start the watcher in the background and hand the
+issue back to `/deliver-board` as **parked**. CI here runs the full check
+set including Docker integration tests and a full-stack Playwright e2e —
+tens of minutes in which the loop would otherwise be doing nothing.
 
 ```sh
-gh pr checks <PR> --watch --fail-fast
+gh pr checks <PR> --watch --fail-fast   # in the background; do not block on it
+```
+
+The issue's own work is finished when the PR is open. Parking is the
+normal ending of `/next-issue`, not an exception.
+
+### When the watcher reports
+
+Read the **conclusions**, not the watcher's exit — `gh pr checks --watch`
+exits 0 on **cancelled** too, and may not even have been watching the
+PR's tip:
+
+```sh
 gh pr checks <PR> --json name,state,bucket -q '.[] | "\(.bucket)\t\(.state)\t\(.name)"'
+gh pr view <PR> --json headRefOid -q .headRefOid    # must equal the branch tip you pushed
 ```
 
 Green means **every** check concluded successfully. Cancelled is not
 green. Skipped-but-required is not green.
 
-- **Green** → `gh pr merge <PR> --rebase --admin --delete-branch`, then
-  confirm the issue actually closed, then move the board card to **Done**
+- **Green** → merge **immediately**, even mid-phase on another issue:
+  `gh pr merge <PR> --rebase --admin --delete-branch`, then confirm the
+  issue actually closed, then move the board card to **Done**
   (`98236657`). Standing authorization covers this merge; do not ask.
-- **Red** → this is a phase failure. Retry once (a fresh engineer
-  subagent, given the CI log). Before that, **download the failing job
-  log** — a passing re-run flips the whole run to success and erases the
-  failure from history.
+  Then remove the worktree and **`git branch -D`** the local branch —
+  `--delete-branch` cannot delete a branch a worktree still holds, and
+  it says so rather than failing.
+- **Red** → **finish the issue in hand first.** Do not abandon a phase
+  mid-flight; this workflow resumes worst from that state. When the
+  current issue reaches its own PR or its blocked exit, hand the CI log
+  to a fresh engineer subagent, retry **once**, then `agent:blocked` as
+  below. Before any retry, **download the failing job log** — a passing
+  re-run flips the whole run to success and erases the failure from
+  history.
+
+### Rebasing a parked branch after a merge
+
+Every parked branch was cut from a `develop` that has since moved. Rebase
+it before its own CI can mean anything:
+
+```sh
+git fetch origin && git rebase origin/develop     # in that branch's worktree
+git push --force-with-lease
+```
+
+**Rebase-merge renames the SHAs**, so a parked branch still carries the
+*old copies* of any commit that has since landed — they will replay as
+conflicts against themselves. Rebase after each merge, not once at the
+end.
 
 ## Blocked — the exit that keeps the loop alive
 
@@ -254,5 +290,6 @@ to the next issue.
 ## Report
 
 Five lines, no more: issue, branch, what shipped, how it was verified,
-PR/merge or blocked-with-reason. The next issue must not inherit your
-context — say it plainly and stop.
+and the ending — **PR parked (with its number)**, merged, or
+blocked-with-reason. The next issue must not inherit your context — say
+it plainly and stop.
