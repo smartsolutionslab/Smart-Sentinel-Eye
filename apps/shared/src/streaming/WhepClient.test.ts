@@ -548,21 +548,101 @@ describe('WhepClient', () => {
       });
 
       /**
-       * GREEN today, and kept for the direction the fix must not trade away.
-       * The bare audio track attaches first, then the SFU stream replaces it
-       * wholesale — the picture arrives, so the operator-visible fact holds,
-       * albeit for a reason no one designed.
+       * The same meeting from the other side, and no longer green by luck. This
+       * order used to pass because the SFU stream was assigned wholesale over
+       * whatever was attached: the picture arrived, and the audio that arrived
+       * first was silently dropped on the way. Asserting only `toContain('video')`
+       * could not tell the two apart, so it asserts both kinds now — and that
+       * `srcObject` is still the stream the SFU supplied, because carrying the
+       * session tracks into it must not become substituting a synthesised copy
+       * for it.
        */
-      it('Keeps the picture when the audio track arrived first without a stream and the video track carried one', async () => {
+      it('Keeps both the picture and the audio when the audio track arrived first without a stream', async () => {
         const pc = await connectedSession();
         const sfuStream = new FakeMediaStream([aTrack('video')]) as unknown as MediaStream;
 
         pc.fireTrack(aTrack('audio'));
         pc.fireTrack(aTrack('video'), [sfuStream]);
 
-        expect(attachedKinds(videoEl), 'a picture arriving after a bare track must reach the element').toContain(
-          'video',
+        expect(attachedKinds(videoEl), 'a bare audio track must survive the SFU stream arriving after it').toEqual(
+          expect.arrayContaining(['video', 'audio']),
         );
+        expect(videoEl.srcObject, 'the SFU stream must be merged into, not replaced by a synthesised one').toBe(
+          sfuStream,
+        );
+      });
+    });
+
+    /**
+     * A reconnect attaching to the element the previous session left behind.
+     *
+     * <p>
+     * <b>The retry path constructs a new client against the same element.</b>
+     * `useWhepSession` builds a fresh `WhepClient` and hands it the same
+     * `videoEl` (`useWhepSession.ts`, the `new WhepClient` inside the connect
+     * effect), and nothing in this repo ever clears `srcObject`. So when the
+     * first bare track of a reconnect arrives, the element is still holding the
+     * dead session's stream, whose tracks teardown has already stopped.
+     * </p>
+     *
+     * <p>
+     * <b>Why that is the hole worth guarding.</b> Seeding the session stream
+     * from `srcObject` — a shorter fix than the per-call local, and one that
+     * passes every other test in this file — splices the live track in beside
+     * stopped ones, including a stale video track a `&lt;video&gt;` may select
+     * over the live one. That is the black tile #2108 set out to remove,
+     * reached from the other side and this time with the tile reporting Live
+     * over a frozen last frame.
+     * </p>
+     *
+     * <p>
+     * Both leftovers are covered, because a session ends holding one of two
+     * different streams: the one this client synthesised for bare tracks, or
+     * the one the SFU supplied with an `msid`.
+     * </p>
+     */
+    describe('a reconnect against the element the previous session left attached', () => {
+      async function aConnectedClient(): Promise<WhepClient> {
+        fetchMock.mockResolvedValue(new Response(answerSdp, { status: 200 }));
+        const client = new WhepClient({
+          whepUrl: 'http://mediamtx.test/cam-x/whep',
+          getToken: async () => 'token',
+        });
+        await client.connect(videoEl);
+        return client;
+      }
+
+      it('Attaches only the new track when the closed session left a stream built here', async () => {
+        const stale: FakeTrack = { ...aTrack('video'), id: 'video-of-the-closed-session' };
+        const previous = await aConnectedClient();
+        FakePeerConnection.lastInstance().fireTrack(stale);
+        previous.close();
+
+        await aConnectedClient();
+        const live: FakeTrack = { ...aTrack('video'), id: 'video-of-the-reconnected-session' };
+        FakePeerConnection.lastInstance().fireTrack(live);
+
+        expect(attachedTracks(videoEl), 'the reconnected session must not adopt the stopped track').not.toContain(
+          stale,
+        );
+        expect(attachedTracks(videoEl)).toEqual([live]);
+      });
+
+      it('Attaches only the new track when the closed session left the SFU stream', async () => {
+        const stale: FakeTrack = { ...aTrack('video'), id: 'video-of-the-closed-session' };
+        const deadSfuStream = new FakeMediaStream([stale]) as unknown as MediaStream;
+        const previous = await aConnectedClient();
+        FakePeerConnection.lastInstance().fireTrack(aTrack('video'), [deadSfuStream]);
+        previous.close();
+
+        await aConnectedClient();
+        const live: FakeTrack = { ...aTrack('audio'), id: 'audio-of-the-reconnected-session' };
+        FakePeerConnection.lastInstance().fireTrack(live);
+
+        expect(videoEl.srcObject, 'the dead SFU stream must not become the reconnected session stream').not.toBe(
+          deadSfuStream,
+        );
+        expect(attachedTracks(videoEl), 'the stopped picture must not sit beside the live track').toEqual([live]);
       });
     });
   });
