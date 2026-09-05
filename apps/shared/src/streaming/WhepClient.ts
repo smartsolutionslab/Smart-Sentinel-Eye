@@ -48,23 +48,34 @@ export class WhepClient {
     pc.onconnectionstatechange = () => this.opts.onConnectionStateChange?.(pc.connectionState);
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.addTransceiver('audio', { direction: 'recvonly' });
-    // Holds the tracks of an answer that carried no `msid`, for this call only:
-    // a reconnect builds its own, so a new session never inherits the previous
-    // one's tracks. Created lazily, so a MediaMTX that does send `msid` never
-    // constructs one (issue #2108).
+    // The stream this session has attached to the element: the one the SFU
+    // supplied, or one built here for tracks that arrived without an `msid`.
+    // Held for this call only — a reconnect runs a fresh `connect` against the
+    // same element, and reading `srcObject` back instead would splice the
+    // previous session's already-stopped tracks into the new one.
     let sessionStream: MediaStream | null = null;
     pc.ontrack = (event) => {
       const stream = event.streams[0];
       if (stream) {
+        // `msid` is per-`m=`-section, so one answer can mix the two shapes.
+        // Whatever this session already attached moves into the stream being
+        // attached, because assigning over it would drop those tracks — the
+        // same eviction the branch below avoids, met from the other side.
+        if (sessionStream !== null && sessionStream !== stream) {
+          for (const attached of sessionStream.getTracks()) {
+            stream.addTrack(attached);
+          }
+        }
+        sessionStream = stream;
         videoEl.srcObject = stream;
         return;
       }
       // `msid` is negotiated, not guaranteed. Dropping the track here leaves a
       // black tile that still labels itself Live, because `live` follows the
-      // connection state — so the track is attached anyway, under one stream
-      // per session. Two recvonly transceivers deliver two events in an order
-      // nobody controls; a fresh stream per event would let the second evict
-      // the first.
+      // connection state — so the track is attached anyway, joining whatever
+      // this session already attached. Two recvonly transceivers deliver two
+      // events in an order nobody controls; a fresh stream per event would let
+      // the second evict the first.
       logResilienceEvent('stream', 'track-without-stream', { kind: event.track.kind });
       sessionStream ??= new MediaStream();
       sessionStream.addTrack(event.track);
