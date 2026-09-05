@@ -40,9 +40,11 @@ public static partial class EventsEndpoints
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             // 409 is the idempotency guard's, not the write's: this route inserts,
-            // so the write itself conflicts with nothing — but a retry arriving while
-            // the first request with the same Idempotency-Key is still in flight is
-            // refused IDEMPOTENT_REQUEST_IN_PROGRESS (ADR-0142).
+            // so the write itself conflicts with nothing — and a retry arriving
+            // while the first request with the same Idempotency-Key is still
+            // running normally waits for it and replays its 201. Only when that
+            // first request outlives IdempotentRequest's ~5 s poll window is the
+            // retry refused IDEMPOTENT_REQUEST_IN_PROGRESS (ADR-0142).
             .ProducesProblem(StatusCodes.Status409Conflict)
             // Spec 020: 429 still means overload, but the thing being bounded is
             // now the number of concurrent writes rather than a queue these
