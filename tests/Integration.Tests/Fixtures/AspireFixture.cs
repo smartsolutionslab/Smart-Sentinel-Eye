@@ -198,6 +198,19 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
                 .WaitForResourceAsync("mediamtx", KnownResourceStates.Running, cts.Token)
                 .ConfigureAwait(false);
 
+            // The RTSP source behind RtspTestSourceUrl (spec 076, #198). No
+            // WaitOnResourceUnavailable: that matters when waiting across a
+            // restart, where the default gives up on the very transition it
+            // should watch. This is a first boot of a resource that starts
+            // once, like the nine waits around it. No HTTP probe either --
+            // fixture-video.yml declares no `api:` block, so there is nothing
+            // to poll short of opening an RTSP session, which the tests do
+            // transitively; Running plus a test's own settle budget absorbs
+            // FFmpeg's start.
+            await _app.ResourceNotifications
+                .WaitForResourceAsync("fixture-video", KnownResourceStates.Running, cts.Token)
+                .ConfigureAwait(false);
+
             await _app.ResourceNotifications
                 .WaitForResourceAsync("stream-distribution", KnownResourceStates.Running, cts.Token)
                 .ConfigureAwait(false);
