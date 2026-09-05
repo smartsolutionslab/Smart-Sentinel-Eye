@@ -23,8 +23,18 @@ namespace SmartSentinelEye.Architecture.Tests;
 /// whose <c>ApiError.Status</c> is <c>HttpStatusCode.Conflict</c>;
 /// <c>ApiErrorResults.ToProblem</c> renders that status onto the wire. No race
 /// is involved — a name already taken, a stale <c>If-Match</c> version
-/// (ADR-0113 Layer 1), a terminal state. <b>This is the mechanism on 26 of the
+/// (ADR-0113 Layer 1), a terminal state. <b>This is the mechanism on 25 of the
 /// 33 mappings</b>, and it is the one the earlier register did not name.
+/// <b>Re-measured on 2026-09-05; this figure read 26 until then</b>, and so does
+/// the body of the commit that claimed to have corrected the class doc's false
+/// figures. Counted three ways, because a number in a document about wrong
+/// numbers should not rest on one: the word <c>refusal</c> occurs 25 times in
+/// <see cref="CanAnswerConflict"/>; the four rows that lack it are exactly the
+/// four whose mechanism string says <c>ONLY</c>, and 29 − 4 = 25; and 25 is the
+/// number of <c>.ProducesProblem(StatusCodes.Status409Conflict)</c> call sites
+/// that stood under <c>src/*/Api</c> before this branch — a set that coincides
+/// with the refusal rows exactly, because the four declarations this branch adds
+/// are those same four <c>ONLY</c> routes.
 /// </item>
 /// <item>
 /// <b>Lost update.</b> <c>ConcurrencyConflictExceptionHandler</c> turns EF
@@ -149,9 +159,13 @@ namespace SmartSentinelEye.Architecture.Tests;
 /// asserted below, so it stops being an assumption. If one ever does, the guard
 /// under-reads. It reads <em>masked</em> source: comments are blanked before
 /// anything is matched, so a <c>.ProducesProblem(StatusCodes.Status409Conflict)</c>
-/// commented out inside a chain is no longer credited, and string literals are
-/// stepped over when the chain's end is found, so an unbalanced bracket inside
-/// a <c>WithSummary</c> can no longer run one chain into the next. The masker
+/// commented out inside a chain is no longer credited, and string <em>and char</em>
+/// literals are stepped over when the chain's end is found, so neither an
+/// unbalanced bracket inside a <c>WithSummary</c> nor a bracket written as
+/// <c>'('</c> can run one chain into the next. Those are the same defect reached
+/// two ways, and the second was found only after the first was believed to have
+/// closed it — so both are held by constructed counterexamples below rather than
+/// by the census, which would have had to ban a legal form to notice. The masker
 /// handles only the string and comment forms these files use — no verbatim, raw
 /// or interpolated-with-escape literals — and <em>that</em> is asserted below
 /// too, rather than assumed.
@@ -237,23 +251,52 @@ public class ConcurrencyConflictDeclarationTests
     /// </para>
     ///
     /// <para>
+    /// <b>A row names mechanisms sufficient to reach the status, not every
+    /// mechanism that reaches it.</b> Read it as <em>at least these</em>. Review
+    /// found the unique-race column incomplete — the two <c>draft</c> rows race
+    /// on <c>ux_layout_revisions_number</c> / <c>ux_overlay_revisions_number</c>,
+    /// and no row cited it — and that gap is now closed, but nothing here can
+    /// promise there is not another: a route's mechanisms are settled three or
+    /// four hops away, and completeness across four mechanisms and twenty-nine
+    /// routes is not something a reader can check. <b>No assertion in this file
+    /// depends on the strings.</b> They are carried into the two partition
+    /// failure messages by <see cref="MechanismFor"/> and
+    /// <see cref="ReasonFor"/>, so an incomplete row makes a failure less
+    /// informative and can never make a passing route wrong — the classification
+    /// turns on <em>whether any</em> mechanism reaches the status, and one
+    /// sufficient mechanism settles that. A <see cref="CannotAnswerConflict"/>
+    /// reason is held to the opposite and stricter standard: it has to clear all
+    /// four.
+    /// </para>
+    ///
+    /// <para>
     /// <b>Three rows carry one mechanism only, and they are the spec's defect.</b>
     /// <c>POST /cameras/{camera:guid}/retire</c>, <c>DELETE /devices/{clientId}</c>
     /// and <c>DELETE /kiosks/{clientId}</c> reach nothing but the lost update —
-    /// <c>RetireCameraErrors</c> declares no <c>Conflict</c>, and there is no
-    /// <c>DisableDeviceErrors</c> or <c>DisableKioskErrors</c> file at all. That
-    /// is <em>why</em> those three were the omissions: every other mutating route
-    /// had a second, deterministic reason to declare the status, and these had
-    /// only the race nobody was thinking about.
+    /// none of <c>RetireCameraErrors</c>, <c>DisableDeviceError</c> or
+    /// <c>DisableKioskError</c> carries <c>HttpStatusCode.Conflict</c>. The
+    /// absence of a <c>Conflict</c> is the evidence, not the absence of a file:
+    /// the two Disable error hierarchies do exist, inside
+    /// <c>DisableDeviceCommand.cs</c> and <c>DisableKioskCommand.cs</c> rather
+    /// than in files of their own, and an earlier draft of this register argued
+    /// from a filename that would have gone stale the moment someone moved them.
+    /// That is <em>why</em> those three were the omissions: every other mutating
+    /// route had a second, deterministic reason to declare the status, and these
+    /// had only the race nobody was thinking about.
     /// </para>
     ///
     /// <para>
     /// <b>A fourth row carries one mechanism only, and it is the review's
     /// finding.</b> <c>POST /events/manual</c> refuses nothing with a
-    /// <c>Conflict</c>, no unique index covers an event, and it inserts rather
-    /// than updates — but it is wired to <c>IdempotentRequest.ExecuteCreateAsync</c>
-    /// against a registered <c>IdempotencyStore&lt;EventIngestionDbContext&gt;</c>,
-    /// so two concurrent calls sharing a key and a caller make the second answer
+    /// <c>Conflict</c> and inserts rather than updates; <c>events</c> does carry
+    /// a unique constraint in its composite key <c>(Fab, Id, IngestedAt)</c>, but
+    /// <c>Id</c> is a fresh Guid v7 and <c>StoreOrRefuseAsync</c> answers 503 to
+    /// every non-cancel exception anyway, so no database exception on that route
+    /// survives to be rendered as a 409. It is wired to
+    /// <c>IdempotentRequest.ExecuteCreateAsync</c> against a registered
+    /// <c>IdempotencyStore&lt;EventIngestionDbContext&gt;</c>, and that 409 is
+    /// <em>returned</em> rather than thrown — outside the catch — so two
+    /// concurrent calls sharing a key and a caller make the second answer
     /// <c>409 IDEMPOTENT_REQUEST_IN_PROGRESS</c>. It is the only one of the nine
     /// keyed creates and rotations whose chain does not say so.
     /// </para>
@@ -286,8 +329,13 @@ public class ConcurrencyConflictDeclarationTests
         new(
             "EventIngestion POST /events/manual",
             "idempotency ONLY — IngestEventCommandHandler calls events.Add(@event) then SaveAsync and "
-            + "refuses nothing with a Conflict, and no unique index covers an event; the 409 is "
-            + "IdempotentRequest.ExecuteCreateAsync answering IDEMPOTENT_REQUEST_IN_PROGRESS"),
+            + "refuses nothing with a Conflict. The events table does carry a unique constraint, its "
+            + "composite key (Fab, Id, IngestedAt) at EventConfiguration.cs:30, but it is unreachable "
+            + "(Id is a fresh Guid v7) and moot either way: StoreOrRefuseAsync catches every non-cancel "
+            + "exception and answers 503, so no database exception on this path ever reaches the "
+            + "handlers that render 409. The 409 is IdempotentRequest.ExecuteCreateAsync answering "
+            + "IDEMPOTENT_REQUEST_IN_PROGRESS, which is returned rather than thrown and so is outside "
+            + "that catch"),
         new(
             "EventIngestion POST /webhook-integrations/",
             "refusal (RegisterWebhookIntegrationErrors); unique race (ux_webhook_integrations_name); no "
@@ -301,16 +349,20 @@ public class ConcurrencyConflictDeclarationTests
             + "idempotency"),
         new(
             "Identity DELETE /devices/{clientId}",
-            "lost update ONLY — there is no DisableDeviceErrors file, so DisableDeviceCommandHandler's "
-            + "load, client.Disable(clock) and SaveAsync is the whole of this route's 409"),
+            "lost update ONLY — DisableDeviceError declares DeviceNotFound (404) and KeycloakUnavailable "
+            + "(502) and nothing carrying HttpStatusCode.Conflict (DisableDeviceCommand.cs), so "
+            + "DisableDeviceCommandHandler's load, client.Disable(clock) and SaveAsync is the whole of "
+            + "this route's 409"),
         new(
             "Identity POST /kiosks/enroll",
             "refusal (EnrollKioskErrors); unique race (ux_registered_clients_clientid_active); "
             + "idempotency"),
         new(
             "Identity DELETE /kiosks/{clientId}",
-            "lost update ONLY — there is no DisableKioskErrors file, so DisableKioskCommandHandler's "
-            + "load, client.Disable(clock) and SaveAsync is the whole of this route's 409"),
+            "lost update ONLY — DisableKioskError declares KioskNotFound (404) and KeycloakUnavailable "
+            + "(502) and nothing carrying HttpStatusCode.Conflict (DisableKioskCommand.cs), so "
+            + "DisableKioskCommandHandler's load, client.Disable(clock) and SaveAsync is the whole of "
+            + "this route's 409"),
         new(
             "Identity POST /webhook-integrations/{name}/rotate",
             "refusal (RotateWebhookClientCommand's stale check); lost update on the branch that rotates "
@@ -321,7 +373,10 @@ public class ConcurrencyConflictDeclarationTests
             + "ix_layouts_fab_name is not unique, so a concurrent create is not refused by the index"),
         new(
             "LayoutComposition POST /layouts/{layoutIdentifier:guid}/draft",
-            "refusal (BranchDraftRevisionErrors); lost update"),
+            "refusal (BranchDraftRevisionErrors); lost update; unique race "
+            + "(ux_layout_revisions_number — Layout.BranchDraft adds a revision numbered "
+            + "MaxRevisionNumber().Next(), so two concurrent branches of one layout compute the same "
+            + "number and the second violates the index)"),
         new(
             "LayoutComposition POST /layouts/{layoutIdentifier:guid}/revisions/{revisionNumber:int}/publish",
             "refusal (PublishRevisionErrors); lost update; unique race "
@@ -341,7 +396,10 @@ public class ConcurrencyConflictDeclarationTests
             + "ix_overlays_name is not unique"),
         new(
             "OverlayDesigner POST /overlays/{overlayIdentifier:guid}/draft",
-            "refusal (BranchDraftRevisionErrors); lost update"),
+            "refusal (BranchDraftRevisionErrors); lost update; unique race "
+            + "(ux_overlay_revisions_number — Overlay.BranchDraft adds a revision numbered "
+            + "MaxRevisionNumber().Next(), so two concurrent branches of one overlay compute the same "
+            + "number and the second violates the index)"),
         new(
             "OverlayDesigner POST /overlays/{overlayIdentifier:guid}/revisions/{revisionNumber:int}/publish",
             "refusal (PublishRevisionErrors); lost update; unique race "
@@ -390,8 +448,11 @@ public class ConcurrencyConflictDeclarationTests
         new(
             "EventIngestion POST /events/webhook/{integrationName}",
             "it reads the integration to authenticate the delivery and never writes it back, then "
-            + "inserts an event; no error on that path carries HttpStatusCode.Conflict, no unique index "
-            + "covers an event, and this route reads no Idempotency-Key"),
+            + "inserts an event; no error on that path carries HttpStatusCode.Conflict, this route reads "
+            + "no Idempotency-Key, and the only unique constraint on events — the composite key "
+            + "(Fab, Id, IngestedAt) — is both unreachable on a fresh Guid v7 and moot, because "
+            + "StoreOrRefuseAsync catches every non-cancel exception and answers 503 before any "
+            + "exception handler could render a 409"),
         new(
             "StreamDistribution POST /streams/authorize",
             "AuthorizeWhepCommandHandler validates a forwarded token against a read-only stream lookup "
@@ -642,9 +703,15 @@ public class ConcurrencyConflictDeclarationTests
         walked.ShouldBe(
             swept,
             $"the mapping walk found {walked} 409 declarations inside mutating mapping chains; a flat "
-            + $"sweep of src/*/Api found {swept}. The difference sits somewhere this reader does not "
-            + "look — outside a fluent chain, or on a read mapping. Put it in the mapping's own chain, or "
-            + "teach the reader the shape.");
+            + $"sweep of src/*/Api found {swept}. The two directions have different causes and this "
+            + "message used to give only the first, which is how a real defect was once diagnosed as its "
+            + "opposite. Fewer walked than swept: a declaration sits somewhere this reader does not "
+            + "look — outside a fluent chain, or on a read mapping; put it in the mapping's own chain, or "
+            + "teach the reader the shape. More walked than swept: a chain ran past its own semicolon "
+            + "and counted its neighbour's declaration a second time, so some endpoint is passing the "
+            + "partition on a 409 that belongs to the mapping below it; look for whatever leaves "
+            + "StatementEnd's bracket depth positive — an unbalanced bracket inside a string, a bracket "
+            + "written as a char literal, a literal form the masker was never taught.");
     }
 
     /// <summary>
@@ -803,6 +870,61 @@ public class ConcurrencyConflictDeclarationTests
             + "the mapping below it.");
     }
 
+    /// <summary>
+    /// <b>A bracket written as a char literal cannot run one chain into the next
+    /// either.</b> The same defect as the test above, reached through a form the
+    /// masker's assumption census does not check: <c>'('</c> is one bracket with
+    /// no partner, so <c>StatementEnd</c>'s depth stayed positive, the chain ran
+    /// past its own <c>;</c>, and the mapping was credited with the next
+    /// mapping's 409 — found in review on 2026-09-05, after the string fix was
+    /// believed to have closed the hole.
+    ///
+    /// <para>
+    /// Two forms, because the escape is its own trap: <c>'\''</c> closes on its
+    /// escaped quote and reopens on the real one unless the backslash is
+    /// honoured, and then runs to the next quote anywhere in the file. Both are
+    /// legal C# that could arrive in an endpoint file tomorrow — <c>' '</c>,
+    /// <c>','</c> and <c>'\t'</c> are already there — which is why this is a
+    /// step-over in the reader rather than a ban in
+    /// <see cref="UnmaskableLiteralForms"/>: a ban detects the shape and still
+    /// leaves the count wrong.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("'('", "an unpartnered opening bracket")]
+    [InlineData("'\\''", "an escaped quote, which reopens the literal if the backslash is ignored")]
+    public void A_char_literal_does_not_run_one_chain_into_the_next(string literal, string why)
+    {
+        string source =
+            "writes.MapPost(\"/{camera:guid}/retire\", Retire)\n"
+            + $"    .WithName(NameOf({literal}))\n"
+            + "    .ProducesProblem(StatusCodes.Status404NotFound);\n"
+            + "writes.MapPost(\"/\", Register)\n"
+            + "    .ProducesProblem(StatusCodes.Status409Conflict);\n";
+
+        string masked = MaskComments(source);
+        int end = StatementEnd(masked, 0);
+
+        end.ShouldBeGreaterThan(
+            0,
+            $"the retire chain's terminating semicolon was not found at all past {literal} — {why}. "
+            + "Every mapping in a file like this would be reported as unreadable.");
+
+        string chain = masked[..end];
+
+        chain.ShouldNotContain(
+            "MapPost(\"/\"",
+            Case.Sensitive,
+            $"the retire chain swallowed the mapping after it past {literal} — {why}. A char literal is "
+            + "the second way a route borrows its neighbour's declarations while its own document says "
+            + "nothing of the kind. The walked-versus-swept arithmetic is only a backstop for it: it "
+            + "reports a number rather than the route, which is why the shape is constructed here.");
+
+        ConflictDeclaration.IsMatch(chain).ShouldBeFalse(
+            "the retire chain declares only 404, and must not be credited with the 409 that belongs to "
+            + "the register mapping below it.");
+    }
+
     // ---- reading the surface ------------------------------------------------
 
     private static bool Same(string left, string right) =>
@@ -914,7 +1036,21 @@ public class ConcurrencyConflictDeclarationTests
     /// the chain runs past its own <c>;</c> into the next mapping and inherits
     /// whatever that one declares — a route can be made to look compliant by
     /// borrowing its neighbour's 409. Comments are already blank by the time
-    /// this runs, so only strings are left to step over.
+    /// this runs, so strings and <b>char literals</b> are what is left to step
+    /// over.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Char literals were the same hole reached a second way, and the string
+    /// fix did not close it</b> (found in review, 2026-09-05). A <c>'('</c>
+    /// written as a char literal — in a <c>Split</c>, a <c>Trim</c>, an
+    /// <c>IndexOf</c> — is one bracket with no partner, so the depth stayed
+    /// positive exactly as an unbalanced summary had, and the chain swallowed the
+    /// mapping below it along with its 409. Banning the form would only have
+    /// detected it; stepping over it is what makes the depth count right. The
+    /// escape is honoured because <c>'\''</c> otherwise closes on its own escaped
+    /// quote and reopens on the real one, running away to the next quote in the
+    /// file.
     /// </para>
     /// </summary>
     private static int StatementEnd(string text, int from)
@@ -927,6 +1063,10 @@ public class ConcurrencyConflictDeclarationTests
             if (c == '"')
             {
                 i = EndOfStringLiteral(text, i);
+            }
+            else if (c == '\'')
+            {
+                i = EndOfCharLiteral(text, i);
             }
             else if (c is '(' or '[' or '{')
             {
@@ -964,6 +1104,35 @@ public class ConcurrencyConflictDeclarationTests
             {
                 return i;
             }
+        }
+
+        return text.Length - 1;
+    }
+
+    /// <summary>
+    /// The index of the quote closing the char literal opened at
+    /// <paramref name="open"/>. A backslash consumes the character after it, so
+    /// <c>'\''</c> and <c>'\\'</c> close where they really close rather than on
+    /// their own escape; a newline ends the search for the same reason it ends
+    /// <see cref="EndOfStringLiteral"/>'s.
+    /// </summary>
+    private static int EndOfCharLiteral(string text, int open)
+    {
+        int i = open + 1;
+        while (i < text.Length)
+        {
+            if (text[i] == '\\')
+            {
+                i += 2;
+                continue;
+            }
+
+            if (text[i] is '\'' or '\n')
+            {
+                return i;
+            }
+
+            i++;
         }
 
         return text.Length - 1;

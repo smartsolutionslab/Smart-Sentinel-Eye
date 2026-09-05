@@ -81,7 +81,7 @@ awk '/\.Map(Post|Put|Patch|Delete)\(/ {c=1; b=""; s=FNR; v=$0}
 |---:|---|---|---|
 | 1 | `POST /rules/{name}/dry-run` | no persistence — mapped on the **read** group, "nothing is persisted"; `DryRunRuleErrors` is 404/400 only | **no** |
 | 2 | `POST /events/manual` | `IngestEventCommandHandler`: `events.Add(@event)` then `SaveAsync` — but the endpoint wraps it in `IdempotentRequest.ExecuteCreateAsync` | **yes** — idempotency in progress |
-| 3 | `POST /events/webhook/{integrationName}` | reads the integration to authenticate, then the same insert-only path; no `Conflict` error, no unique index on events, **no `Idempotency-Key`** | **no** |
+| 3 | `POST /events/webhook/{integrationName}` | reads the integration to authenticate, then the same insert-only path; no `Conflict` error, **no `Idempotency-Key`**, and the one unique constraint on `events` — its composite key `(Fab, Id, IngestedAt)` — is unreachable on a fresh Guid v7 and moot besides, since `StoreOrRefuseAsync` answers 503 to every non-cancel exception | **no** |
 | 4 | `POST /streams/authorize` | `AuthorizeWhepCommandHandler`: validates a forwarded token against a read-only stream lookup; no `SaveAsync`; `AuthorizeWhepErrors` is 401/403 only | **no** |
 | 5 | `POST /streams/kiosk-latency` | records a meter value; nothing enters a domain model | **no** |
 | 6 | `POST /cameras/{camera}/retire` | `RetireCameraCommandHandler`: load, `retiring.Retire(...)`, `SaveAsync` | **yes** — lost update |
@@ -96,9 +96,15 @@ delete — makes EF's affected-row count disagree and the shared handler answers
 `409 AGGREGATE_VERSION_STALE`. None of the three declares it.
 
 **And these three are the only routes that reach the lost update *alone*.** That
-is why they were the omissions rather than a random three: `RetireCameraErrors`
-declares no `Conflict`, and there is no `DisableDeviceErrors` or
-`DisableKioskErrors` file at all. Every other mutating route already had a
+is why they were the omissions rather than a random three: none of
+`RetireCameraErrors`, `DisableDeviceError` or `DisableKioskError` carries
+`HttpStatusCode.Conflict`. **The evidence is the absent status, not an absent
+file** — an earlier draft of this section argued that "there is no
+`DisableDeviceErrors` file at all", which is true and misleading: the two
+`Disable` error hierarchies exist, inside `DisableDeviceCommand.cs` and
+`DisableKioskCommand.cs`, declaring only `NotFound` and `BadGateway`. Anyone who
+later moved them into files of those names would have read the argument as
+falsified when nothing had changed. Every other mutating route already had a
 second, deterministic reason to declare `409` — so its author declared it
 without ever needing to think about the race, and these three had only the race.
 
@@ -117,12 +123,41 @@ being fixed.**
 answer 409*. So the question a `Produces` chain can be judged against is
 whether **anything** on the route produces the status. Four things do:
 
-| # | Mechanism | Produced by | Code | Rows |
+| # | Mechanism | Produced by | Code | Rows citing it |
 |---:|---|---|---|---:|
-| 1 | **Handler refusal** | a command handler returns a `Result` failure whose `ApiError.Status` is `HttpStatusCode.Conflict`; `ApiErrorResults.ToProblem` renders it (`ApiErrorResults.cs:19`) | the handler's own | **26** |
+| 1 | **Handler refusal** | a command handler returns a `Result` failure whose `ApiError.Status` is `HttpStatusCode.Conflict`; `ApiErrorResults.ToProblem` renders it (`ApiErrorResults.cs:19`) | the handler's own | **25** |
 | 2 | **Lost update** | `ConcurrencyConflictExceptionHandler` on `DbUpdateConcurrencyException` | `AGGREGATE_VERSION_STALE` | **20** |
-| 3 | **Unique-index race** | `UniqueConstraintExceptionHandler` on a unique violation (`AuthenticationDefaults.cs:87`) | `RESOURCE_ALREADY_EXISTS` | **7** |
+| 3 | **Unique-index race** | `UniqueConstraintExceptionHandler` on a unique violation (`AuthenticationDefaults.cs:87`) | `RESOURCE_ALREADY_EXISTS` | **11** |
 | 4 | **Idempotency in progress** | `IdempotentRequest` **returns** `Results.Problem(… 409)` (`IdempotentRequest.cs:94`) — not an exception, so nothing catches it | `IDEMPOTENT_REQUEST_IN_PROGRESS` | **9** |
+
+**These are counts of rows that *cite* the mechanism, not of routes it can
+reach** — a register row names mechanisms sufficient to produce the status, not
+every mechanism that produces it, so rows 2 and 3 here are lower bounds. (Row 1
+is not: the four register entries lacking `refusal` each say so explicitly with
+`ONLY`, and the four routes that cannot answer at all clear all four
+mechanisms.) Two of these counts were wrong until 2026-09-05 and are corrected
+here, re-measured against `CanAnswerConflict`:
+
+- **Refusal was recorded as 26; it is 25.** Counted three ways: the word
+  `refusal` occurs 25 times in the register; the four rows that lack it are
+  exactly the four whose mechanism string says `ONLY` — retire, `events/manual`,
+  `DELETE /devices/{clientId}`, `DELETE /kiosks/{clientId}` — and 29 − 4 = 25;
+  and 25 `.ProducesProblem(StatusCodes.Status409Conflict)` call sites stood under
+  `src/*/Api` before this branch, a set that coincides with the refusal rows
+  exactly, because the four declarations this branch adds are those same four
+  `ONLY` routes. The same wrong 26 is in the body of commit `316de843` — the
+  commit whose message announces that the class doc's false figures were
+  corrected against a re-measurement. Left standing rather than reworded, so
+  that this correction is a record rather than a quiet rewrite of one.
+- **Unique race was recorded as 7; the register as written said 9, and it is now
+  11.** 9 is the measurement: `unique race` occurs 11 times, of which 2 are `NOT
+  a unique race`. 11 is after review completed the column — `POST
+  /layouts/{…}/draft` and `POST /overlays/{…}/draft` race on
+  `ux_layout_revisions_number` / `ux_overlay_revisions_number`
+  (`LayoutConfiguration.cs:190`, `OverlayConfiguration.cs:150`), because
+  `BranchDraft` adds a revision numbered `MaxRevisionNumber().Next()` and two
+  concurrent branches compute the same number. No classification moves: both
+  routes were already in the can-answer set on refusal and lost update.
 
 The rows overlap: most routes carry two or three. **Mechanism 1 is the largest
 and was the one nobody named** — including this spec's first draft and the
@@ -287,9 +322,14 @@ missing, and the declarations are what turn it green.
 - **FR-006** — The guard's doc comment states, in the manner of
   `PreconditionDeclarationTests` and `PaginatedConsumerTests`, **what it does not
   prove** — the list under *What the guard cannot do* — and states the question a
-  new endpoint's author must answer to place it in one set or the other: *does
-  this endpoint's command handler mutate or delete an aggregate that already
-  exists?*
+  new endpoint's author must answer to place it in one set or the other: *can any
+  of the four mechanisms produce a 409 on this route — a handler refusal, a lost
+  update, a unique-index race, or an idempotency replay?* **This requirement used
+  to name the narrow predicate** — *does this endpoint's command handler mutate or
+  delete an aggregate that already exists?* — which is mechanism 2 alone, the
+  question that classified eight routes by a mechanism it never mentioned and
+  `POST /events/manual` wrongly. A requirement stating a predicate the guard has
+  replaced judges the guard against the defect.
 
 - **FR-007** — There is no exemption mechanism, register file or attribute. The
   two pinned sets **are** the classification; the diff that adds an endpoint says
@@ -373,7 +413,9 @@ Then it fails naming CameraEndpoints.cs, the line and POST /cameras/{camera}/ret
 
 ```gherkin
 Given POST /events/manual inserts an event and refuses nothing with a Conflict
-  And no unique index covers an event
+  And the only unique constraint on events is its composite key (Fab, Id,
+      IngestedAt), unreachable on a fresh Guid v7 and moot anyway because
+      StoreOrRefuseAsync answers 503 to every non-cancel exception
   And the endpoint wraps its write in IdempotentRequest.ExecuteCreateAsync
   And its Produces chain declares 201, 400, 403, 429 and 503 but not 409
 When the guard runs

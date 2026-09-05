@@ -138,7 +138,18 @@ Nothing else. No `Program.cs`, no `ServiceDefaults`, no ADR, no constitution, no
 - **A mapping whose chain spans an unusual shape** (a trailing comment after the
   `;`, a chain broken across a `#if`) is mis-extracted. Mitigated by A-1's
   two-way count and by FR-005's unclassified failure; there are none today.
-- **`apps/shared` clients.** None needs a change: `problemDetail.ts` already
-  keys on the `_STALE` suffix rather than the status (ADR-0119), so the four
-  endpoints' advice is already correct at runtime. This spec changes only what
-  the document says about them.
+- **`apps/shared` clients.** None needs a change, but **the reason differs by
+  endpoint and this bullet gave one reason for all four** — a false stated reason
+  in a spec about false stated reasons, corrected 2026-09-05. For the three
+  lost-update endpoints it holds: `problemDetail.ts` keys on the `_STALE` suffix
+  rather than the status (ADR-0119), so `AGGREGATE_VERSION_STALE` gets the
+  reload-and-reapply advice. It does **not** hold for `POST /events/manual`:
+  `IDEMPOTENT_REQUEST_IN_PROGRESS` does not end in `_STALE`, so
+  `isStaleConflict` returns `false` for it (`problemDetail.ts:79-81`). What makes
+  that endpoint's advice correct is that `IdempotentRequest` always sends a
+  `detail` — *"An earlier request with this Idempotency-Key is still running.
+  Retry shortly."* (`IdempotentRequest.cs:96`) — and `CONFLICT_FALLBACK`, whose
+  *"someone else changed this"* would be wrong here, is used only when a 409
+  arrives **without** one. No practical impact either way: nothing under `apps/`
+  calls `POST /events/manual`. This spec changes only what the document says
+  about these four routes.
