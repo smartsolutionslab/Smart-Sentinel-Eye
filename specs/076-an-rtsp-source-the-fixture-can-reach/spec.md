@@ -96,11 +96,29 @@ not a cosmetic lag.
   it. Not yet observed with two containers under the fixture. **If it fails,
   T007's red output says so on the first run** — this is the one assumption
   phase 4 disproves cheaply rather than late.
-- **A2 — a `-c copy` loop is not a meaningful cost.** `runOnInit` publishes for
-  the whole integration run. The clip is already H.264 so nothing transcodes.
-  **Phase 5 measures it**; if it is not negligible, the remedy is a second
-  `runOnDemand` path in `fixture-video.yml`, deliberately *not* built now (no
-  speculative generality).
+- **A2 — a `-c copy` loop is not a meaningful cost. Measured at phase 5.**
+  `runOnInit` publishes for the whole integration run; the clip is already
+  H.264 so nothing transcodes. Two figures:
+
+  - **Suite cost.** The CI-filtered integration suite on this branch:
+    **404/404 in 613 s**. The same suite at `origin/develop`, where
+    `fixture-video` is absent from the integration lane: **402/402 in 605 s**.
+    **+8 s (+1.3 %) for +2 tests**, against a 30-minute job timeout.
+  - **Container cost.** `fixture-video` accumulated **2 CPU-seconds over 105 s
+    of wall clock — ≈ 1.9 % of one core** — at 34.8 MiB RSS. Read with `docker
+    top -o etime,time`, which reports cumulative CPU time; `docker stats`
+    reports an instantaneous rate and cannot answer this question at all.
+
+  **What these figures are not.** One A/B pair, same box, back to back, on
+  Windows/Docker Desktop — not `ubuntu-latest`, and not repeated. This
+  repository's own guidance is that a measurement run needs repeating before it
+  is believed, and the settling evidence for the real thing is `integration`
+  job durations across several CI runs, which is not yet in hand. Read +8 s as
+  "no cost visible at this resolution", not as a number to defend.
+
+  The contingency is unchanged and still unbuilt: if the cost ever turns out to
+  matter, the remedy is a second `runOnDemand` path in `fixture-video.yml`,
+  deliberately *not* built now (no speculative generality).
 - **A3 — `Healthy` arrives within 15 s.** Container start + FFmpeg start + SFU
   dial + three poll intervals. The test budget is 30 s, matching
   `ListStreamsByCamerasIntegrationTests`; the issue's ~15 s is the expectation,

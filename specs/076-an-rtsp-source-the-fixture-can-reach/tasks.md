@@ -180,9 +180,29 @@ rate-limited and the human handles the board.
   two at unreachable addresses; assert three `Healthy` and two `Degraded`
   (AS-3). Delete the doc sentence "Healthy-state assertions require an RTSP test
   source and are deferred to the polish phase (T086)" and say what the test now
-  covers. Keep `WaitForBatchSettledAsync`'s non-`Provisioning` gate as is — it
-  is state-agnostic and still correct.
+  covers. Strengthen `WaitForBatchSettledAsync` to wait until every camera
+  reports the state *expected of it*, rather than merely having left
+  `Provisioning`.
   *Depends on: T007. Disjoint file from T009.*
+
+  **Correction (phase 6).** This task originally read: *"Keep
+  `WaitForBatchSettledAsync`'s non-`Provisioning` gate as is — it is
+  state-agnostic and still correct."* **That instruction was wrong, the
+  implementation deviated from it, and review adjudicated the deviation
+  right.** `ReportStreamHealthCommandHandler.cs:37-44` calls `ReportDegraded`
+  unconditionally when `!observation.IsReady`, and `Stream.cs:229-239` permits
+  `Provisioning → Degraded`, so a camera pointed at a source that answers is
+  legitimately `Degraded` for up to one poll interval before it reaches
+  `Healthy`. The old gate therefore releases the wait while the Healthy-to-be
+  rows are still `Degraded`, and the assertion fails on timing rather than on
+  behaviour. The shipped condition is strictly stronger than the old one —
+  every expected state here is a non-`Provisioning` state — so it cannot
+  release earlier than the gate it replaces.
+
+  **The transient was never observed.** Across three runs the reachable
+  cameras reached `Healthy` in ~1 s. The justification above is code-reading,
+  not measurement; the change closes a race the source permits rather than one
+  anybody has watched happen.
 
   **Done when:** the test passes, and its doc no longer claims a deferral that
   has been discharged.
