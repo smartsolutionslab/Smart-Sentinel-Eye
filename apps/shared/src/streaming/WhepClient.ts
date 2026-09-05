@@ -1,3 +1,5 @@
+import { logResilienceEvent } from '../observability/resilienceLog.js';
+
 export type WhepErrorKind = 'unauthorized' | 'forbidden' | 'stream-unavailable' | 'network' | 'sdp';
 
 export class WhepError extends Error {
@@ -46,10 +48,27 @@ export class WhepClient {
     pc.onconnectionstatechange = () => this.opts.onConnectionStateChange?.(pc.connectionState);
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.addTransceiver('audio', { direction: 'recvonly' });
+    // Holds the tracks of an answer that carried no `msid`, for this call only:
+    // a reconnect builds its own, so a new session never inherits the previous
+    // one's tracks. Created lazily, so a MediaMTX that does send `msid` never
+    // constructs one (issue #2108).
+    let sessionStream: MediaStream | null = null;
     pc.ontrack = (event) => {
-      if (event.streams[0]) {
-        videoEl.srcObject = event.streams[0];
+      const stream = event.streams[0];
+      if (stream) {
+        videoEl.srcObject = stream;
+        return;
       }
+      // `msid` is negotiated, not guaranteed. Dropping the track here leaves a
+      // black tile that still labels itself Live, because `live` follows the
+      // connection state — so the track is attached anyway, under one stream
+      // per session. Two recvonly transceivers deliver two events in an order
+      // nobody controls; a fresh stream per event would let the second evict
+      // the first.
+      logResilienceEvent('stream', 'track-without-stream', { kind: event.track.kind });
+      sessionStream ??= new MediaStream();
+      sessionStream.addTrack(event.track);
+      videoEl.srcObject = sessionStream;
     };
 
     try {
