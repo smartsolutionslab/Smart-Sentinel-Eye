@@ -58,9 +58,9 @@ export class WhepClient {
       const stream = event.streams[0];
       if (stream) {
         // `msid` is per-`m=`-section, so one answer can mix the two shapes.
-        // Whatever this session already attached moves into the stream being
-        // attached, because assigning over it would drop those tracks — the
-        // same eviction the branch below avoids, met from the other side.
+        // Whatever this session already attached is carried into the stream
+        // being attached, because assigning over it would drop those tracks —
+        // the same eviction the branch below avoids, met from the other side.
         if (sessionStream !== null && sessionStream !== stream) {
           for (const attached of sessionStream.getTracks()) {
             stream.addTrack(attached);
