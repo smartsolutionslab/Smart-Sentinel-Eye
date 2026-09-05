@@ -37,11 +37,15 @@ public static class DevicesEndpoints
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status409Conflict);
 
+        // 409 because DisableDeviceCommandHandler loads a client that already
+        // exists, mutates it and saves — the lost update ADR-0113 Layer 2
+        // answers as AGGREGATE_VERSION_STALE.
         group.MapDelete("/{clientId}", Disable)
             .WithName("DisableDevice")
             .WithSummary("Disable a registered device. Required scope: sse.identity.devices.write")
             .Produces<Guid>(StatusCodes.Status200OK)
-            .ProducesProblem(StatusCodes.Status404NotFound);
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
 
         RouteGroupBuilder reads = app.MapGroup("/devices")
             .RequireAuthorization(Scope.Sse.Identity.DeviceClients.Read)
