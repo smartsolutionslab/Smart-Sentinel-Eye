@@ -3,43 +3,79 @@ using System.Text.RegularExpressions;
 namespace SmartSentinelEye.Architecture.Tests;
 
 /// <summary>
-/// Guards the contract half of ADR-0113's Layer 2: <b>a mutating endpoint whose
-/// write path makes EF update or delete a row that already exists declares the
-/// <c>409</c> the shared handler answers, and the ones whose write path cannot
-/// do not</b> (issue #2096, spec 075).
+/// Guards the contract half of ADR-0113's Layer 2, widened to the question the
+/// document actually answers: <b>a mutating endpoint that can answer
+/// <c>409</c> declares it, and one that cannot does not</b> (issue #2096,
+/// spec 075).
 ///
 /// <para>
-/// <c>ConcurrencyConflictExceptionHandler</c> turns EF Core's
-/// <c>DbUpdateConcurrencyException</c> into <c>409 AGGREGATE_VERSION_STALE</c>.
-/// It is registered once, in <c>AddBearerAuthentication</c>, which all nine Api
-/// <c>Program.cs</c> files call, and it answers unconditionally — so the limit
-/// on its reach is EF, not registration. The limit is this: EF raises that
-/// exception from its affected-row check on an <c>UPDATE</c> or a
-/// <c>DELETE</c>. An insert has no prior row to disagree with, and an endpoint
-/// that never reaches a <c>DbContext</c> has none either.
+/// <b>The first version of this guard partitioned on
+/// <c>DbUpdateConcurrencyException</c>, and that was too narrow to be true.</b>
+/// OpenAPI has one <c>409</c> slot per operation and does not record a cause,
+/// so the only question a <c>Produces</c> chain can be judged against is
+/// whether the route can answer the status <em>at all</em>. This repository has
+/// <b>four</b> producers of it, and a register naming one of them classified
+/// eight routes by a mechanism it never mentioned and one route wrongly:
+/// </para>
+/// <list type="number">
+/// <item>
+/// <b>Handler refusal.</b> A command handler returns a <c>Result</c> failure
+/// whose <c>ApiError.Status</c> is <c>HttpStatusCode.Conflict</c>;
+/// <c>ApiErrorResults.ToProblem</c> renders that status onto the wire. No race
+/// is involved — a name already taken, a stale <c>If-Match</c> version
+/// (ADR-0113 Layer 1), a terminal state. <b>This is the mechanism on 26 of the
+/// 33 mappings</b>, and it is the one the earlier register did not name.
+/// </item>
+/// <item>
+/// <b>Lost update.</b> <c>ConcurrencyConflictExceptionHandler</c> turns EF
+/// Core's <c>DbUpdateConcurrencyException</c> into
+/// <c>409 AGGREGATE_VERSION_STALE</c>. EF raises it from its affected-row check
+/// on an <c>UPDATE</c> or a <c>DELETE</c>, so an insert cannot reach it.
+/// </item>
+/// <item>
+/// <b>Unique-index race.</b> <c>UniqueConstraintExceptionHandler</c> answers
+/// <c>409 RESOURCE_ALREADY_EXISTS</c> on any unique violation. It is registered
+/// after the concurrency handler and matches the SQLSTATE rather than the
+/// exception type, so the two cannot swallow each other.
+/// </item>
+/// <item>
+/// <b>Idempotency in progress.</b> <c>IdempotentRequest</c> <em>returns</em>
+/// <c>Results.Problem(… Status409Conflict)</c> with
+/// <c>IDEMPOTENT_REQUEST_IN_PROGRESS</c> when an earlier request carrying the
+/// same <c>Idempotency-Key</c> outlives the five-second poll window (ADR-0142).
+/// It is not an exception, so nothing catches it and no exception-handler
+/// survey finds it.
+/// </item>
+/// </list>
+///
+/// <para>
+/// All four are registered or reached unconditionally — the exception handlers
+/// in <c>AddBearerAuthentication</c>, which all nine Api <c>Program.cs</c> files
+/// call — so the limit on their reach is the write path, not registration.
 /// </para>
 ///
 /// <para>
 /// <b>This is a register, and the two sets below are typed in, not derived.</b>
 /// That is the first thing to know about it, because every other guard in this
-/// directory derives its claim and this one cannot. Whether a route can produce
-/// the conflict is settled three or four hops away — endpoint, command handler,
-/// repository, EF — across the Application boundary, and the discriminating
-/// fact (<c>events.Add(@event)</c> versus <c>camera.Retire(…)</c> before the
-/// same <c>SaveAsync</c>) is not visible at the Api layer at all. No scan of
-/// <c>src/*/Api</c> can decide it, so a human decided it on 2026-09-05 and wrote
-/// the answer here.
+/// directory derives its claim and this one cannot. Whether a route can answer
+/// the status is settled three or four hops away — endpoint, command handler,
+/// repository, EF, plus the endpoint's own idempotency wiring — across the
+/// Application boundary, and the discriminating facts (an <c>ApiError</c>
+/// carrying <c>HttpStatusCode.Conflict</c>, <c>camera.Retire(…)</c> before a
+/// <c>SaveAsync</c>, an <c>.IsUnique()</c> index, an
+/// <c>IdempotentRequest.Execute…</c> call) are not all visible at the Api layer.
+/// No scan of <c>src/*/Api</c> can decide it, so a human decided it on
+/// 2026-09-05, at every handler named below, and wrote the answer here.
 /// </para>
 ///
 /// <para>
 /// <b>The question a new endpoint's author answers</b> to place it in one set or
-/// the other: <em>does this endpoint's command handler mutate or delete an
-/// aggregate that already exists?</em> If yes, its route joins
-/// <see cref="ConflictProducing"/> and its chain declares
-/// <c>StatusCodes.Status409Conflict</c>. If no — it only inserts, or it touches
-/// no database — its route joins <see cref="ConflictFree"/> with the reason, and
-/// its chain must not declare one. Declaring 409 on an endpoint that cannot
-/// produce it is the same defect as omitting it from one that can, pointing the
+/// the other: <em>can any of the four mechanisms above produce a <c>409</c> on
+/// this route?</em> If yes, its route joins <see cref="CanAnswerConflict"/> with
+/// the mechanism, and its chain declares <c>StatusCodes.Status409Conflict</c>.
+/// If no, its route joins <see cref="CannotAnswerConflict"/> with the reason,
+/// and its chain must not declare one. Declaring 409 on an endpoint that cannot
+/// answer it is the same defect as omitting it from one that can, pointing the
 /// other way, and this guard fails on both with different messages.
 /// </para>
 ///
@@ -51,18 +87,25 @@ namespace SmartSentinelEye.Architecture.Tests;
 /// <see cref="MutatingMappingContextCount"/> contexts and cross-checked against
 /// an independent flat sweep; every mapped route sits in exactly one of the two
 /// pinned sets and every pinned route is still mapped; each of
-/// <see cref="ConflictProducing"/> declares the conflict in its own fluent
-/// chain; and none of <see cref="ConflictFree"/> does.
+/// <see cref="CanAnswerConflict"/> declares the conflict in its own fluent
+/// chain; and none of <see cref="CannotAnswerConflict"/> does.
 /// </para>
 ///
 /// <para>
-/// <b>Route identity is lexical.</b> A route is the verb, the prefix of the
-/// nearest preceding <c>MapGroup</c> literal in the same file, and the mapping's
-/// own route literal, concatenated exactly as written — so a mapping on
-/// <c>"/"</c> reads with a trailing slash (<c>POST /cameras/</c>), and the four
-/// files that map two groups bind by lexical position rather than by the
-/// variable the mapping is written on. It is the one place a reader could bind
-/// the wrong prefix, which is why it is stated rather than left to be inferred.
+/// <b>Route identity is lexical, and carries its context.</b> A route is the
+/// bounded context from <c>src/&lt;Context&gt;/Api</c>, the verb, the prefix of
+/// the nearest preceding <c>MapGroup</c> literal in the same file, and the
+/// mapping's own route literal, concatenated exactly as written — so a mapping
+/// on <c>"/"</c> reads with a trailing slash (<c>CameraCatalog POST
+/// /cameras/</c>), and the <b>five</b> files that map two groups
+/// (<c>RulesEndpoints</c>, <c>CameraEndpoints</c>, <c>EventsEndpoints</c>,
+/// <c>DevicesEndpoints</c>, <c>KiosksEndpoints</c>) bind by lexical position
+/// rather than by the variable the mapping is written on. The context is part
+/// of the identity because the prefix alone is not unique: EventIngestion and
+/// Identity both map <c>/webhook-integrations</c> today. Without it, two rows
+/// that collided would silently merge into one and the only failure would be
+/// the census arithmetic — <c>"32 is not 33"</c>, the one message that names no
+/// route.
 /// </para>
 ///
 /// <para>
@@ -80,31 +123,38 @@ namespace SmartSentinelEye.Architecture.Tests;
 /// and lands its author in this file, at the question above.
 /// </item>
 /// <item>
-/// <b>It cannot tell why a 409 is declared.</b> OpenAPI has one 409 slot per
-/// operation. On twenty-five of these routes the declaration was already there
-/// for a name collision, a stale version or a terminal state, and this guard is
-/// green on them whether or not anyone ever considered the lost update. A green
-/// run is not evidence that the rule was applied — only that nobody removed a
-/// line or added a mutating endpoint unclassified.
+/// <b>It cannot tell which mechanism a declared 409 was written for, and does
+/// not read the problem code.</b> OpenAPI has one slot; most rows below carry
+/// two or three mechanisms, and the guard checks only that the slot is present.
+/// A route whose declaration was added for a name collision is green whether or
+/// not anyone ever considered the lost update, and a route that answers
+/// <c>IDEMPOTENT_REQUEST_IN_PROGRESS</c> where this register records
+/// <c>AGGREGATE_VERSION_STALE</c> is green too. <b>A green run is not evidence
+/// that the rule was applied</b> — only that nobody removed a line or added a
+/// mutating endpoint unclassified.
 /// </item>
 /// <item>
-/// <b>It does not prove reachability.</b> That
-/// <c>DbUpdateConcurrencyException</c> can actually be raised on a route in
-/// <see cref="ConflictProducing"/> is argued in spec 075 from the handler bodies
-/// and the EF configurations. No test asserts it: provoking a true database race
-/// needs two overlapping transactions against real Postgres, which is Docker,
-/// CI-only and a race to arrange. Not attempted, and not claimed.
+/// <b>It does not prove reachability.</b> That a lost update or a unique-index
+/// race can actually be provoked on a route is argued in spec 075 from the
+/// handler bodies and the EF configurations. No test asserts it: a true
+/// database race needs two overlapping transactions against real Postgres,
+/// which is Docker, CI-only and a race to arrange. Not attempted, and not
+/// claimed. The two deterministic mechanisms — a handler refusal and an
+/// idempotency replay — are reachable by a single request each, and are still
+/// only argued here, not exercised.
 /// </item>
 /// <item>
 /// <b>It reads the fluent chain, not the generated document.</b> Safe today
 /// because no <c>MapGroup</c> chain in these directories declares a response —
 /// asserted below, so it stops being an assumption. If one ever does, the guard
-/// under-reads. It also reads the source text unmasked: a
-/// <c>.ProducesProblem(StatusCodes.Status409Conflict)</c> commented out inside a
-/// chain would still be credited. There are none today — every one of the
-/// twenty-five occurrences of the token in these directories is a live
-/// declaration — and the cross-check below cannot see that case, because the
-/// sweep would count it too.
+/// under-reads. It reads <em>masked</em> source: comments are blanked before
+/// anything is matched, so a <c>.ProducesProblem(StatusCodes.Status409Conflict)</c>
+/// commented out inside a chain is no longer credited, and string literals are
+/// stepped over when the chain's end is found, so an unbalanced bracket inside
+/// a <c>WithSummary</c> can no longer run one chain into the next. The masker
+/// handles only the string and comment forms these files use — no verbatim, raw
+/// or interpolated-with-escape literals — and <em>that</em> is asserted below
+/// too, rather than assumed.
 /// </item>
 /// <item>
 /// <b>It is rooted at <c>src/*/Api</c>.</b> A mapping that leaves those
@@ -147,6 +197,21 @@ public class ConcurrencyConflictDeclarationTests
         TimeSpan.FromSeconds(5));
 
     /// <summary>
+    /// The literal forms this reader's masker does not handle. Their absence is
+    /// asserted rather than assumed: masking is what makes a commented-out
+    /// declaration uncreditable and an unbalanced bracket inside a summary
+    /// harmless, and a masker that silently mis-reads a shape it was never
+    /// taught is worse than no masking at all.
+    /// </summary>
+    private static readonly (string Form, string Why)[] UnmaskableLiteralForms =
+    [
+        ("@\"", "a verbatim string, in which a doubled quote closes nothing"),
+        ("\"\"\"", "a raw string literal, whose delimiter is longer than one quote"),
+        ("\\\"", "an escaped quote, which this reader steps over but which changes where a literal ends"),
+        ("'\"'", "a quote as a char literal, which would open a string that never closes"),
+    ];
+
+    /// <summary>
     /// Thirty-three mutating mappings, in eleven files, across eight contexts.
     /// Pinned rather than merely compared: every other count in this file is
     /// derived from one glob, so a file leaving <c>src/*/Api</c> shrinks both
@@ -160,77 +225,179 @@ public class ConcurrencyConflictDeclarationTests
     private const int MutatingMappingContextCount = 8;
 
     /// <summary>
-    /// The twenty-eight routes whose command handler loads an aggregate that
-    /// already exists, mutates or deletes it, and saves — so EF's affected-row
-    /// check can disagree and the shared handler can answer <c>409</c>. Each
-    /// must declare <c>Status409Conflict</c> in its own chain.
+    /// The twenty-nine routes that can answer <c>409</c>, each with the
+    /// mechanism — or mechanisms — that produce it. Each must declare
+    /// <c>Status409Conflict</c> in its own chain.
     ///
     /// <para>
-    /// Twenty-five of them declared it before this guard existed. Three did not,
-    /// and are the defect spec 075 fixes: <c>POST /cameras/{camera:guid}/retire</c>,
-    /// <c>DELETE /devices/{clientId}</c> and <c>DELETE /kiosks/{clientId}</c>.
-    /// They are written here from the classification, not from the source, which
-    /// is why this set is red before that fix and green after it.
+    /// The mechanism is written out per row rather than left to the class doc so
+    /// that a wrong row is <em>visible</em> rather than merely plausible: a
+    /// reader can open the named errors file, index or handler and disagree.
+    /// Every row below was read at its handler on 2026-09-05.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Three rows carry one mechanism only, and they are the spec's defect.</b>
+    /// <c>POST /cameras/{camera:guid}/retire</c>, <c>DELETE /devices/{clientId}</c>
+    /// and <c>DELETE /kiosks/{clientId}</c> reach nothing but the lost update —
+    /// <c>RetireCameraErrors</c> declares no <c>Conflict</c>, and there is no
+    /// <c>DisableDeviceErrors</c> or <c>DisableKioskErrors</c> file at all. That
+    /// is <em>why</em> those three were the omissions: every other mutating route
+    /// had a second, deterministic reason to declare the status, and these had
+    /// only the race nobody was thinking about.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>A fourth row carries one mechanism only, and it is the review's
+    /// finding.</b> <c>POST /events/manual</c> refuses nothing with a
+    /// <c>Conflict</c>, no unique index covers an event, and it inserts rather
+    /// than updates — but it is wired to <c>IdempotentRequest.ExecuteCreateAsync</c>
+    /// against a registered <c>IdempotencyStore&lt;EventIngestionDbContext&gt;</c>,
+    /// so two concurrent calls sharing a key and a caller make the second answer
+    /// <c>409 IDEMPOTENT_REQUEST_IN_PROGRESS</c>. It is the only one of the nine
+    /// keyed creates and rotations whose chain does not say so.
     /// </para>
     /// </summary>
-    private static readonly string[] ConflictProducing =
+    private static readonly ConflictCapableRoute[] CanAnswerConflict =
     [
-        "POST /rules/",
-        "POST /rules/{name}/publish",
-        "POST /rules/{name}/archive",
-        "POST /cameras/",
-        "POST /cameras/{camera:guid}/retire",
-        "PATCH /cameras/{camera:guid}",
-        "POST /webhook-integrations/",
-        "DELETE /webhook-integrations/{name}",
-        "POST /webhook-integrations/{name}/rotate",
-        "POST /devices/register",
-        "DELETE /devices/{clientId}",
-        "POST /kiosks/enroll",
-        "DELETE /kiosks/{clientId}",
-        "POST /layouts/",
-        "POST /layouts/{layoutIdentifier:guid}/draft",
-        "POST /layouts/{layoutIdentifier:guid}/revisions/{revisionNumber:int}/publish",
-        "POST /layouts/{layoutIdentifier:guid}/revisions/{revisionNumber:int}/archive",
-        "POST /layouts/{layoutIdentifier:guid}/revisions/{revisionNumber:int}/revert",
-        "PATCH /layouts/{layoutIdentifier:guid}/revisions/{revisionNumber:int}",
-        "POST /overlays/",
-        "POST /overlays/{overlayIdentifier:guid}/draft",
-        "POST /overlays/{overlayIdentifier:guid}/revisions/{revisionNumber:int}/publish",
-        "POST /overlays/{overlayIdentifier:guid}/revisions/{revisionNumber:int}/archive",
-        "POST /overlays/{overlayIdentifier:guid}/revisions/{revisionNumber:int}/revert",
-        "PATCH /overlays/{overlayIdentifier:guid}/revisions/{revisionNumber:int}",
-        "POST /system-variables/",
-        "PUT /system-variables/{name}/value",
-        "POST /system-variables/{name}/archive",
+        new(
+            "Automation POST /rules/",
+            "refusal (CreateRuleErrors.NameAlreadyTaken); unique race (ux_rules_fab_name_active); "
+            + "idempotency"),
+        new(
+            "Automation POST /rules/{name}/publish",
+            "refusal (PublishRuleFailures.RuleStale, RuleAlreadyArchived); lost update "
+            + "(rule.Publish(clock) then SaveAsync)"),
+        new(
+            "Automation POST /rules/{name}/archive",
+            "refusal (ArchiveRuleFailures.RuleStale); lost update (rule.Archive(clock) then SaveAsync)"),
+        new(
+            "CameraCatalog POST /cameras/",
+            "refusal (RegisterCameraFailures.NameAlreadyTaken); unique race "
+            + "(ux_cameras_fab_name_normalized_active); idempotency"),
+        new(
+            "CameraCatalog POST /cameras/{camera:guid}/retire",
+            "lost update ONLY — RetireCameraErrors declares no Conflict, so the race is the whole of "
+            + "this route's 409 and the omission spec 075 fixes"),
+        new(
+            "CameraCatalog PATCH /cameras/{camera:guid}",
+            "refusal (RenameCameraErrors, ChangeCameraAddressErrors); lost update; unique race on a "
+            + "rename (ux_cameras_fab_name_normalized_active)"),
+        new(
+            "EventIngestion POST /events/manual",
+            "idempotency ONLY — IngestEventCommandHandler calls events.Add(@event) then SaveAsync and "
+            + "refuses nothing with a Conflict, and no unique index covers an event; the 409 is "
+            + "IdempotentRequest.ExecuteCreateAsync answering IDEMPOTENT_REQUEST_IN_PROGRESS"),
+        new(
+            "EventIngestion POST /webhook-integrations/",
+            "refusal (RegisterWebhookIntegrationErrors); unique race (ux_webhook_integrations_name); no "
+            + "idempotency — ADR-0142's one create whose answer cannot be replayed"),
+        new(
+            "EventIngestion DELETE /webhook-integrations/{name}",
+            "refusal (RevokeWebhookIntegrationErrors); lost update (integration.Revoke then SaveAsync)"),
+        new(
+            "Identity POST /devices/register",
+            "refusal (RegisterDeviceErrors); unique race (ux_registered_clients_clientid_active); "
+            + "idempotency"),
+        new(
+            "Identity DELETE /devices/{clientId}",
+            "lost update ONLY — there is no DisableDeviceErrors file, so DisableDeviceCommandHandler's "
+            + "load, client.Disable(clock) and SaveAsync is the whole of this route's 409"),
+        new(
+            "Identity POST /kiosks/enroll",
+            "refusal (EnrollKioskErrors); unique race (ux_registered_clients_clientid_active); "
+            + "idempotency"),
+        new(
+            "Identity DELETE /kiosks/{clientId}",
+            "lost update ONLY — there is no DisableKioskErrors file, so DisableKioskCommandHandler's "
+            + "load, client.Disable(clock) and SaveAsync is the whole of this route's 409"),
+        new(
+            "Identity POST /webhook-integrations/{name}/rotate",
+            "refusal (RotateWebhookClientCommand's stale check); lost update on the branch that rotates "
+            + "an existing client; idempotency"),
+        new(
+            "LayoutComposition POST /layouts/",
+            "refusal (CreateLayoutDraftErrors.NameAlreadyTaken); idempotency. NOT a unique race: "
+            + "ix_layouts_fab_name is not unique, so a concurrent create is not refused by the index"),
+        new(
+            "LayoutComposition POST /layouts/{layoutIdentifier:guid}/draft",
+            "refusal (BranchDraftRevisionErrors); lost update"),
+        new(
+            "LayoutComposition POST /layouts/{layoutIdentifier:guid}/revisions/{revisionNumber:int}/publish",
+            "refusal (PublishRevisionErrors); lost update; unique race "
+            + "(ux_layout_revisions_one_published)"),
+        new(
+            "LayoutComposition POST /layouts/{layoutIdentifier:guid}/revisions/{revisionNumber:int}/archive",
+            "refusal (ArchiveRevisionErrors); lost update"),
+        new(
+            "LayoutComposition POST /layouts/{layoutIdentifier:guid}/revisions/{revisionNumber:int}/revert",
+            "refusal (RevertRevisionErrors); lost update"),
+        new(
+            "LayoutComposition PATCH /layouts/{layoutIdentifier:guid}/revisions/{revisionNumber:int}",
+            "refusal (EditDraftRevisionErrors); lost update"),
+        new(
+            "OverlayDesigner POST /overlays/",
+            "refusal (CreateOverlayDraftErrors.NameAlreadyTaken); idempotency. NOT a unique race: "
+            + "ix_overlays_name is not unique"),
+        new(
+            "OverlayDesigner POST /overlays/{overlayIdentifier:guid}/draft",
+            "refusal (BranchDraftRevisionErrors); lost update"),
+        new(
+            "OverlayDesigner POST /overlays/{overlayIdentifier:guid}/revisions/{revisionNumber:int}/publish",
+            "refusal (PublishRevisionErrors); lost update; unique race "
+            + "(ux_overlay_revisions_one_published)"),
+        new(
+            "OverlayDesigner POST /overlays/{overlayIdentifier:guid}/revisions/{revisionNumber:int}/archive",
+            "refusal (ArchiveRevisionErrors); lost update"),
+        new(
+            "OverlayDesigner POST /overlays/{overlayIdentifier:guid}/revisions/{revisionNumber:int}/revert",
+            "refusal (RevertRevisionErrors); lost update"),
+        new(
+            "OverlayDesigner PATCH /overlays/{overlayIdentifier:guid}/revisions/{revisionNumber:int}",
+            "refusal (EditDraftRevisionErrors); lost update"),
+        new(
+            "SystemVariables POST /system-variables/",
+            "refusal (DefineVariableErrors); unique race (ux_system_variables_fab_name_active); "
+            + "idempotency"),
+        new(
+            "SystemVariables PUT /system-variables/{name}/value",
+            "refusal (SetVariableValueErrors); lost update"),
+        new(
+            "SystemVariables POST /system-variables/{name}/archive",
+            "refusal (ArchiveVariableErrors); lost update"),
     ];
 
     /// <summary>
-    /// The five routes whose write path performs no EF update or delete, each
-    /// with the reason. Adding <c>409</c> to any of them would be a new false
-    /// claim of exactly the kind #2096 was filed about — the same defect, in the
-    /// opposite direction.
+    /// The four routes no mechanism can make answer <c>409</c>, each with the
+    /// reason. Adding the status to any of them would be a new false claim of
+    /// exactly the kind #2096 was filed about — the same defect, in the opposite
+    /// direction.
+    ///
+    /// <para>
+    /// Each reason has to clear all four mechanisms, not just the lost update.
+    /// That is what the earlier register got wrong about
+    /// <c>POST /events/manual</c>: its write path really is an insert, and the
+    /// conclusion drawn from that was still false, because the 409 came from
+    /// somewhere the register was not looking.
+    /// </para>
     /// </summary>
-    private static readonly ConflictFreeRoute[] ConflictFree =
+    private static readonly ConflictFreeRoute[] CannotAnswerConflict =
     [
         new(
-            "POST /rules/{name}/dry-run",
-            "a POST because it carries a sample-event body, but a read: it is mapped on the read group "
-            + "and nothing is persisted"),
+            "Automation POST /rules/{name}/dry-run",
+            "a POST because it carries a sample-event body, but a read: mapped on the read group, "
+            + "nothing is persisted, and DryRunRuleErrors declares only 404 and 400"),
         new(
-            "POST /events/manual",
-            "IngestEventCommandHandler calls events.Add(@event) and then SaveAsync — an insert, and an "
-            + "insert has no prior row for EF's affected-row check to disagree with"),
+            "EventIngestion POST /events/webhook/{integrationName}",
+            "it reads the integration to authenticate the delivery and never writes it back, then "
+            + "inserts an event; no error on that path carries HttpStatusCode.Conflict, no unique index "
+            + "covers an event, and this route reads no Idempotency-Key"),
         new(
-            "POST /events/webhook/{integrationName}",
-            "it reads the integration to authenticate the delivery and never writes it back, then takes "
-            + "the same insert-only path as POST /events/manual"),
-        new(
-            "POST /streams/authorize",
+            "StreamDistribution POST /streams/authorize",
             "AuthorizeWhepCommandHandler validates a forwarded token against a read-only stream lookup "
-            + "and calls no SaveAsync"),
+            + "and calls no SaveAsync; AuthorizeWhepErrors declares only 401 and 403"),
         new(
-            "POST /streams/kiosk-latency",
+            "StreamDistribution POST /streams/kiosk-latency",
             "it records a meter value; nothing enters a domain model and no DbContext is reached"),
     ];
 
@@ -288,9 +455,9 @@ public class ConcurrencyConflictDeclarationTests
             MutatingMappingCount,
             $"the walk found {mappings.Count} mutating mappings under src/*/Api, not {MutatingMappingCount}. "
             + "The population moved. Whichever endpoint was added or removed, it is classified in the same "
-            + "diff: does its command handler mutate or delete an aggregate that already exists? Add its "
-            + "route to ConflictProducing and declare the 409, or to ConflictFree with the reason it cannot "
-            + "produce one. Routes found: "
+            + "diff: can a handler refusal, a lost update, a unique-index race or an idempotency replay "
+            + "answer 409 on it? Add its route to CanAnswerConflict with the mechanism and declare the "
+            + "status, or to CannotAnswerConflict with the reason all four are out of reach. Routes found: "
             + string.Join(", ", mappings.Select(m => m.Identity).Order(StringComparer.Ordinal)));
 
         files.Length.ShouldBe(
@@ -316,7 +483,7 @@ public class ConcurrencyConflictDeclarationTests
     {
         DirectoryInfo root = RepositoryRoot();
         int swept = ApiSourceFiles(root)
-            .Sum(file => MutatingMappingCall.Count(Text(root, file)));
+            .Sum(file => MutatingMappingCall.Count(Source(root, file)));
 
         swept.ShouldBe(
             MutatingMappingCount,
@@ -333,46 +500,48 @@ public class ConcurrencyConflictDeclarationTests
     // ---- FR-003: the partition, in both directions --------------------------
 
     /// <summary>
-    /// <b>FR-003 — the omission direction.</b> Every route whose write path can
-    /// lose the race declares the status the shared handler answers when it
-    /// does. This is the assertion spec 075 expects to be red on three routes
-    /// before the fix.
+    /// <b>FR-003 — the omission direction.</b> Every route that can answer the
+    /// status declares it. This is the assertion spec 075 expects to be red
+    /// before the fix — on the three lost-update omissions when the guard was
+    /// first written, and on <c>POST /events/manual</c> after the review widened
+    /// the predicate to the mechanism that route actually reaches.
     /// </summary>
     [Fact]
-    public void Every_endpoint_whose_write_path_can_lose_the_race_declares_the_conflict()
+    public void Every_endpoint_that_can_answer_a_conflict_declares_it()
     {
         string[] undeclared = TheMappings.Value
-            .Where(mapping => ConflictProducing.Contains(mapping.Identity, StringComparer.Ordinal))
+            .Where(mapping => CanAnswerConflict.Any(capable => Same(capable.Route, mapping.Identity)))
             .Where(mapping => !ConflictDeclaration.IsMatch(mapping.Chain))
             .OrderBy(mapping => mapping.File, StringComparer.Ordinal)
             .ThenBy(mapping => mapping.Line)
-            .Select(Describe)
+            .Select(mapping => $"{Describe(mapping)} — {MechanismFor(mapping.Identity)}")
             .ToArray();
 
         undeclared.ShouldBeEmpty(
-            $"{undeclared.Length} mutating endpoint(s) do not declare the conflict their write path can "
-            + "produce:" + Environment.NewLine
+            $"{undeclared.Length} mutating endpoint(s) do not declare the 409 their write path can "
+            + "answer:" + Environment.NewLine
             + string.Join(Environment.NewLine, undeclared) + Environment.NewLine
-            + "Each of these loads an aggregate that already exists, mutates or deletes it and saves, so "
-            + "EF's affected-row check can disagree and ConcurrencyConflictExceptionHandler answers 409 "
-            + "AGGREGATE_VERSION_STALE (ADR-0113 Layer 2, ADR-0119). The generated OpenAPI currently "
-            + "asserts that status cannot happen on this route, so a client generated from it has no "
-            + "branch for the lost update. Add .ProducesProblem(StatusCodes.Status409Conflict) to the "
-            + "mapping's own chain.");
+            + "The mechanism recorded against each route above is the one that produces the status — a "
+            + "handler refusal rendered by ApiErrorResults.ToProblem, a lost update answered by "
+            + "ConcurrencyConflictExceptionHandler, a unique-index race answered by "
+            + "UniqueConstraintExceptionHandler, or an in-progress replay returned by IdempotentRequest "
+            + "(ADR-0113 Layer 2, ADR-0119, ADR-0142). The generated OpenAPI currently asserts that "
+            + "status cannot happen on this route, so a client generated from it has no branch for it. "
+            + "Add .ProducesProblem(StatusCodes.Status409Conflict) to the mapping's own chain.");
     }
 
     /// <summary>
-    /// <b>FR-003, FR-005 — the mirror.</b> A declared conflict that no write
-    /// path can produce is the same defect as an undeclared one, pointing the
-    /// other way, and it arrives from a different cause: someone reading #2096
-    /// as filed and adding the status to all thirty-three. The message shares no
-    /// sentence with the one above, on purpose.
+    /// <b>FR-003, FR-005 — the mirror.</b> A declared conflict that no mechanism
+    /// can produce is the same defect as an undeclared one, pointing the other
+    /// way, and it arrives from a different cause: someone reading #2096 as filed
+    /// and adding the status to all thirty-three. The message shares no sentence
+    /// with the one above, on purpose.
     /// </summary>
     [Fact]
-    public void No_endpoint_whose_write_path_cannot_lose_the_race_declares_the_conflict()
+    public void No_endpoint_that_cannot_answer_a_conflict_declares_one()
     {
         string[] surplus = TheMappings.Value
-            .Where(mapping => ConflictFree.Any(free => string.Equals(free.Route, mapping.Identity, StringComparison.Ordinal)))
+            .Where(mapping => CannotAnswerConflict.Any(free => Same(free.Route, mapping.Identity)))
             .Where(mapping => ConflictDeclaration.IsMatch(mapping.Chain))
             .OrderBy(mapping => mapping.File, StringComparer.Ordinal)
             .ThenBy(mapping => mapping.Line)
@@ -380,13 +549,14 @@ public class ConcurrencyConflictDeclarationTests
             .ToArray();
 
         surplus.ShouldBeEmpty(
-            $"{surplus.Length} endpoint(s) advertise a conflict nothing in their write path can raise:"
+            $"{surplus.Length} endpoint(s) advertise a 409 that nothing on their path can answer:"
             + Environment.NewLine + string.Join(Environment.NewLine, surplus) + Environment.NewLine
-            + "EF raises DbUpdateConcurrencyException from its affected-row check on an UPDATE or a "
-            + "DELETE. An insert has nothing to compare against and an endpoint that reaches no DbContext "
-            + "has nothing at all, so this line publishes an answer the route will never give. Remove it, "
-            + "or — if the handler has genuinely started mutating an existing aggregate — move the route "
-            + "to ConflictProducing in the same diff as the change that made it true.");
+            + "Four mechanisms can produce the status here and the reason above clears all four: no "
+            + "error on the path carries HttpStatusCode.Conflict, EF is not made to UPDATE or DELETE an "
+            + "existing row, no unique index is written through, and no Idempotency-Key is read. So this "
+            + "line publishes an answer the route will never give. Remove it, or — if the path has "
+            + "genuinely gained one of the four — move the route to CanAnswerConflict, naming which, in "
+            + "the same diff as the change that made it true.");
     }
 
     /// <summary>
@@ -400,7 +570,7 @@ public class ConcurrencyConflictDeclarationTests
     public void Every_mutating_route_sits_in_exactly_one_of_the_two_pinned_sets()
     {
         IReadOnlyList<MutatingMapping> mappings = TheMappings.Value;
-        string[] pinned = [.. ConflictProducing, .. ConflictFree.Select(free => free.Route)];
+        string[] pinned = [.. CanAnswerConflict.Select(c => c.Route), .. CannotAnswerConflict.Select(f => f.Route)];
 
         string[] unclassified = mappings
             .Where(mapping => !pinned.Contains(mapping.Identity, StringComparer.Ordinal))
@@ -412,14 +582,16 @@ public class ConcurrencyConflictDeclarationTests
             + Environment.NewLine + string.Join(Environment.NewLine, unclassified) + Environment.NewLine
             + "Classify each one here, in "
             + GuardSource
-            + ", by answering: does this endpoint's command handler mutate or delete an aggregate that "
-            + "already exists? If it does, add the route to ConflictProducing and declare "
-            + "StatusCodes.Status409Conflict on its chain. If it only inserts, or reaches no DbContext at "
-            + "all, add it to ConflictFree with the reason. This guard is a register and cannot answer "
-            + "that question for you — but it will not let it go unanswered.");
+            + ", by answering: can any of the four mechanisms answer 409 on this route — a command "
+            + "handler returning an ApiError whose Status is Conflict, EF's affected-row check on an "
+            + "UPDATE or DELETE, a unique index written through, or IdempotentRequest finding an earlier "
+            + "call with the same key still running? If any can, add the route to CanAnswerConflict with "
+            + "the mechanism and declare StatusCodes.Status409Conflict on its chain. If none can, add it "
+            + "to CannotAnswerConflict with the reason that clears all four. This guard is a register and "
+            + "cannot answer that question for you — but it will not let it go unanswered.");
 
         string[] ghosts = pinned
-            .Where(route => !mappings.Any(mapping => string.Equals(mapping.Identity, route, StringComparison.Ordinal)))
+            .Where(route => !mappings.Any(mapping => Same(mapping.Identity, route)))
             .ToArray();
 
         ghosts.ShouldBeEmpty(
@@ -434,7 +606,7 @@ public class ConcurrencyConflictDeclarationTests
         pinned.Distinct(StringComparer.Ordinal).Count().ShouldBe(
             pinned.Length,
             "a route appears twice across the two pinned sets. The sets are a partition: an endpoint "
-            + "either can produce the conflict or it cannot, and it is recorded once.");
+            + "either can answer the conflict or it cannot, and it is recorded once.");
 
         pinned.Length.ShouldBe(
             MutatingMappingCount,
@@ -442,7 +614,7 @@ public class ConcurrencyConflictDeclarationTests
             + $"{MutatingMappingCount}. They are the same population read two ways and must agree.");
     }
 
-    // ---- the two assumptions the chain read rests on ------------------------
+    // ---- the assumptions the chain read rests on ----------------------------
 
     /// <summary>
     /// <b>Every conflict declaration sits inside a mapping's own chain.</b> This
@@ -456,15 +628,16 @@ public class ConcurrencyConflictDeclarationTests
     public void Every_conflict_declaration_under_the_api_directories_sits_in_a_mapping_chain()
     {
         DirectoryInfo root = RepositoryRoot();
-        int swept = ApiSourceFiles(root).Sum(file => ConflictDeclaration.Count(Text(root, file)));
+        int swept = ApiSourceFiles(root).Sum(file => ConflictDeclaration.Count(Source(root, file)));
         int walked = TheMappings.Value.Sum(mapping => ConflictDeclaration.Count(mapping.Chain));
 
         swept.ShouldBeGreaterThan(
             0,
-            "no 409 declaration was found anywhere under src/*/Api. Twenty-five chains declared one when "
-            + "this guard was written, so zero means the sweep is reading nothing — most likely the "
+            "no 409 declaration was found anywhere under src/*/Api. Every route in CanAnswerConflict is "
+            + "supposed to carry one, so zero means the sweep is reading nothing — most likely the "
             + "declaration has been spelled some other way than "
-            + ".ProducesProblem(StatusCodes.Status409Conflict).");
+            + ".ProducesProblem(StatusCodes.Status409Conflict), or the comment masker is blanking live "
+            + "source.");
 
         walked.ShouldBe(
             swept,
@@ -489,7 +662,7 @@ public class ConcurrencyConflictDeclarationTests
 
         foreach (string file in ApiSourceFiles(root))
         {
-            string text = Text(root, file);
+            string text = Source(root, file);
             foreach (Match group in GroupPrefix.Matches(text))
             {
                 int end = StatementEnd(text, group.Index);
@@ -511,13 +684,138 @@ public class ConcurrencyConflictDeclarationTests
             + "and mapping metadata.");
     }
 
+    /// <summary>
+    /// <b>The masker's assumptions hold.</b> Masking comments is what stops a
+    /// commented-out declaration being credited, and stepping over string
+    /// literals is what stops an unbalanced bracket inside a <c>WithSummary</c>
+    /// running one chain into the next and borrowing its 409. Both rest on the
+    /// literal forms in these files being simple ones. That is true today and is
+    /// asserted here rather than assumed, because a masker meeting a shape it
+    /// was never taught mis-reads silently and in the passing direction.
+    /// </summary>
+    [Fact]
+    public void The_api_sources_use_only_the_string_and_comment_forms_this_reader_can_mask()
+    {
+        DirectoryInfo root = RepositoryRoot();
+        List<string> offenders = [];
+
+        foreach (string file in ApiSourceFiles(root))
+        {
+            string text = Text(root, file);
+            foreach ((string form, string why) in UnmaskableLiteralForms)
+            {
+                int at = text.IndexOf(form, StringComparison.Ordinal);
+                if (at >= 0)
+                {
+                    offenders.Add($"{file}:{LineOf(text, at)} contains {form} — {why}");
+                }
+            }
+        }
+
+        offenders.ShouldBeEmpty(
+            $"{offenders.Count} source file(s) use a literal form this reader's masker does not handle:"
+            + Environment.NewLine + string.Join(Environment.NewLine, offenders) + Environment.NewLine
+            + "The masker is a single pass that treats an unescaped double quote as opening a literal "
+            + "that ends at the next one on the same line, and everything from // to end of line as a "
+            + "comment. Each form above breaks that, and it breaks it silently: the mask would blank live "
+            + "source or expose a comment, and the partition above would be judged against text that is "
+            + "not the source. Teach MaskComments and EndOfStringLiteral the new form, or keep it out of "
+            + "src/*/Api.");
+    }
+
+    // ---- the reader's two defects, constructed rather than argued -----------
+
+    /// <summary>
+    /// <b>A commented-out declaration is not credited.</b> Catching exactly this
+    /// omission is the guard's only job, and before the mask it was the one
+    /// thing the guard could not see: commenting the line out <em>inside</em> a
+    /// chain left every assertion green while the generated document lost the
+    /// declaration, and the flat-sweep cross-check could not catch it either,
+    /// because the sweep counted the commented line too.
+    ///
+    /// <para>
+    /// Constructed rather than argued. This repository has a recorded habit of
+    /// guards whose claim about themselves is false, and the cheap way to find
+    /// out is to build the thing the guard says it catches and watch it get
+    /// caught. Synthetic source, so no <c>src/</c> file has to be broken to run
+    /// it — and permanent, so the proof does not evaporate after one run.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void A_declaration_commented_out_inside_a_chain_is_not_credited()
+    {
+        const string live =
+            "group.MapPost(\"/retire\", Retire)\n"
+            + "    .ProducesProblem(StatusCodes.Status409Conflict);\n";
+        const string commented =
+            "group.MapPost(\"/retire\", Retire)\n"
+            + "    // .ProducesProblem(StatusCodes.Status409Conflict);\n";
+
+        ConflictDeclaration.IsMatch(MaskComments(live)).ShouldBeTrue(
+            "a live declaration must still be read after masking. If this fails the mask is blanking "
+            + "source, and every route would report as declaring nothing.");
+
+        ConflictDeclaration.IsMatch(MaskComments(commented)).ShouldBeFalse(
+            "a declaration commented out inside a chain must not be credited. It is absent from the "
+            + "generated document, so crediting it is the guard reporting compliance on the exact "
+            + "omission it exists to catch.");
+    }
+
+    /// <summary>
+    /// <b>An unbalanced bracket inside a summary cannot run one chain into the
+    /// next.</b> <c>StatementEnd</c> counts brackets to survive a lambda, and an
+    /// unbalanced <c>(</c> inside a <c>WithSummary("…")</c> used to leave the
+    /// depth permanently positive — so the chain ran past its own <c>;</c> and
+    /// inherited the next mapping's declarations. A route could be made to look
+    /// compliant by borrowing its neighbour's 409, and the only assertion that
+    /// noticed was the walked-versus-swept arithmetic, whose message points the
+    /// author at the wrong thing entirely.
+    /// </summary>
+    [Fact]
+    public void An_unbalanced_bracket_inside_a_summary_does_not_run_one_chain_into_the_next()
+    {
+        const string source =
+            "group.MapPost(\"/retire\", Retire)\n"
+            + "    .WithSummary(\"Retire a camera (terminal\")\n"
+            + "    .ProducesProblem(StatusCodes.Status404NotFound);\n"
+            + "group.MapPost(\"/rename\", Rename)\n"
+            + "    .ProducesProblem(StatusCodes.Status409Conflict);\n";
+
+        string masked = MaskComments(source);
+        int end = StatementEnd(masked, 0);
+
+        end.ShouldBeGreaterThan(
+            0,
+            "the first chain's terminating semicolon was not found at all, so every mapping in a file "
+            + "like this would be reported as unreadable.");
+
+        string chain = masked[..end];
+
+        chain.ShouldNotContain(
+            "MapPost(\"/rename\"",
+            Case.Sensitive,
+            "the first chain swallowed the mapping after it. An unbalanced bracket inside a string is "
+            + "the way a route borrows its neighbour's declarations and passes while its own document "
+            + "says nothing of the kind.");
+
+        ConflictDeclaration.IsMatch(chain).ShouldBeFalse(
+            "the first chain declares only 404, and must not be credited with the 409 that belongs to "
+            + "the mapping below it.");
+    }
+
     // ---- reading the surface ------------------------------------------------
+
+    private static bool Same(string left, string right) =>
+        string.Equals(left, right, StringComparison.Ordinal);
 
     private static string Describe(MutatingMapping mapping) =>
         $"{mapping.File}:{mapping.Line} {mapping.Identity}";
 
+    private static string MechanismFor(string route) =>
+        CanAnswerConflict.First(capable => Same(capable.Route, route)).Mechanism;
+
     private static string ReasonFor(string route) =>
-        ConflictFree.First(free => string.Equals(free.Route, route, StringComparison.Ordinal)).Reason;
+        CannotAnswerConflict.First(free => Same(free.Route, route)).Reason;
 
     /// <summary>
     /// Every mutating mapping under <c>src/*/Api</c>, with the prefix of the
@@ -531,7 +829,7 @@ public class ConcurrencyConflictDeclarationTests
 
         foreach (string file in ApiSourceFiles(root))
         {
-            string text = Text(root, file);
+            string text = Source(root, file);
             foreach (Match call in MutatingMappingCall.Matches(text))
             {
                 mappings.Add(Mapping(file, text, call));
@@ -608,15 +906,29 @@ public class ConcurrencyConflictDeclarationTests
     /// <summary>
     /// The index of the semicolon that ends the statement starting at
     /// <paramref name="from"/>, ignoring semicolons nested inside brackets — a
-    /// chain may carry a lambda.
+    /// chain may carry a lambda — and stepping over string literals whole.
+    ///
+    /// <para>
+    /// The literals matter. Without this, an unbalanced <c>(</c> inside a
+    /// <c>WithSummary("…")</c> leaves the depth counter permanently positive, so
+    /// the chain runs past its own <c>;</c> into the next mapping and inherits
+    /// whatever that one declares — a route can be made to look compliant by
+    /// borrowing its neighbour's 409. Comments are already blank by the time
+    /// this runs, so only strings are left to step over.
+    /// </para>
     /// </summary>
     private static int StatementEnd(string text, int from)
     {
         int depth = 0;
-        for (int i = from; i < text.Length; i++)
+        int i = from;
+        while (i < text.Length)
         {
             char c = text[i];
-            if (c is '(' or '[' or '{')
+            if (c == '"')
+            {
+                i = EndOfStringLiteral(text, i);
+            }
+            else if (c is '(' or '[' or '{')
             {
                 depth++;
             }
@@ -628,10 +940,108 @@ public class ConcurrencyConflictDeclarationTests
             {
                 return i;
             }
+
+            i++;
         }
 
         return -1;
     }
+
+    /// <summary>
+    /// The index of the quote closing the literal opened at
+    /// <paramref name="open"/>. A newline ends the search: these files hold no
+    /// verbatim or raw literals — asserted by
+    /// <see cref="The_api_sources_use_only_the_string_and_comment_forms_this_reader_can_mask"/>
+    /// — so a quote with no partner on its own line is a reader error, and
+    /// stopping at the line end contains it instead of swallowing the rest of
+    /// the file.
+    /// </summary>
+    private static int EndOfStringLiteral(string text, int open)
+    {
+        for (int i = open + 1; i < text.Length; i++)
+        {
+            if (text[i] is '"' or '\n')
+            {
+                return i;
+            }
+        }
+
+        return text.Length - 1;
+    }
+
+    /// <summary>
+    /// The source with every comment blanked to spaces, length and line breaks
+    /// preserved so offsets and line numbers still refer to the real file.
+    ///
+    /// <para>
+    /// This is the fix for a hole the earlier reader had: commenting out the
+    /// <c>.ProducesProblem(StatusCodes.Status409Conflict)</c> <em>inside</em> a
+    /// chain left all its assertions green while the generated document lost the
+    /// declaration — and the flat-sweep cross-check could not catch it, because
+    /// the sweep counted the commented line too. Catching exactly that omission
+    /// is the guard's only job.
+    /// </para>
+    ///
+    /// <para>
+    /// One pass, not two: 42 lines under <c>src/*/Api</c> carry a quote inside a
+    /// comment, so a comment pass that did not know about strings and a string
+    /// pass that did not know about comments would each corrupt what the other
+    /// relies on.
+    /// </para>
+    /// </summary>
+    private static string MaskComments(string text)
+    {
+        char[] masked = text.ToCharArray();
+        int i = 0;
+        while (i < text.Length)
+        {
+            if (text[i] == '"')
+            {
+                i = EndOfStringLiteral(text, i) + 1;
+            }
+            else if (Starts(text, i, "//"))
+            {
+                while (i < text.Length && text[i] != '\n')
+                {
+                    masked[i] = ' ';
+                    i++;
+                }
+            }
+            else if (Starts(text, i, "/*"))
+            {
+                i = BlankBlockComment(text, masked, i) + 1;
+            }
+            else
+            {
+                i++;
+            }
+        }
+
+        return new string(masked);
+    }
+
+    /// <summary>
+    /// Blanks a <c>/* … *&#47;</c> comment and returns the index of its last
+    /// character, leaving newlines in place so line numbers survive.
+    /// </summary>
+    private static int BlankBlockComment(string text, char[] masked, int start)
+    {
+        int close = text.IndexOf("*/", start + 2, StringComparison.Ordinal);
+        int end = close < 0 ? text.Length : close + 2;
+        for (int i = start; i < end; i++)
+        {
+            if (text[i] != '\n')
+            {
+                masked[i] = ' ';
+            }
+        }
+
+        return end - 1;
+    }
+
+    private static bool Starts(string text, int index, string token) =>
+        index + token.Length <= text.Length
+        && string.CompareOrdinal(text, index, token, 0, token.Length) == 0;
 
     private static int LineOf(string text, int index)
     {
@@ -649,10 +1059,21 @@ public class ConcurrencyConflictDeclarationTests
 
     /// <summary>
     /// The file's text with <c>\r</c> stripped, so a pattern anchored to a line
-    /// end behaves the same on both platforms.
+    /// end behaves the same on both platforms. Raw — only the masker assumption
+    /// test reads this; everything else reads <see cref="Source"/>.
     /// </summary>
     private static string Text(DirectoryInfo root, string file) =>
         File.ReadAllText(Path.Combine(root.FullName, file)).Replace("\r", string.Empty, StringComparison.Ordinal);
+
+    /// <summary>
+    /// What every reader in this file matches against: the source with comments
+    /// blanked. Memoised because nine tests walk the same forty-odd files.
+    /// </summary>
+    private static string Source(DirectoryInfo root, string file) =>
+        MaskedSources.GetOrAdd(file, key => MaskComments(Text(root, key)));
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> MaskedSources =
+        new(StringComparer.Ordinal);
 
     private static List<string> ApiSourceFiles(DirectoryInfo root)
     {
@@ -693,10 +1114,16 @@ public class ConcurrencyConflictDeclarationTests
     private const string GuardSource = "tests/Architecture.Tests/ConcurrencyConflictDeclarationTests.cs";
 
     /// <summary>
-    /// A route that cannot produce the conflict, and why. The reason is carried
-    /// into the mirror failure, so someone who adds a 409 to one of these is
-    /// told what the write path actually does rather than merely that the line
-    /// is unwelcome.
+    /// A route that can answer <c>409</c>, and by which of the four mechanisms.
+    /// The mechanism is carried into the omission failure, so someone who
+    /// deletes a declaration is told what the route actually does rather than
+    /// merely that a line is missing.
+    /// </summary>
+    private sealed record ConflictCapableRoute(string Route, string Mechanism);
+
+    /// <summary>
+    /// A route that cannot answer <c>409</c>, and why — a reason that has to
+    /// clear all four mechanisms, not just the lost update.
     /// </summary>
     private sealed record ConflictFreeRoute(string Route, string Reason);
 
@@ -709,7 +1136,11 @@ public class ConcurrencyConflictDeclarationTests
         string Chain,
         string? Failure)
     {
-        public string Identity => $"{Verb} {Prefix}{Route}";
+        /// <summary>
+        /// Context-qualified, because the prefix alone is not unique: two
+        /// contexts map <c>/webhook-integrations</c> today. See the class doc.
+        /// </summary>
+        public string Identity => $"{Context} {Verb} {Prefix}{Route}";
 
         /// <summary>The bounded context, from <c>src/&lt;Context&gt;/Api</c>.</summary>
         public string Context => File.Split('/') is [_, string context, ..] ? context : File;
