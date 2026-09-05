@@ -4,8 +4,8 @@ using SmartSentinelEye.Integration.Tests.Fixtures;
 namespace SmartSentinelEye.Integration.Tests.StreamDistribution;
 
 /// <summary>
-/// Spec 076 / issue #198 — the first integration observation of the
-/// <c>Provisioning → Healthy</c> edge. Every stream test before this one
+/// Spec 076 / issue #198 — the first integration observation of a stream
+/// reaching <c>Healthy</c>. Every stream test before this one
 /// pointed its camera at an address nothing served, so the suite only ever
 /// watched the failure half of the state machine.
 ///
