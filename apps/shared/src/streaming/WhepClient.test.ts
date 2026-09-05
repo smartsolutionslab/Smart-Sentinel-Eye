@@ -118,6 +118,14 @@ function attachedTracks(videoEl: HTMLVideoElement): FakeTrack[] {
   return (attached as unknown as FakeMediaStream).getTracks();
 }
 
+/**
+ * The kinds a `<video>` would actually play — the operator-visible fact. A list
+ * without `video` in it is a black tile, whatever the attachment did.
+ */
+function attachedKinds(videoEl: HTMLVideoElement): string[] {
+  return attachedTracks(videoEl).map((track) => track.kind);
+}
+
 /** The `[resilience]` payloads logged under `transition`, in order. */
 function resilienceLines(calls: unknown[][], transition: string): Record<string, unknown>[] {
   const lines: Record<string, unknown>[] = [];
@@ -496,6 +504,66 @@ describe('WhepClient', () => {
 
       expect(videoEl.srcObject, 'the SFU-supplied stream must be attached unchanged').toBe(sfuStream);
       expect(resilienceLines(info.mock.calls, 'track-without-stream')).toEqual([]);
+    });
+
+    /**
+     * An answer that mixes the two shapes — one `m=` section carrying an `msid`
+     * and one not.
+     *
+     * <p>
+     * <b>`msid` is per-`m=`-section, not per-answer.</b> The two tests above
+     * hold within the no-`msid` family and the control holds within the
+     * with-`msid` family; neither says anything about a session where the
+     * families meet. They do meet: a MediaMTX that publishes video with a
+     * stream association and audio without produces exactly one event of each
+     * shape, in an order nobody controls.
+     * </p>
+     *
+     * <p>
+     * <b>Both orders, because a one-sided guard rots.</b> The failing order is
+     * the regression; the passing order is what the fix must not break on its
+     * way to fixing the other. Each asserts the kinds a `&lt;video&gt;` would
+     * play, because "the picture is still there" is the fact an operator can
+     * check and the attachment mechanics are not.
+     * </p>
+     */
+    describe('an answer mixing a track with a stream association and one without', () => {
+      /**
+       * RED. The accumulation runs inside the no-`msid` branch only, so the
+       * bare audio track starts a fresh session stream holding audio alone and
+       * assigns it over the SFU stream — the picture goes out. Pre-fix the bare
+       * track was dropped and the picture survived, so this is a regression the
+       * fix introduced rather than a gap it left.
+       */
+      it('Keeps the picture when the video track carried a stream and the audio track did not', async () => {
+        const pc = await connectedSession();
+        const sfuStream = new FakeMediaStream([aTrack('video')]) as unknown as MediaStream;
+
+        pc.fireTrack(aTrack('video'), [sfuStream]);
+        pc.fireTrack(aTrack('audio'));
+
+        expect(attachedKinds(videoEl), 'a bare audio track must not evict the picture already attached').toContain(
+          'video',
+        );
+      });
+
+      /**
+       * GREEN today, and kept for the direction the fix must not trade away.
+       * The bare audio track attaches first, then the SFU stream replaces it
+       * wholesale — the picture arrives, so the operator-visible fact holds,
+       * albeit for a reason no one designed.
+       */
+      it('Keeps the picture when the audio track arrived first without a stream and the video track carried one', async () => {
+        const pc = await connectedSession();
+        const sfuStream = new FakeMediaStream([aTrack('video')]) as unknown as MediaStream;
+
+        pc.fireTrack(aTrack('audio'));
+        pc.fireTrack(aTrack('video'), [sfuStream]);
+
+        expect(attachedKinds(videoEl), 'a picture arriving after a bare track must reach the element').toContain(
+          'video',
+        );
+      });
     });
   });
 });
