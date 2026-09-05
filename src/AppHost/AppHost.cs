@@ -159,13 +159,16 @@ var mediamtx = builder
 // and by `AppHostE2ESwitchTests`, but not by the end-to-end stack boot, which
 // is a plain `dotnet run` in `ci.yml`. The exclusion was right while nothing
 // in the integration lane consumed the picture — an integration run has no
-// browser, so it paid for a container, a 45 MB bind mount and a permanently
-// looping FFmpeg it never read. That condition is gone: the integration lane
-// now reads this source. `AspireFixture.RtspTestSourceUrl` points a camera at
-// `rtsp://fixture-video:8554/loop`, which is how a test observes the
-// `Provisioning -> Healthy` edge rather than only the failure half. The
-// integration run pays one container start plus a `-c copy` FFmpeg loop
-// against an already-H.264 clip, so nothing transcodes.
+// browser, so it would otherwise have paid for a container, a 46 MB bind
+// mount and a permanently looping FFmpeg it never read. That condition is
+// gone: the integration lane now reads this source.
+// `AspireFixture.RtspTestSourceUrl` points a camera at
+// `rtsp://fixture-video:8554/loop`, which is how a test observes a stream
+// reaching `Healthy` rather than only the failure half. What the integration
+// run now pays is one container start plus a `-c copy` FFmpeg loop against an
+// already-H.264 clip, so nothing transcodes — and **no image pull at all**,
+// because `bluenviron/mediamtx:latest-ffmpeg` is the same tag the ungated
+// `mediamtx` above already pulls.
 // `E2ETests_argument_excludes_the_dev_only_resources` now asserts the
 // presence, so folding this back under `!isE2ETests` fails there.
 if (isRunMode)
