@@ -140,27 +140,35 @@ var mediamtx = builder
     .WithHttpEndpoint(targetPort: 8889, name: "whep")
     .WithEndpoint(targetPort: 8554, name: "rtsp", scheme: "tcp");
 
-// fixture-video (spec 056) — one looping clip over RTSP, so an automated check
-// can see a picture. Until now every overlay fixture pointed its camera at an
-// address nothing served, so the tiles rendered `WHEP returned 404` and a tile
-// that drew its label ONLY when the video failed passed the whole suite.
+// fixture-video (spec 056, spec 076) — one looping clip over RTSP, so an
+// automated check can see a picture. Before spec 056 every overlay fixture
+// pointed its camera at an address nothing served, so the tiles rendered
+// `WHEP returned 404` and a tile that drew its label ONLY when the video
+// failed passed the whole suite.
 //
-// **Gated `isRunMode && !isE2ETests` — deliberately NOT `camera-sim`'s gate**,
-// which since #2013 carries a third conjunct (`isScenarioSimulatorEnabled`).
-// The end-to-end job needs a picture and does not need a simulator, so the two
+// **Gated `isRunMode` — deliberately NOT `camera-sim`'s gate**, which since
+// #2013 carries a third conjunct (`isScenarioSimulatorEnabled`). The
+// end-to-end job needs a picture and does not need a simulator, so the two
 // blocks must not be folded together: adding that conjunct here would delete
 // spec 056's video source from CI, which is exactly what
 // `The_simulator_argument_leaves_the_web_apps_and_the_fixture_video_in_place`
 // exists to prevent.
 //
-// The Playwright stack still gets this:
-// `E2ETests` is set by the *integration* fixture (`AspireFixture`) and by
-// `AppHostE2ESwitchTests`, but **not** by the end-to-end stack boot, which is a
-// plain `dotnet run` in `ci.yml`. So this is present where a browser needs a
-// picture and absent where nothing consumes one -- an integration run has no
-// browser, and would otherwise pay for a container, a 45 MB bind mount and a
-// permanently looping FFmpeg it never reads.
-if (isRunMode && !isE2ETests)
+// **Both lanes get this, and the `!isE2ETests` conjunct is gone (spec 076,
+// #198).** `E2ETests` is set by the *integration* fixture (`AspireFixture`)
+// and by `AppHostE2ESwitchTests`, but not by the end-to-end stack boot, which
+// is a plain `dotnet run` in `ci.yml`. The exclusion was right while nothing
+// in the integration lane consumed the picture — an integration run has no
+// browser, so it paid for a container, a 45 MB bind mount and a permanently
+// looping FFmpeg it never read. That condition is gone: the integration lane
+// now reads this source. `AspireFixture.RtspTestSourceUrl` points a camera at
+// `rtsp://fixture-video:8554/loop`, which is how a test observes the
+// `Provisioning -> Healthy` edge rather than only the failure half. The
+// integration run pays one container start plus a `-c copy` FFmpeg loop
+// against an already-H.264 clip, so nothing transcodes.
+// `E2ETests_argument_excludes_the_dev_only_resources` now asserts the
+// presence, so folding this back under `!isE2ETests` fails there.
+if (isRunMode)
 {
     builder
         .AddContainer("fixture-video", "bluenviron/mediamtx", "latest-ffmpeg")
