@@ -52,9 +52,14 @@ public static class CameraEndpoints
         // 404 rather than 403 for another fab's camera (spec 028 FR-004), and
         // it is declared here so the generated OpenAPI says so: a 403 would
         // confirm the camera exists, letting an operator enumerate another
-        // plant's cameras one request at a time. 409 is absent because
-        // retiring is idempotent — an already-retired camera is 204, not a
-        // conflict.
+        // plant's cameras one request at a time. 409 covers the lost update,
+        // not the domain conflict — two different races. Retiring is
+        // idempotent, so an already-retired camera is 204 rather than a
+        // conflict; but the handler loads a camera that already exists,
+        // mutates it and saves, so a concurrent write to the same row makes
+        // EF's affected-row check disagree and the shared handler answers
+        // AGGREGATE_VERSION_STALE (ADR-0113 Layer 2, ADR-0119). The
+        // idempotence of the first race says nothing about the second.
         writes.MapPost("/{camera:guid}/retire", Retire)
             .WithName("RetireCamera")
             .WithSummary(
@@ -63,7 +68,8 @@ public static class CameraEndpoints
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound);
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
 
         // 412 and 428 are declared because both are reachable and neither is a
         // failure of the request's content: 428 when no If-Match is sent, 412
