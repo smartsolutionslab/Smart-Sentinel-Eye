@@ -71,7 +71,7 @@ awk '/\.Map(Post|Put|Patch|Delete)\(/ {c=1; b=""; s=FNR; v=$0}
 | 1 | `POST /rules/{name}/dry-run` | no persistence — mapped on the **read** group, "nothing is persisted" | **no** |
 | 2 | `POST /events/manual` | `IngestEventCommandHandler`: `events.Add(@event)` then `SaveAsync` | **no** — insert only |
 | 3 | `POST /events/webhook/{integrationName}` | reads the integration, then the same insert-only path | **no** — insert only |
-| 4 | `POST /streams/authorize` | validates a forwarded token; no `DbContext` | **no** |
+| 4 | `POST /streams/authorize` | `AuthorizeWhepCommandHandler`: validates a forwarded token against a read-only stream lookup; no `SaveAsync` | **no** |
 | 5 | `POST /streams/kiosk-latency` | records a meter value; nothing enters a domain model | **no** |
 | 6 | `POST /cameras/{camera}/retire` | `RetireCameraCommandHandler`: load, `retiring.Retire(...)`, `SaveAsync` | **yes** |
 | 7 | `DELETE /devices/{clientId}` | `DisableDeviceCommandHandler`: load, `client.Disable(clock)`, `SaveAsync` | **yes** |
@@ -87,8 +87,9 @@ the three declares it.
 **Rows 1–5 must stay undeclared.** An insert cannot raise
 `DbUpdateConcurrencyException` — the exception is EF's affected-row check on an
 `UPDATE` or `DELETE`, and a fresh row has no prior version to disagree with.
-Two of the five touch no database at all. **Declaring 409 on these five would be
-a new false claim of exactly the kind being fixed.**
+One of the five touches no database at all, and two more only read one.
+**Declaring 409 on these five would be a new false claim of exactly the kind
+being fixed.**
 
 ### The mechanism, verified rather than assumed
 
