@@ -34,8 +34,25 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
     /// </para>
     ///
     /// <para>
-    /// One spelling, in one place (spec 076, #198): a test that hard-codes the
-    /// string is a second spelling that drifts from the AppHost resource name.
+    /// One constant per language, and there are two (spec 076, #198): this one
+    /// for the C# integration suite, and <c>FIXTURE_VIDEO_RTSP_URL</c> in
+    /// <c>e2e/support/live-video-wall.ts</c> for the Playwright suite. They are
+    /// not quite twins — the TypeScript one honours an
+    /// <c>E2E_FIXTURE_VIDEO_RTSP_URL</c> environment override, which this
+    /// constant has no equivalent of.
+    /// </para>
+    ///
+    /// <para>
+    /// The string is spelled a third time in the explanatory comment above the
+    /// <c>fixture-video</c> resource in <c>AppHost.cs</c>, and its <em>parts</em>
+    /// live in more places still: the resource name in
+    /// <c>AddContainer("fixture-video", …)</c>, the <c>loop:</c> path name in
+    /// <c>src/AppHost/Resources/fixture-video.yml</c>, and the
+    /// <c>targetPort: 8554</c> endpoint. Nothing checks any of them against any
+    /// other — drift fails the build in zero places, and the only signal is a
+    /// 30 s stream-state timeout in this suite. So a test that hard-codes the
+    /// string adds a spelling to a set that is already only held together by
+    /// hand: use the constant.
     /// </para>
     /// </summary>
     public const string RtspTestSourceUrl = "rtsp://fixture-video:8554/loop";
