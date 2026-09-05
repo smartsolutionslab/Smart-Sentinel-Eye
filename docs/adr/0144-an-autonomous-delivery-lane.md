@@ -6,6 +6,9 @@
 **Amended:** 2026-09-03 — phase 4a gained its characterisation path
 (see *Phase 4a has two colours*), in place, on the day of acceptance and
 before the lane had delivered anything
+**Amended:** 2026-09-05 — phase 7 no longer waits for CI; PRs are parked
+and merged when their checks conclude (see *The lane does not wait for
+CI*). The green condition is unchanged
 
 **Supersedes:** —
 **Superseded by:** —
@@ -162,15 +165,54 @@ characterisation path passes quietly.
 
 ### Merging
 
-The orchestrator opens the PR against `develop` with `--base develop`,
-waits for CI, and merges with `--rebase --admin --delete-branch` when
-**every** check has concluded successfully. A cancelled, skipped-required
-or failed check is not green; `gh run watch` exiting is not evidence of
-green (it exits on cancellation too), so the merge condition is read from
-the check conclusions, not from a watcher's exit.
+The orchestrator opens the PR against `develop` with `--base develop`
+and merges with `--rebase --admin --delete-branch` when **every** check
+has concluded successfully. A cancelled, skipped-required or failed check
+is not green; `gh run watch` exiting is not evidence of green (it exits
+on cancellation too), so the merge condition is read from the check
+conclusions, not from a watcher's exit.
 
 Review happens **after** the merge, on `develop`'s history. That is the
 trade this lane makes and the reason eligibility is opt-in.
+
+#### The lane does not wait for CI (amended 2026-09-05)
+
+As first written, the orchestrator **waited** for CI before taking the
+next issue. In practice that is the single largest idle cost in a run:
+this repo's `pull_request` trigger is deliberately unfiltered and fires
+the full set — build, coverage gate, Docker integration tests, and a
+full-stack Playwright e2e — which is twenty-plus minutes per issue with
+the loop doing nothing.
+
+Waiting was never what made the merge safe. The **green condition** is.
+So the wait is dropped and the condition kept:
+
+- Phase 7 opens the PR, starts the watcher in the background, and
+  returns the issue as **parked**. Parking is a normal ending of
+  `/next-issue`, not a failure mode.
+- **Green merges immediately**, mid-phase on another issue if that is
+  when it lands.
+- **Red does not pre-empt.** The issue in hand runs to its own ending
+  first — a phase abandoned halfway is the state this workflow resumes
+  worst from — and only then does the failure get its one retry with the
+  CI log, then `agent:blocked`.
+
+Two constraints keep concurrency from becoming its own problem:
+
+- **At most three PRs parked at once.** At three the loop settles one
+  before taking a fourth. The cap is not throughput management; it is
+  how a branch that cannot rebase is found in hours rather than at the
+  end of a run.
+- **Every parked branch is rebased after every merge**, not once at the
+  end. ADR-0087's rebase-merge renames the SHAs, so a parked branch
+  still holds the **old copies** of whatever just landed and they replay
+  as conflicts against themselves.
+
+**What this does not change:** nothing merges that CI has not passed,
+and no gate moves. The board also cannot recover the parked list — a
+card reads In Progress whether its PR is unopened, parked, or merged a
+second ago — so an interrupted run recovers it from `gh pr list`, where
+an open PR with concluded green checks is a merge nobody made.
 
 ### Failure
 
@@ -224,6 +266,16 @@ has earned a human, and says so on itself.
 - **Negative:** an unattended run can spend a long time on an issue that
   a human would have abandoned in a minute. Bounded by the one-retry
   policy, not eliminated by it.
+- **Negative (2026-09-05 amendment):** up to three branches are open
+  against a moving `develop`, so a merge can invalidate work already
+  done. Bounded by rebasing after every merge and by the cap, and the
+  failure is loud — a conflicting rebase blocks its issue the normal way.
+  The cost is real and is accepted against twenty-plus idle minutes per
+  issue.
+- **Negative (2026-09-05 amendment):** the parked list lives only in the
+  running loop. An interrupted run leaves green PRs unmerged and cards
+  reading In Progress, indistinguishable from claimed-but-unstarted, so
+  recovery goes through `gh pr list` rather than the board.
 
 ## Alternatives Considered
 
@@ -233,6 +285,21 @@ preserves every gate and delivers nothing, because the board fills with
 half-built issues whose branches drift behind `develop` while they wait.
 Seven human touches per issue is the cost being removed, and spreading
 them over a week does not remove it.
+
+**Merge without waiting for green** (considered at the 2026-09-05
+amendment) — open the PR and merge it, letting CI report on `develop`.
+Rejected outright: it is the one thing that would actually weaken a gate,
+which this lane may not do, and `develop`'s protection rules require
+linear history (ADR-0087), so a red commit is not cheaply undone. The
+wait is the cost being removed; the condition stays.
+
+**Merge parked PRs only at issue boundaries** (same amendment) — never
+interleave a merge with implementation work. Rejected as buying little:
+a merge is three commands against the GitHub API and touches no working
+tree, so the interleaving risk it avoids is close to zero, while the
+delay it adds is real — a PR that goes green a minute into a long issue
+would sit unmerged for an hour, and the branches behind it would rebase
+against a `develop` that is already stale.
 
 **Gate at spec and PR only** — the loop stops twice per issue. Genuinely
 attractive, and rejected only because the spec gate duplicates a decision
