@@ -30,7 +30,7 @@ public sealed class LayoutRevisionArchivedDomainEventHandler(
                 RevisionNumber: revisionNumber.Value,
                 ArchivedAt: archivedAt,
                 ArchivedBy: archivedBy.Value,
-                Metadata: new EventMetadata(Guid.CreateVersion7(), archivedAt, null, archivedBy.Value)),
+                Metadata: new EventMetadata(Guid.CreateVersion7(), archivedAt, fab.Value, archivedBy.Value)),
             cancellationToken);
 
         await broadcaster.ArchivedAsync(

@@ -59,9 +59,15 @@ public sealed class SearchAuditQueryHandler(IAuditEventQuerySource events)
             // Cross-fab rows (fab = null) are included, not excluded. They are
             // not restricted to a fab, so restricting who may read them by fab
             // made them readable by nobody: every operator belongs to a fab,
-            // and most contexts publish with no fab at all — camera, stream,
-            // layout, overlay and variable events among them. The whole class
-            // of row was invisible to every real caller (#1300).
+            // so the whole class of row was invisible to every real caller
+            // (#1300).
+            //
+            // That class is smaller than it was, and the enumeration this
+            // replaced had gone stale. Camera, layout and variable events all
+            // stamp the fab now (#2068). What legitimately publishes without
+            // one is overlay events, whose domain events carry no fab at all
+            // (ADR-0115), and retention. A stream-health event's fab is
+            // nullable and may still arrive null (#2076).
             List<FabIdentifier> allowed = [.. callerFabs.Select(FabIdentifier.From)];
             source = source.Where(auditEvent => auditEvent.Fab == null || allowed.Contains(auditEvent.Fab));
         }
