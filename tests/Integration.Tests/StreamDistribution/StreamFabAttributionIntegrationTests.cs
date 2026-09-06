@@ -6,7 +6,9 @@ using Microsoft.Extensions.Options;
 using SmartSentinelEye.Integration.Tests.Fixtures;
 using SmartSentinelEye.StreamDistribution.Infrastructure.Attribution;
 using SmartSentinelEye.StreamDistribution.Infrastructure.Persistence;
+using CameraIdentifier = SmartSentinelEye.StreamDistribution.Domain.Stream.CameraIdentifier;
 using StreamAggregate = SmartSentinelEye.StreamDistribution.Domain.Stream.Stream;
+using StreamState = SmartSentinelEye.StreamDistribution.Domain.Stream.StreamState;
 
 namespace SmartSentinelEye.Integration.Tests.StreamDistribution;
 
@@ -130,6 +132,63 @@ public class StreamFabAttributionIntegrationTests(AspireFixture aspire) : IAsync
 
         stored[inMunich].ShouldBe("munich");
         stored[inDresden].ShouldBe("dresden");
+    }
+
+    /// <summary>
+    /// Spec 083 T001 — FR-001 and FR-002. A camera pulled off the wall still
+    /// names the plant it stood in, and its stream's fab is that plant's
+    /// whether or not the hardware is still there.
+    ///
+    /// <para>
+    /// The assertion this test deliberately does <em>not</em> make is that the
+    /// request carries a particular query string. That would prove a string,
+    /// and would stay green against a catalogue that accepted the parameter
+    /// and filtered the row out anyway. What is asserted is resolution: the
+    /// map holds a key for a camera whose status is <c>Decommissioned</c>, and
+    /// the stream that key resolves ends one pass carrying "munich".
+    /// </para>
+    ///
+    /// <para>
+    /// Retire first, blank second. <c>CameraRetiredV1</c> retires the stream
+    /// and <c>Stream</c> carries an EF concurrency token, so a fab blanked
+    /// before that handler lands is the write that loses — and the row this
+    /// test depends on would quietly still have its fab.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_stream_whose_camera_was_decommissioned_reacquires_its_fab()
+    {
+        Guid camera = await ProvisionInMunichAsync();
+        await RetireAsync(camera);
+        await BlankTheFabAsync(camera);
+
+        // The arrange said out loud, because the whole test is meaningless if
+        // the camera is not actually retired: a Registered camera resolves
+        // today, and would make this green against unfixed code.
+        using HttpClient cameras = await aspire.CreateAdminClientAsync("camera-catalog");
+        HttpResponseMessage read = await cameras.GetAsync($"/cameras/{camera}");
+        read.StatusCode.ShouldBe(HttpStatusCode.OK, await read.Content.ReadAsStringAsync());
+
+        JsonElement retired = await read.Content.ReadFromJsonAsync<JsonElement>();
+        retired.GetProperty("status").GetString().ShouldBe("Decommissioned");
+        retired.GetProperty("fab").GetString().ShouldBe("munich");
+
+        IReadOnlyDictionary<Guid, string> fabsByCamera =
+            await RealLookup().FabsByCameraAsync(CancellationToken.None);
+
+        fabsByCamera.ShouldContainKey(camera);
+        fabsByCamera[camera].ShouldBe("munich");
+
+        (await AttributePassAsync(fabsByCamera)).ShouldBe(1);
+
+        await using StreamDistributionDbContext reread =
+            await aspire.CreateStreamDistributionDbContextAsync();
+        StreamAggregate stored = await reread.Streams
+            .AsNoTracking()
+            .SingleAsync(stream => stream.Camera == CameraIdentifier.From(camera));
+
+        stored.Fab.ShouldNotBeNull();
+        stored.Fab.Value.ShouldBe("munich");
     }
 
     /// <summary>
@@ -311,6 +370,49 @@ public class StreamFabAttributionIntegrationTests(AspireFixture aspire) : IAsync
 
         throw new TimeoutException(
             $"Stream for camera {camera} did not appear within {ProvisionTimeout.TotalSeconds:F0}s.{Environment.NewLine}" +
+            $"stream-distribution log:{Environment.NewLine}{aspire.RecentLogs("stream-distribution")}");
+    }
+
+    /// <summary>
+    /// Takes the camera off the wall and waits until StreamDistribution has
+    /// seen it.
+    ///
+    /// <para>
+    /// The wait is not politeness. <c>CameraRetiredV1</c> rides the outbox and
+    /// retires the stream row, so returning before that write lands would let
+    /// the caller blank a fab the retirement is about to overwrite.
+    /// </para>
+    /// </summary>
+    private async Task RetireAsync(Guid camera)
+    {
+        using HttpClient cameras = await aspire.CreateAdminClientAsync("camera-catalog");
+
+        HttpResponseMessage retired = await cameras.PostAsync($"/cameras/{camera}/retire", null);
+        retired.StatusCode.ShouldBe(
+            HttpStatusCode.NoContent, await retired.Content.ReadAsStringAsync());
+
+        DateTime deadline = DateTime.UtcNow + ProvisionTimeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await using StreamDistributionDbContext context =
+                await aspire.CreateStreamDistributionDbContextAsync();
+
+            bool seen = await context.Streams
+                .AsNoTracking()
+                .AnyAsync(stream =>
+                    stream.Camera == CameraIdentifier.From(camera)
+                    && stream.State == StreamState.Retired);
+
+            if (seen)
+            {
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500));
+        }
+
+        throw new TimeoutException(
+            $"Stream for camera {camera} was not retired within {ProvisionTimeout.TotalSeconds:F0}s.{Environment.NewLine}" +
             $"stream-distribution log:{Environment.NewLine}{aspire.RecentLogs("stream-distribution")}");
     }
 
