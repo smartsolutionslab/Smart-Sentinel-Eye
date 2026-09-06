@@ -52,4 +52,12 @@ internal static partial class Log
     // that did not happen.
     [LoggerMessage(Level = LogLevel.Warning, Message = "Migrations were stopped at {Context} before finishing. MigrationRunner is exiting non-zero; nothing after this point was migrated.")]
     public static partial void MigrationRunStopped(this ILogger logger, string context, Exception cancelled);
+
+    // Issue #2062. Error rather than Critical: by the time this can fire the
+    // migrations have already reported their own verdict, and a host that
+    // stumbles on the way out has not undone them. It is still said out loud,
+    // because it was previously the one way left for this process to end
+    // through the runtime with its reason on stderr.
+    [LoggerMessage(Level = LogLevel.Error, Message = "MigrationRunner failed to shut its host down cleanly. The migration result above still stands.")]
+    public static partial void MigrationHostShutdownFailed(this ILogger logger, Exception exception);
 }
