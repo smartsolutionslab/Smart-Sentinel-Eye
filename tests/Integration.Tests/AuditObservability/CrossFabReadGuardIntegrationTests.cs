@@ -37,9 +37,17 @@ public class CrossFabReadGuardIntegrationTests(AspireFixture aspire)
     /// <summary>
     /// The invariant is "never a fab the caller does not hold" — not "always
     /// the caller's own fab". A cross-fab row carries no fab and so belongs to
-    /// nobody's fab; excluding it hid camera, stream, layout, overlay and
-    /// variable history from every operator, since all of those publish
-    /// without one (#1300).
+    /// nobody's fab; excluding it hid that whole class of history from every
+    /// operator, since every operator belongs to a fab (#1300).
+    ///
+    /// <para>
+    /// The class is smaller than the enumeration this comment used to carry.
+    /// Camera, layout and variable events all stamp the fab now (#2068). What
+    /// legitimately publishes without one is overlay events, whose domain
+    /// events carry no fab at all (ADR-0115), and retention, which spans fabs.
+    /// A stream-health event's fab is nullable and may still arrive null
+    /// (#2076).
+    /// </para>
     ///
     /// <para>
     /// Seeds both a foreign row and a cross-fab row rather than asserting over
