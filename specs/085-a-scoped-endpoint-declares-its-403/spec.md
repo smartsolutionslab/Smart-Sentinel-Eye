@@ -134,11 +134,49 @@ misclassified nine routes. So: established before counting.
    `FabAuthorizationException`; `FabAuthorizationExceptionHandler` writes
    `403 RESOURCE_FAB_NOT_AUTHORIZED`. Registered unconditionally in
    `AddBearerAuthentication`, which all nine `Api/Program.cs` files call.
-3. **Handler refusal carrying the status.** A `Result` failure whose
-   `ApiError.Status` is `HttpStatusCode.Forbidden` (ADR-0089) rendered onto the
-   wire. One route today: `POST /streams/authorize`, via
-   `AuthorizeWhepErrors.Forbidden` — and it is `AllowAnonymous`, so producer 1
-   cannot reach it and producer 3 is the only reason it declares 403.
+3. **Handler refusal carrying the status.** An `ApiError` whose `Status` is
+   `HttpStatusCode.Forbidden` (ADR-0089) rendered onto the wire, **or** a
+   hand-written `Results.Problem(…, statusCode: Status403Forbidden)` returned
+   before any handler runs. One route today: `POST /streams/authorize`, which
+   uses both — the four `AuthorizeWhepErrors` variants (`Forbidden`,
+   `StreamUnavailable`, `ActionNotPermitted`, `ActionUnknown`), and
+   `WHEP_INVALID_PATH` in `StreamEndpoints.AuthorizeWhep`, which refuses a
+   malformed path before the command is built. It is `AllowAnonymous`, so
+   producer 1 cannot reach it and producer 3 is the only reason it declares 403.
+
+Reproduce the producer census without reading the prose (Git Bash; no `jq`, no
+`python`):
+
+```sh
+grep -rnE 'Status403Forbidden|HttpStatusCode\.Forbidden' --include=*.cs src/ \
+  | grep -vc ProducesProblem                                                  # 7
+```
+
+Two of the seven are producer 2 (`FabAuthorizationExceptionHandler`, one setting
+the response status and one the `ProblemDetails.Status`); four are producer 3's
+`AuthorizeWhepErrors` variants; the seventh is `WHEP_INVALID_PATH`. **Producer 1
+has no site at all** — the status is chosen by ASP.NET's authorization
+middleware, not written in `src/` — which is exactly why it was the producer
+nobody was reasoning about.
+
+**Producer 3 was first written here as the `ApiError` half alone**, and the
+seventh site then fitted none of the three as defined. Recorded rather than
+quietly widened, because this spec's own rhetorical weight is spec 075's lesson
+— *establish the producers before counting* — and a register naming three of a
+producer's four sites is that defect one document earlier. It changes no
+conclusion: the route is `AllowAnonymous`, so it is outside A13's antecedent, and
+it already declares 403.
+
+#### Why `WHEP_INVALID_PATH` is a 403 and not a 400
+
+Recorded because it reads as wrong and someone will re-open it. **403 for a
+malformed path is right here.** On this hook the status is a *decision channel*,
+not a description of the request: MediaMTX reads any non-2xx as *deny*. The
+file's discrimination is coherent — a malformed *credential* is 401
+(`AuthorizeWhepError.Unauthorized`, "missing, malformed, or expired") because a
+better credential fixes it; a path this product never serves is 403 because no
+credential does. That is verbatim the reasoning `ActionNotPermitted` and
+`ActionUnknown` already give in their own doc comments.
 
 ### The mechanism of the omission, which is worth writing down
 
@@ -156,12 +194,17 @@ in none of them.
 So the gap falls out exactly where producer 2 is absent — **OverlayDesigner's 8,
 which use no fab guard anywhere in `src/OverlayDesigner/Api`** — plus the nine
 places where producer 2 *is* present and the declaration still never followed:
-Identity's 8 and Audit's 1. `src/Identity/Api/WebhookRotationEndpoints.cs:136`
-even carries the sentence
+Identity's 8 and Audit's 1. `src/Identity/Api/WebhookRotationEndpoints.cs` even
+carries, in the body of its `Rotate` handler, the sentence
 
 > *"…instead of the 403 they have earned."*
 
-six lines from a chain that declares 400, 409, 412, 428 and 502, and no 403.
+while the chain that maps `Rotate`, in the same file, declared 400, 409, 412, 428
+and 502, and no 403. The sentence is at `:137-138` as of `5707b4f4`; it was at
+`:135-136` before phase 4b added two declarations above it, which is why this
+line first cited `136` and commit `371fa156`'s message cited `132` — the first
+line of the same comment block, then. Both were correct when written and were
+moved by this branch's own change.
 Nothing was reasoning about producer 1; the declarations propagated by imitation
 from the specs that introduced fab resolution, and stopped where those specs
 stopped.

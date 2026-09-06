@@ -29,8 +29,11 @@ produces"*. Record, in the class doc:
 
 - the measured population — 56 mappings, 54 scoped, **28 of them scoped only
   through a `MapGroup`**, 17 undeclared across 5 files in 3 contexts;
-- the three producers of 403 (scope policy, fab guard, `ApiError.Forbidden`) and
-  that **only the first is this rule's antecedent**;
+- the three producers of 403 — scope policy, fab guard, and a handler refusal
+  carrying the status (`ApiError.Forbidden`, *or* a hand-written
+  `Results.Problem(statusCode: 403)`, which is `WHEP_INVALID_PATH` in
+  `StreamEndpoints.AuthorizeWhep`) — and that **only the first is this rule's
+  antecedent**;
 - that the rule runs **one way** — `POST /streams/authorize` is anonymous and
   declares a 403 correctly, so a mirror would fail on correct code;
 - that `RequireScope` is used by no endpoint in `src/`, so a rule written to its
