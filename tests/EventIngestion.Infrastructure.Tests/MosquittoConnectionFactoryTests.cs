@@ -49,9 +49,9 @@ public class MosquittoConnectionFactoryTests
 
         MqttConnection connection = await factory.CreateAsync(CancellationToken.None);
 
-        connection.Options.ClientOptions.Credentials
+        connection.Options.Credentials
             .ShouldNotBeNull()
-            .GetPassword(connection.Options.ClientOptions)
+            .GetPassword(connection.Options)
             .ShouldBeEmpty();
     }
 
@@ -63,8 +63,8 @@ public class MosquittoConnectionFactoryTests
         MqttConnection connection = await factory.CreateAsync(CancellationToken.None);
 
         System.Text.Encoding.UTF8.GetString(
-                connection.Options.ClientOptions.Credentials.ShouldNotBeNull().GetPassword(
-                    connection.Options.ClientOptions))
+                connection.Options.Credentials.ShouldNotBeNull().GetPassword(
+                    connection.Options))
             .ShouldBe("a-token", "the happy path is unchanged — the token is still minted before the first connect.");
     }
 

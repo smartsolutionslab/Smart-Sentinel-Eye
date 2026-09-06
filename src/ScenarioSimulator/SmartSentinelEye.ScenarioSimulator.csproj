@@ -14,13 +14,22 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Spec 079: MqttPublisher takes its IMqttClient through an internal
+         constructor. The drop accounting — a disconnected publish counted rather
+         than thrown, and reported once — needs a connection state to control,
+         not a network. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>SmartSentinelEye.ScenarioSimulator.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
     <PackageReference Include="WolverineFx" />
     <PackageReference Include="WolverineFx.RabbitMQ" />
     <PackageReference Include="WolverineFx.RuntimeCompilation" />
     <PackageReference Include="MQTTnet" />
-    <PackageReference Include="MQTTnet.Extensions.ManagedClient" />
   </ItemGroup>
 
   <ItemGroup>

@@ -37,9 +37,25 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Error, Message = "Could not refresh the MQTT token before reconnect: {Error}.")]
     public static partial void MqttReconnectTokenFailed(this ILogger logger, string error);
 
+    // Distinct from MqttSubscriberConnected on purpose (spec 079 US3-AC1). A
+    // subscriber that reconnected without resubscribing is connected, healthy
+    // and receiving nothing; a connect line with no subscribe line beside it is
+    // the whole of that defect, and this is what makes it readable from the log.
+    [LoggerMessage(Level = LogLevel.Information, Message = "MQTT subscriber subscribed to '{Topic}' at QoS 1.")]
+    public static partial void MqttSubscriberResubscribed(this ILogger logger, string topic);
+
+    [LoggerMessage(Level = LogLevel.Error,
+        Message = "MQTT subscriber could not subscribe to '{Topic}': {Error}. "
+            + "Dropping the connection so the next attempt subscribes again.")]
+    public static partial void MqttSubscriberSubscribeFailed(this ILogger logger, string topic, string error);
+
+    [LoggerMessage(Level = LogLevel.Information,
+        Message = "MQTT subscriber retrying in {DelaySeconds:F1}s (attempt {Attempt}).")]
+    public static partial void MqttSubscriberRetryScheduled(this ILogger logger, double delaySeconds, int attempt);
+
     // Warning, not Error: the subscriber is degraded rather than broken — it
-    // starts, the managed client retries every five seconds, and the token is
-    // re-minted on each failed attempt. An Error here would page someone for a
+    // starts, the connect loop retries with a capped backoff, and the token is
+    // minted again before every attempt. An Error here would page someone for a
     // condition that resolves itself as soon as Keycloak answers.
     [LoggerMessage(Level = LogLevel.Warning,
         Message = "Could not mint the MQTT token at startup: {Error}. "

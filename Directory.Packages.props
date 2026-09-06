@@ -66,9 +66,12 @@
          the two hosts that call UseWolverine. -->
     <PackageVersion Include="WolverineFx.RuntimeCompilation" Version="6.30.0" />
 
-    <!-- MQTT (spec 006, ADR-0096): .NET client + managed-client wrapper for the Mosquitto broker (ADR-0095). -->
-    <PackageVersion Include="MQTTnet" Version="4.3.7.1207" />
-    <PackageVersion Include="MQTTnet.Extensions.ManagedClient" Version="4.3.7.1207" />
+    <!-- MQTT (spec 006, ADR-0096): .NET client for the Mosquitto broker (ADR-0095).
+         v5 removed MQTTnet.Extensions.ManagedClient: that package stops at
+         4.3.7.1207 and the core assembly exports no type named "Managed", so
+         reconnect, resubscribe and per-attempt credential minting are ours to own
+         (spec 079). MqttConnectionLoop and MqttPublisher each hold a copy. -->
+    <PackageVersion Include="MQTTnet" Version="5.2.0.1603" />
 
     <!-- MinIO object storage (spec 009 ADR-0101). Aspire hosting
          resource + typed client wrapper, both via the Aspire
