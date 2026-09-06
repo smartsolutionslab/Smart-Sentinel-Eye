@@ -98,9 +98,16 @@ whose register had to be typed by hand because the fact it pinned did not exist 
   runtime (`StreamHealthChangedDomainEventHandler`'s `Fab?.Value`) passes cleanly. That
   is #2076, and the guard's greenness must not be read as covering it.
 - **Not that the audit surface is scoped correctly.** That is US1's integration test.
-- Nothing about non-handler publishers — `RotateWebhookClientCommandHandler` and
-  `AuditRetentionHostedService` are outside the scan by construction. Both are correct
-  today; neither is protected. Stated rather than left implicit.
+- Nothing about publishers outside a handler — `AuditRetentionHostedService` publishes
+  from a private `ArchiveAndDropAsync`, and its file declares no `Handle`/`HandleAsync`
+  at all, so the scan never reaches it. It is correct today; it is not protected. Stated
+  rather than left implicit.
+
+  **Correction, made while implementing:** this list said
+  `RotateWebhookClientCommandHandler` was outside the scan too. It is not. It publishes
+  from `HandleAsync(RotateWebhookClientCommand command, …)`, and that command declares a
+  `FabIdentifier Fab` component, so the guard reads it, checks it, and it passes. The
+  only genuinely unscanned publisher is the retention service.
 
 **Failure modes the guard must reject rather than skip (FR-005):** a first-parameter type
 whose record declaration cannot be found; an `EventMetadata` construction using named
