@@ -56,4 +56,32 @@ public class LayoutRevisionPublishedDomainEventHandlerTests
         broadcaster.Published.ShouldHaveSingleItem();
         broadcaster.Published.Single().Layout.ShouldBe(layout);
     }
+
+    // #2071. Twin of the archived handler's assertion: the V2's own metadata,
+    // not the broadcast notification's fab. A row stored with fab = null is
+    // readable by every operator of every fab (#1300), and only the publisher
+    // knows which it is.
+    [Fact]
+    public async Task Stamps_the_publishing_fab_on_the_published_V2()
+    {
+        FakeEventBus bus = new();
+        LayoutRevisionPublishedDomainEventHandler handler = new(bus, new FakeLayoutLifecycleBroadcaster());
+
+        IReadOnlyList<Tile> tiles =
+        [
+            new Tile(
+                CameraIdentifier.From(Guid.CreateVersion7()),
+                Option<OverlayIdentifier>.None,
+                GridPosition.From(0, 0)),
+        ];
+        LayoutRevisionPublishedDomainEvent domainEvent = new(
+            Munich, LayoutIdentifier.New(), LayoutRevisionNumber.One, LayoutName.From("Line-1"),
+            GridDimensions.From(1, 1), tiles, FixedMoment,
+            OperatorIdentifier.From(Guid.CreateVersion7()));
+
+        await handler.Handle(domainEvent, CancellationToken.None);
+
+        LayoutRevisionPublishedV2 v2 = bus.Published.Single().ShouldBeOfType<LayoutRevisionPublishedV2>();
+        v2.Metadata.Fab.ShouldBe("munich");
+    }
 }

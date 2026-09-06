@@ -40,6 +40,31 @@ public class VariableArchivedDomainEventHandlerTests
         v1.Variable.ShouldBe(id.Value);
     }
 
+    // #2068. The archived event's own metadata, not the resolved-text push's.
+    // This file already asserted Metadata.Fab twice — both times on
+    // ResolvedOverlayTextChangedV1 — and the defect survived it. A stored audit
+    // row carrying no fab is readable by every operator of every fab (#1300),
+    // and the query cannot tell "legitimately cross-fab" from "the publisher
+    // forgot", so the assertion has to be here.
+    [Fact]
+    public async Task Stamps_the_archiving_fab_on_the_published_archived_event()
+    {
+        FakeEventBus bus = new();
+        VariableArchivedDomainEventHandler handler = new(
+            bus, new InMemoryReverseIndex(), new InMemoryVariableRepository(), new Resolver(),
+            NullLogger<VariableArchivedDomainEventHandler>.Instance);
+
+        await handler.Handle(
+            new VariableArchivedDomainEvent(
+                VariableIdentifier.New(), FabIdentifier.From("munich"), VariableName.From("oeeLine1"),
+                FixedMoment, OperatorIdentifier.From(Guid.CreateVersion7())),
+            CancellationToken.None);
+
+        SystemVariableArchivedV1 v1 = bus.Published.OfType<SystemVariableArchivedV1>()
+            .ShouldHaveSingleItem();
+        v1.Metadata.Fab.ShouldBe("munich");
+    }
+
     [Fact]
     public async Task Re_resolves_each_affected_overlay_with_the_archived_variable_reverted_to_literal()
     {

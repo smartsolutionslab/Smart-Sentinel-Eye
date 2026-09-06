@@ -66,6 +66,108 @@ public class CrossFabReadGuardIntegrationTests(AspireFixture aspire)
         fabs.ShouldContain((string?)null, "a cross-fab row must be readable by a fab-assigned caller");
     }
 
+    /// <summary>
+    /// Spec 082 US1 (#2068). The filed symptom, on the read surface: a variable
+    /// archived in munich must not be visible to an operator whose only
+    /// membership is berlin.
+    ///
+    /// <para>
+    /// Drives the real publish path rather than seeding a row, because that is
+    /// where the defect lives. A seeded row carries whatever fab the test wrote;
+    /// only an archive performed through the API shows what
+    /// <c>VariableArchivedDomainEventHandler</c> actually stamps. Both producer
+    /// tests are silent about this: they assert the event, not who can read the
+    /// row it becomes.
+    /// </para>
+    ///
+    /// <para>
+    /// Asserts the #1300 behaviour in the same breath, so the fix is shown not
+    /// to have bought fab scoping by re-excluding rows that genuinely have no
+    /// fab.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_variable_archived_in_munich_is_not_returned_to_a_berlin_only_operator()
+    {
+        string name = $"fab{Guid.NewGuid():N}"[..16];
+        await ArchiveInMunichAsync(name);
+        await SeedAsync(Row(fab: null));
+
+        using HttpClient munich = await aspire.CreateAuthenticatedClientAsync(
+            "audit-observability", "admin@munich.test", "Admin1234");
+        JsonElement archived = await PollForArchiveRowAsync(munich, name);
+
+        using HttpClient berlin = await aspire.CreateAuthenticatedClientAsync(
+            "audit-observability", "op-berlin@berlin.test", "Operator1234");
+        JsonElement[] visible = await ArchiveRowsAsync(berlin);
+
+        string[] leaked = [.. visible
+            .Select(row => row.GetProperty("payload").GetString()!)
+            .Where(payload => payload.Contains(name, StringComparison.Ordinal))];
+        leaked.ShouldBeEmpty(
+            $"a variable archived in munich must not reach a berlin-only operator (archived '{name}')");
+
+        // The publisher is the only place that knows, so say what it recorded.
+        archived.GetProperty("fab").GetString().ShouldBe("munich");
+
+        // #1300, unchanged: a row that genuinely has no fab still reaches
+        // everyone. Scoping must not be bought by excluding it again.
+        HttpResponseMessage unfiltered = await berlin.GetAsync("/audit?pageSize=200");
+        unfiltered.StatusCode.ShouldBe(HttpStatusCode.OK);
+        JsonElement page = await unfiltered.Content.ReadFromJsonAsync<JsonElement>();
+        page.GetProperty("rows").EnumerateArray()
+            .Select(row => row.GetProperty("fab").GetString())
+            .ShouldContain((string?)null, "a cross-fab row must stay readable by a fab-assigned caller");
+    }
+
+    private async Task ArchiveInMunichAsync(string name)
+    {
+        using HttpClient variables = await aspire.CreateAuthenticatedClientAsync(
+            "system-variables", "admin@munich.test", "Admin1234");
+
+        HttpResponseMessage defined = await variables.PostAsJsonAsync(
+            "/system-variables",
+            new { name, type = "Number", initialValue = "1" });
+        defined.StatusCode.ShouldBe(HttpStatusCode.Created, await defined.Content.ReadAsStringAsync());
+
+        HttpResponseMessage archived = await VariableRequests.ArchiveAsync(variables, name);
+        archived.IsSuccessStatusCode.ShouldBeTrue(await archived.Content.ReadAsStringAsync());
+    }
+
+    private static async Task<JsonElement[]> ArchiveRowsAsync(HttpClient audit)
+    {
+        HttpResponseMessage response = await audit.GetAsync(
+            "/audit?eventKind=SystemVariableArchivedV1&pageSize=200");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        JsonElement page = await response.Content.ReadFromJsonAsync<JsonElement>();
+        return [.. page.GetProperty("rows").EnumerateArray()];
+    }
+
+    /// <summary>
+    /// The archived row as its own fab's operator sees it. Its absence
+    /// elsewhere means nothing until it is known to exist.
+    /// </summary>
+    private static async Task<JsonElement> PollForArchiveRowAsync(HttpClient audit, string name)
+    {
+        for (int attempt = 0; attempt < 40; attempt++)
+        {
+            JsonElement[] rows = await ArchiveRowsAsync(audit);
+            foreach (JsonElement row in rows)
+            {
+                if (row.GetProperty("payload").GetString()!.Contains(name, StringComparison.Ordinal))
+                {
+                    return row;
+                }
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500));
+        }
+
+        throw new Xunit.Sdk.XunitException(
+            $"No SystemVariableArchivedV1 audit row for '{name}' appeared within 20s.");
+    }
+
     private static AuditEvent Row(string? fab) =>
         AuditEvent.From(
             new V1Envelope(
