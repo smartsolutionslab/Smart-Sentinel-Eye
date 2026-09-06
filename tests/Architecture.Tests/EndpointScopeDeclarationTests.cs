@@ -13,8 +13,11 @@ namespace SmartSentinelEye.Architecture.Tests;
 /// needs</b> (issue 2087; #850 was closed as delivered for its Identity label).
 ///
 /// <para>
-/// Eighteen endpoints already spell it — <c>.WithSummary("… Required scope:
-/// sse.x.y")</c> — and thirty-three do not. Nothing enforced it, and the price
+/// At spec 070, eighteen of the fifty-one scoped endpoints already spelled it —
+/// <c>.WithSummary("… Required scope: sse.x.y")</c> — and thirty-three did not.
+/// Those are that spec's figures and stay that spec's: the scoped population is
+/// 54 on this branch, and A4 below now demands the sentence of every one of
+/// them. Nothing enforced it when it mattered, and the price
 /// of that is issue <b>2070</b>: <c>sse.variables.read</c> exists in the
 /// catalogue, is provisioned in the realm and granted to three clients, and is
 /// required by nothing. Two of the three endpoints that should require it carry
@@ -48,14 +51,33 @@ namespace SmartSentinelEye.Architecture.Tests;
 /// </para>
 ///
 /// <para>
-/// <b>Measured on this branch, 2026-09-07.</b> 56 mappings in 12 files: 54
-/// resolve to a scope, 2 are anonymous. <b>28 of the 54 declare no authorization
-/// in their own chain at all</b> and are in the population only through their
-/// <c>MapGroup</c> — which is why a rule written as a per-chain grep finds 26 and
-/// calls the other 28 unscoped. 38 chains declared a 403 before spec 085 (37
-/// scoped, 1 anonymous), leaving <b>17 undeclared across 5 files in 3
-/// contexts</b>: Identity 8, OverlayDesigner 8, AuditObservability 1. Zero of the
-/// 17 groups declared one.
+/// <b>Measured on this branch, 2026-09-07 — and the figures are of three kinds,
+/// which matters more than any of them.</b>
+/// </para>
+///
+/// <para>
+/// <i>Pinned.</i> <b>56 mappings in 12 files</b>, asserted exactly by
+/// <see cref="RouteHandlerMappingCount"/> and <see cref="EndpointFileCount"/>. A
+/// change that moves either is red, so these two cannot quietly go stale.
+/// </para>
+///
+/// <para>
+/// <i>A snapshot, asserted by nothing.</i> Of the 56, <b>54 resolve to a scope
+/// and 2 are anonymous</b>; of the 54, <b>26 declare authorization in their own
+/// chain and 28 do so only through their <c>MapGroup</c></b>. Adding one scoped
+/// endpoint edits the two pinned numbers above and silently falsifies these four,
+/// which is exactly the drift this paragraph is written to survive: read them as
+/// the shape of the corpus rather than as its current arithmetic. The shape is
+/// the load-bearing part — a rule written as a per-chain grep would find 26 and
+/// call the other 28 unscoped.
+/// </para>
+///
+/// <para>
+/// <i>Historical, and therefore fixed.</i> Before spec 085, 38 chains declared a
+/// 403 (37 scoped, 1 anonymous), leaving <b>17 undeclared across 5 files in 3
+/// contexts</b>: Identity 8, OverlayDesigner 8, AuditObservability 1. None of the
+/// 17 route groups in those 12 files declared one. Those figures describe a state
+/// this branch ended and will not move again.
 /// </para>
 ///
 /// <para>
@@ -66,9 +88,29 @@ namespace SmartSentinelEye.Architecture.Tests;
 /// rather than challenged; this reaches all 54. (2) The fab guard —
 /// <c>IFabAuthorizationGuard</c> throws and
 /// <c>FabAuthorizationExceptionHandler</c> writes
-/// <c>403 RESOURCE_FAB_NOT_AUTHORIZED</c>. (3) A handler result whose
-/// <c>ApiError</c> carries <c>HttpStatusCode.Forbidden</c> (ADR-0089) — one route
-/// today, <c>POST /streams/authorize</c>.
+/// <c>403 RESOURCE_FAB_NOT_AUTHORIZED</c>. (3) A handler refusal carrying the
+/// status — an <c>ApiError</c> whose status is <c>HttpStatusCode.Forbidden</c>
+/// (ADR-0089), <em>or</em> a hand-written <c>Results.Problem(…, statusCode:
+/// Status403Forbidden)</c> returned before any handler runs. One route today,
+/// <c>POST /streams/authorize</c>, and it uses both spellings: four
+/// <c>AuthorizeWhepError</c> variants, and <c>WHEP_INVALID_PATH</c> in
+/// <c>StreamEndpoints.AuthorizeWhep</c>, which refuses a malformed path before
+/// the command is built. Producer 3 was first written here as the
+/// <c>ApiError</c> half alone, and the second site then fitted none of the three
+/// — which is spec 075's lesson ("establish the producers before counting")
+/// happening to the document that cites it.
+/// </para>
+///
+/// <para>
+/// <b>Why a malformed path is 403 and not 400</b>, recorded because it reads as
+/// wrong and someone will re-open it. On this hook the status is a decision
+/// channel rather than a description of the request: MediaMTX reads any non-2xx
+/// as <em>deny</em>. The file's discrimination is coherent — a malformed
+/// <em>credential</em> is 401 (<c>AuthorizeWhepError.Unauthorized</c>, "missing,
+/// malformed, or expired") because a better credential fixes it; a path this
+/// product never serves is 403 because no credential does. That is verbatim the
+/// reasoning <c>ActionNotPermitted</c> and <c>ActionUnknown</c> already carry in
+/// their own doc comments.
 /// </para>
 ///
 /// <para>
@@ -85,8 +127,13 @@ namespace SmartSentinelEye.Architecture.Tests;
 /// vacuously.</b> The extension exists —
 /// <c>src/ServiceDefaults/Authorization/RequireScopeExtensions.cs</c> — and
 /// forwards to <c>RequireAuthorization</c>, and <em>no endpoint under
-/// <c>src/</c> calls it</em>: all 56 mappings spell it
-/// <c>.RequireAuthorization(Scope.…)</c>. A guard matching that name would match
+/// <c>src/</c> calls it</em> — its only two occurrences anywhere in <c>src/</c>
+/// are XML doc comments, one in that file and one in <c>Scope.cs</c>. Every
+/// authorization declaration in the 12 endpoint files is spelled
+/// <c>.RequireAuthorization</c> or <c>.AllowAnonymous</c>, and none is spelled
+/// <c>.RequireScope</c>; of the 41 on this branch, 26 are scoped mapping chains,
+/// 12 are scoped groups, one is a bare <c>.RequireAuthorization()</c> on a group
+/// and two are <c>.AllowAnonymous()</c>. A guard matching that name would match
 /// nothing and stay green for ever. <see cref="FirstAuthorizationCall"/> reads
 /// both spellings, which is why the population read here is the real one.
 /// </para>
@@ -1041,6 +1088,21 @@ public class EndpointScopeDeclarationTests
     /// declaration in an Api file that is not an endpoint file should make the
     /// two disagree.
     /// </para>
+    ///
+    /// <para>
+    /// <b>Its completeness stops at the <c>src/*/Api</c> root, and it is worth
+    /// saying where.</b> A helper <em>inside</em> that root is caught — the sweep
+    /// reads every <c>.cs</c> file there, so a declaration hoisted into one makes
+    /// the two counts disagree (verified in review). A helper <em>outside</em> it
+    /// is not. A <c>.RefusesWithoutScope()</c> convention added to
+    /// <c>src/ServiceDefaults</c> — where <c>RequireScopeExtensions</c> already
+    /// lives, and the natural home for one — removes the declaration from both
+    /// counts equally, so they still agree and this assertion stays green. Only
+    /// A13 fires, saying the endpoint declares nothing: true of the text it can
+    /// see, and misleading about the document, which would be correct. Nothing
+    /// here covers that; it is the same root limit the class doc records for the
+    /// mapping sweep, reaching the refusal rule by the same route.
+    /// </para>
     /// </summary>
     [Fact]
     public void The_refusal_declarations_the_walk_finds_are_all_the_ones_there_are()
@@ -1918,9 +1980,24 @@ public class EndpointScopeDeclarationTests
     }
 
     /// <summary>
-    /// A chain runs from its <c>Map*</c> call to the terminating semicolon at
-    /// statement level. Searched on the masked text, so a semicolon inside a
-    /// summary does not end it early.
+    /// A chain runs from its <c>Map*</c> call to the <em>first</em> semicolon
+    /// after it in the masked text. Masking is why a semicolon inside a summary
+    /// does not end it early; there is no brace tracking, so this is the first
+    /// semicolon and not necessarily the statement's own.
+    ///
+    /// <para>
+    /// A chain that contains a statement lambda therefore ends early. A filter
+    /// written as <c>.AddEndpointFilter(async (context, next) =&gt; { int probe =
+    /// 1; return await next(context); })</c> truncates the span at the lambda's
+    /// internal semicolon, and every call after it in the chain — including the
+    /// authorization and the <c>ProducesProblem</c> — is invisible to this
+    /// reader. That fails <b>red</b>, which is the safe direction: A13 reports
+    /// "neither the chain nor its group declares any authorization" for a mapping
+    /// that plainly does, and A15's two counts disagree. The diagnosis points
+    /// away from the cause, so it is written down here rather than left to be
+    /// rediscovered. Demonstrated in review; no chain in the corpus has that
+    /// shape today.
+    /// </para>
     /// </summary>
     private static int StatementEnd(string masked, int start)
     {

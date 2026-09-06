@@ -203,11 +203,15 @@ reachable; repeating a variant of that seventeen times is the drive-by-comment
 failure (ADR-0036), and the reason now lives in a guard that fails the build,
 which is the better place for it (ADR-0139).
 
-**One line of the class doc does need correcting**, and it is not a drive-by:
-`src/Identity/Api/WebhookRotationEndpoints.cs:136` says a caller gets *"the 403
-they have earned"* six lines from a chain that has never declared one. After this
-change the sentence is true of the document as well as of the runtime. No edit
-needed — recorded so a reviewer sees it was checked, not missed.
+**One comment does need checking**, and it is not a drive-by:
+`src/Identity/Api/WebhookRotationEndpoints.cs` says, inside its `Rotate` handler,
+that a caller gets *"the 403 they have earned"*, while the chain that maps
+`Rotate` — earlier in the same file — has never declared one. After this change
+the sentence is true of the document as well as of the runtime. No edit needed —
+recorded so a reviewer sees it was checked, not missed. (The comment is at
+`:137-138` as of `5707b4f4`; the two declarations phase 4b adds sit above it, so
+the `:136` this plan first cited now points two lines short. Cited by handler
+name here for that reason.)
 
 ---
 
