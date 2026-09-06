@@ -63,10 +63,11 @@ public sealed class SearchAuditQueryHandler(IAuditEventQuerySource events)
             // (#1300).
             //
             // That class is smaller than it was, and the enumeration this
-            // replaced had gone stale. Camera, layout and variable events all
-            // stamp the fab now (#2068). What legitimately publishes without
-            // one is overlay events, whose domain events carry no fab at all
-            // (ADR-0115), and retention. A stream-health event's fab is
+            // replaced had gone stale. Camera events already stamped the fab
+            // before this; variable events do now (#2068), and layout events
+            // (#2071). What legitimately publishes without one is overlay
+            // events, whose domain events carry no fab at all (ADR-0115), and
+            // retention, which spans fabs. A stream-health event's fab is
             // nullable and may still arrive null (#2076).
             List<FabIdentifier> allowed = [.. callerFabs.Select(FabIdentifier.From)];
             source = source.Where(auditEvent => auditEvent.Fab == null || allowed.Contains(auditEvent.Fab));
