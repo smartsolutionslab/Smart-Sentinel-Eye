@@ -165,6 +165,24 @@ it means roughly a third of the 3 s budget is spent on a property of the source,
 and the measured p95 will sit well above the handshake cost alone. **Any reading
 of the resulting figure that omits this term will misattribute it.**
 
+**This prediction stood untested through the first three green runs, and was
+briefly recorded as refuted.** T005's harness measured a 107 ms spread and the
+term was written off. It could not have been tested that way: the loop clicked,
+waited for a frame, navigated back and clicked again, and the frame it waits for
+is *by construction* an exact IDR instant — so every click landed at a fixed
+offset from an IDR and every sample was `1000 ms − N` for `N` the loop's own
+un-timed overhead, constant and independent of the product's cost. A tight band
+is what the keyframe term **predicts** under a phase-locked loop, not evidence
+against it; p95 reproducing as 843 / 843 / 856 ms across three separate runs is
+the tell, because an independently-sampled product cost does not repeat to the
+millisecond.
+
+**With a uniformly random 0–1000 ms wait inserted before each click (T008), the
+prediction is confirmed.** `elapsed + delay` is constant modulo exactly 1000 ms
+in two branches a GOP apart; the spread reopened to 893 / 1177 ms and p95 to
+1158 / 1420 ms. See §*Assumptions, marked* item 2 for the figures and for **S**,
+the setup cost the product owns, which this is the first measurement of.
+
 ---
 
 ## Assumptions, marked
@@ -181,6 +199,31 @@ of the resulting figure that omits this term will misattribute it.**
    prediction so the first observed figure either confirms or refutes it. **A
    first observation above 3 s is a finding to report, never a threshold to
    raise** (ADR-0144; and #2119 is open because a budget drifted that way).
+
+   **Observed, on independent samples (2026-09-06, two 20-open runs on a warm
+   stack):**
+
+   | | run 1 | run 2 |
+   |---|---|---|
+   | p50 | 608 ms | 851 ms |
+   | **p95** | **1158 ms** | **1420 ms** |
+   | max | 1226 ms | 1459 ms |
+   | min | 333 ms | 282 ms |
+   | spread | 893 ms | 1177 ms |
+   | warm-up (discarded) | 1165 ms | 744 ms |
+
+   p95 lands just below the predicted band and the SLO passes with roughly 2.1–
+   2.6× headroom. The earlier 843 / 843 / 856 ms is superseded: it was a
+   phase-locked artifact, not a measurement of this population.
+
+   **S ≈ 290 ms** — the setup cost alone (SPA route change, WHEP POST, ICE,
+   DTLS, first RTP), with the IDR wait near zero. **Nothing had measured it
+   before.** Two estimators agree: the smallest of the 40 samples is 282 ms (a
+   direct upper bound, since `elapsed = S + IDR wait`), and the pooled mean of
+   789 ms sits ~500 ms above `S` when the phase is uniform over a 1 s GOP. So
+   about a quarter of the figure is the product and the rest is the fixture.
+   **A future regression should be read off the minimum sample, not off p95** —
+   p95 moves with the source, the minimum moves with S.
 3. **Importing `FIXTURE_VIDEO_RTSP_URL` from `live-video-wall.ts` is accepted
    friction.** The constant's home is a wall-shaped module and this consumer is
    not a wall. Moving it is a rename touching spec 056's files for no behaviour;
@@ -320,7 +363,13 @@ Runnable by a person, without reading the harness's source:
 3. Read the printed line. It must name p50, p95, max and the twenty samples.
 4. **Confirm the figure is not the polling grid.** Samples that cluster on
    100 / 250 / 500 / 1000 ms boundaries mean the clock leaked back into the test
-   process; genuine samples spread across the 0–1000 ms IDR band.
+   process. Do **not** read a tight cluster as reassuring, and do not expect any
+   particular width: each open waits a random 0–1000 ms before the click
+   (`DECORRELATION_WINDOW_MS`), so the samples are independent draws and their
+   spread is a *result*. Observed 893 ms and 1177 ms — the source's 1.000 s GOP
+   being paid, as this spec predicted. A run that clusters inside ~150 ms is the
+   signal that the decorrelation wait has been removed and the harness is
+   phase-locked again.
 5. Open management-web at `http://localhost:5173`, sign in as `operator`, click
    the camera the run left behind (or a fresh one at the fixture URL) and watch
    a picture appear. **A person confirms it is a picture; the harness confirms

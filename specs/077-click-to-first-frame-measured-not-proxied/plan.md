@@ -143,7 +143,16 @@ Measured on the two most recent `develop` CI runs (`33995210155`,
 
 Estimated cost of this harness: sign-in ~10 s + a cold camera registration
 (~40 s typical, 90 s budgeted) + the discarded warm-up open (~10–20 s) + 20 warm
-opens at ~1.5–2.5 s each including navigation (~40 s) ≈ **2–3 minutes typical**.
+opens at ~1.5–2.5 s each including navigation (~40 s) ≈ 2–3 minutes typical.
+
+**Measured, and the estimate was about four times too pessimistic.** On a warm
+stack the test itself takes **32–38 s** and the file's whole invocation,
+teardown projects included, **45–52 s** (two runs, 2026-09-06; the figures
+include the per-open 0–1000 ms decorrelation wait, ~10 s over a run). A first
+run against a *cold* stack is the expensive case — one such run spent 2 minutes
+and still failed on the camera registration not appearing within
+`FIRST_WRITE_TIMEOUT_MS`, which is what that 90 s budget and CI's retries exist
+for.
 
 **~20 % of the Playwright suite's own wall-clock; ~7 % of the job's 40-minute
 ceiling.** With `retries: 2`, a genuinely failing measurement costs 3× ≈ 9 min,
@@ -184,36 +193,58 @@ today already asserts; replacing an assertion with a print would be a net loss.
 Four things make that assertion defensible rather than a number waiting to be
 raised:
 
-1. **Repeat-before-believing is already wired.** `playwright.config.ts:15` sets
-   `retries: isCI ? 2 : 0`. A red therefore means **three independent 20-open
-   runs each measured a p95 above 3 s** — 60 samples across three browser
-   sessions. That is exactly this repository's own rule that a measurement run
-   must be repeated before it is believed, and it costs nothing on a green run.
-   *State this in the harness's doc-comment*, so the retry count is understood
-   as part of the measurement design rather than as incidental config that a
-   later tidy-up might remove.
+1. **Repeat-before-believing is *not* what the retries buy, and this point said
+   otherwise.** `playwright.config.ts:15` sets `retries: isCI ? 2 : 0`. A **red**
+   does mean three independent 20-open runs each measured a p95 above 3 s — 60
+   samples across three browser sessions. But retries fire only on failure, so
+   the **pass** criterion is `min(p95 over up to 3 runs) < 3000`: a p95 that
+   breaches on two runs out of three is reported flaky and the job exits 0. The
+   retry count hardens the red and biases the green, which is the opposite of
+   the rule it was claimed to implement. Locally `retries: 0`, so a local run is
+   a single sample and none of this applies to it. **The repeat obligation is
+   discharged by T006 — running the measurement a second time by hand and
+   recording both figures — not by the retry count.** The harness's doc-comment
+   states this; do not remove the retries as tidy-up, and do not read them as
+   repetition either.
 2. **The warm-up is discarded, so the cold path cannot cause a red.** The
    expensive, variable, once-per-run terms — path creation, RTSP dial, health
    sweep, OIDC discovery — are all in the discarded open.
-3. **A breach is diagnosable, not just observable.** Spec 002 `plan.md:703`
+3. **A breach is diagnosable, not just observable — but only while the samples
+   are independent, and for three runs they were not.** Spec 002 `plan.md:703`
    decomposes the 3 s into ≤ 200 ms lookup + ≤ 500 ms WHEP POST + ≤ 1 s
    ICE/DTLS + ≤ 1 s decoder warmup + 300 ms headroom, and the harness prints all
    twenty samples. A uniform spread across ~1 s is the IDR term behaving
    normally; a bimodal or uniformly-shifted spread is not, and points at a
    different sub-term. **A breach whose shape can be read is a breach someone
    fixes; one that is just a number is a breach someone re-baselines.**
+
+   The shape is only readable because T008 added a random 0–1000 ms wait before
+   each click. Without it the loop was phase-locked to the source's GOP — every
+   sample `1000 ms − N`, constant and **independent of the product's cost** — so
+   the harness would not have moved at all for a setup cost growing from 200 ms
+   to 700 ms, and the tight band it printed looked like good news. If that wait
+   is ever removed, this point stops being true and nothing else in the file
+   notices.
 4. **Raising it is forbidden.** ADR-0144 blocks the lane from weakening a gate
    to reach green, and #2119 is open precisely because a budget drifted by being
    adjusted to fit what was measured. If the first observed p95 exceeds 3 s,
    **that is a finding and a new issue** — the SLO is spec 002's, and changing
    it is a decision for a human, at spec level.
 
-**The known headroom is thinner than it looks**, and the plan says so rather
+**The known headroom is thinner than it looks**, and the plan said so rather
 than discovering it at phase 5: the fixture's 1.000 s GOP contributes up to
-1000 ms (p95 ≈ 950 ms) that no product change can remove. Predicted p95 is
+1000 ms (p95 ≈ 950 ms) that no product change can remove. Predicted p95 was
 1.4–2.2 s against a 3000 ms threshold — real margin, but not the 60× the
 existing proxy enjoys. That is the correct state for a threshold: close enough
 to matter, far enough not to sing.
+
+**Observed, once the samples were independent (2026-09-06): p95 = 1158 ms and
+1420 ms, spread 893 ms and 1177 ms.** Just under the predicted band; the SLO
+passes with 2.1–2.6× headroom rather than the 3.6× the phase-locked 843 ms
+appeared to give. Of that figure, **S ≈ 290 ms is the product's own share** —
+first measured here — and the rest is the source's keyframe interval. So the
+headroom claim above is confirmed rather than softened: the margin is real, and
+most of what fills the budget is the fixture, not the product.
 
 ---
 
