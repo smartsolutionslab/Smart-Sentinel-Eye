@@ -113,11 +113,16 @@ public sealed class OutboxBacklogHealthCheck<TDbContext>(
                 return HealthCheckResult.Healthy(description, data);
             }
 
-            // Logged as well as reported, because the health endpoint is mapped
-            // in Development only — a deliberate decision with its own security
-            // rationale (see MapDefaultEndpoints) — and production is the only
-            // place an outbox grows unattended. A signal that exists solely on a
-            // surface nobody can reach in production is not a signal (FR-009).
+            // Logged as well as reported, because the two carry different
+            // things and the log carries the only one an operator can act on.
+            // The readiness probe is reachable in production now, but a Degraded
+            // aggregate answers 200 — the framework's default ResultStatusCodes
+            // map Degraded to 200 and only Unhealthy to 503 — which is the
+            // behaviour this check wants: a service behind on delivery is still
+            // serving and must not leave rotation. So the probe says nothing an
+            // orchestrator reacts to, and its default writer emits one word, so
+            // the schema, the pending count and the attempt count appear nowhere
+            // on that surface. They exist here or not at all (FR-009).
             logger.OutboxBacklogConcerning(outboxSchema, pending, attempts);
             return HealthCheckResult.Degraded(description, data: data);
         }

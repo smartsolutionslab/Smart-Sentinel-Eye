@@ -133,19 +133,36 @@ public static class Extensions
 
     public static WebApplication MapDefaultEndpoints(this WebApplication app)
     {
-        // Adding health checks endpoints to applications in non-development environments has security implications.
-        // See https://aka.ms/aspire/healthchecks for details before enabling these endpoints in non-development environments.
-        if (app.Environment.IsDevelopment())
-        {
-            // All health checks must pass for app to be considered ready to accept traffic after starting
-            app.MapHealthChecks(HealthEndpointPath);
+        // Mapped in every environment, production included, because a probe an
+        // orchestrator cannot reach is not a probe. What that exposes, and to
+        // anyone who can reach the port — a kubelet presents no credentials, so
+        // these are anonymous by design:
+        //
+        //   - "self", tag "live", returns Healthy and touches nothing.
+        //   - "outbox-{module}", tag "ready", one Postgres query.
+        //
+        // No ResponseWriter is set here or at any call site, so the framework
+        // default writes a single word — Healthy, Degraded or Unhealthy — and
+        // never the check names, their descriptions, or the data dictionary.
+        // That last part is load-bearing: outbox-{module}'s data carries the
+        // outbox schema name and its pending and attempt counts, and the default
+        // writer is the only thing keeping them off the wire.
+        //
+        // So this departure from the template's Development-only default is
+        // conditional on both halves staying true. A ResponseWriter that renders
+        // detail, or a check whose *name* encodes a dependency, turns an
+        // aggregate word into an unauthenticated inventory of the system's
+        // internals, and the analysis has to be redone before it ships.
+        // See https://aka.ms/aspire/healthchecks.
 
-            // Only health checks tagged with the "live" tag must pass for app to be considered alive
-            app.MapHealthChecks(AlivenessEndpointPath, new HealthCheckOptions
-            {
-                Predicate = registration => registration.Tags.Contains("live")
-            });
-        }
+        // All health checks must pass for app to be considered ready to accept traffic after starting
+        app.MapHealthChecks(HealthEndpointPath);
+
+        // Only health checks tagged with the "live" tag must pass for app to be considered alive
+        app.MapHealthChecks(AlivenessEndpointPath, new HealthCheckOptions
+        {
+            Predicate = registration => registration.Tags.Contains("live")
+        });
 
         return app;
     }
