@@ -20,6 +20,15 @@ namespace SmartSentinelEye.EventIngestion.Infrastructure.Ingress;
 /// Do not "fix" the duplication by extracting a shared client (spec 079,
 /// ADR-0036).
 /// </para>
+///
+/// <para>
+/// <b>The copy differs only where the two jobs differ</b>, and the exhaustive
+/// list is in <c>MqttPublisher</c>'s own comment: it has no subscription to
+/// renew, and it counts dropped samples this one has no use for. Everything
+/// else — mint, connect, read the result, back off, clear the backoff only for
+/// a connection that held — is the same in both, and a change here belongs
+/// there. They had drifted once while both comments claimed they had not.
+/// </para>
 /// </summary>
 internal sealed class MqttConnectionLoop
 {

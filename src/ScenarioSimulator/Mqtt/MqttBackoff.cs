@@ -23,6 +23,9 @@ internal sealed class MqttBackoff(TimeSpan first, TimeSpan cap)
     {
     }
 
+    /// <summary>Attempts made since the last <see cref="Reset"/>, for the log.</summary>
+    public int Attempt => attempts;
+
     /// <summary>How long to wait before the next attempt.</summary>
     public TimeSpan Next()
     {
@@ -37,6 +40,26 @@ internal sealed class MqttBackoff(TimeSpan first, TimeSpan cap)
 
     /// <summary>Puts the next wait back to nothing, after a connect that worked.</summary>
     public void Reset() => attempts = 0;
+
+    /// <summary>
+    /// Clears the debt for a connection that <b>held</b>, and leaves it alone for
+    /// one that merely arrived.
+    ///
+    /// <para>
+    /// The yardstick is the shortest wait this backoff schedules: a connection
+    /// that did not outlast even that was a handshake, not a connection, and
+    /// resetting on it means the next attempt waits for nothing. A session
+    /// takeover — CONNACK, then close — would otherwise reconnect at full speed
+    /// for as long as the other client is there.
+    /// </para>
+    /// </summary>
+    public void ResetIfHeld(TimeSpan held)
+    {
+        if (held >= first)
+        {
+            Reset();
+        }
+    }
 
     // Not a security decision: this de-synchronises retries between clients, it
     // does not generate anything anyone could guess their way into.
