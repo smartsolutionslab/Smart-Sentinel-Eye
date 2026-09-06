@@ -70,7 +70,7 @@ internal sealed class MqttConnectionLoop
                 await AttemptAsync(client, cancellationToken);
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // StopAsync cancelled the loop. Shutting down is not a failure.
         }
@@ -126,7 +126,7 @@ internal sealed class MqttConnectionLoop
         {
             await connection.MintCredentialAsync(cancellationToken);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (!IsShutdown(exception, cancellationToken))
         {
             // Keycloak is away. The credential already in the slot may still
             // have life in it, so the attempt continues rather than being
@@ -158,12 +158,32 @@ internal sealed class MqttConnectionLoop
             logger.MqttSubscriberConnectFailed(Broker(), result.ResultCode.ToString());
             return false;
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (!IsShutdown(exception, cancellationToken))
         {
             logger.MqttSubscriberConnectFailed(Broker(), exception.Message);
             return false;
         }
     }
+
+    /// <summary>
+    /// Whether an exception is this loop being stopped, rather than a failure to
+    /// retry past.
+    ///
+    /// <para>
+    /// <b>The type alone does not say.</b> HttpClient's own timeout and the
+    /// standard resilience pipeline both raise an
+    /// <see cref="OperationCanceledException"/> from a token nothing here owns,
+    /// so a filter reading <c>is not OperationCanceledException</c> lets one
+    /// straight out of the loop and into the bare catch above — which means
+    /// "shutting down", exits, and leaves the subscriber deaf until the pod is
+    /// restarted. Reproduced with the real token provider against a Keycloak
+    /// that accepted the socket and never answered; masked in production only
+    /// because the resilience handler's 30 s timeout raises a
+    /// <c>TimeoutRejectedException</c> first.
+    /// </para>
+    /// </summary>
+    private static bool IsShutdown(Exception exception, CancellationToken cancellationToken) =>
+        exception is OperationCanceledException && cancellationToken.IsCancellationRequested;
 
     /// <summary>
     /// Subscribes after <b>every</b> successful connect, unconditionally.
@@ -194,7 +214,7 @@ internal sealed class MqttConnectionLoop
             logger.MqttSubscriberResubscribed(topic);
             return true;
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (!IsShutdown(exception, cancellationToken))
         {
             // Connected but not listening is the silent failure this loop exists
             // to avoid, so the connection is dropped rather than kept: the next
