@@ -29,10 +29,22 @@ public class RunModeIngestAttributionTests(ITestOutputHelper output)
     /// <summary>
     /// The log level the run-mode services are running at, read from the
     /// environment because that is what propagates into the AppHost's children.
-    /// Absent means nothing overrode the appsettings, so they are at Debug.
+    /// Absent means nothing overrode the appsettings, so the level was inherited
+    /// rather than chosen for this run — <c>Information</c> as of spec 081
+    /// (2026-09-06), a pairing with no measured throughput figure (#2133).
     /// </summary>
     private static string ServiceLogLevel =>
-        Environment.GetEnvironmentVariable("Logging__LogLevel__Default") ?? "Debug (from appsettings)";
+        ChosenServiceLogLevel ?? "Information (from appsettings)";
+
+    /// <summary>
+    /// The level somebody set for this run, or absent if nobody did — the value
+    /// and its provenance being different facts.
+    /// </summary>
+    private static string? ChosenServiceLogLevel =>
+        Environment.GetEnvironmentVariable("Logging__LogLevel__Default");
+
+    /// <summary>Whether the level above was chosen for this run rather than inherited.</summary>
+    private static bool ServiceLogLevelWasChosen => ChosenServiceLogLevel is not null;
 
     [Trait("Category", "Measurement")]
     [Fact]
@@ -64,6 +76,7 @@ public class RunModeIngestAttributionTests(ITestOutputHelper output)
             environment: "run mode (AppHost)",
             endpoint: address.Describe(),
             logLevel: ServiceLogLevel,
+            logLevelWasChosen: ServiceLogLevelWasChosen,
             CancellationToken.None);
 
         output.WriteLine(result.Conditions.Describe());

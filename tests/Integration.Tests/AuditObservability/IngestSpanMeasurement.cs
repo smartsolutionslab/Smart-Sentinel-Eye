@@ -78,6 +78,7 @@ public static class IngestSpanMeasurement
         string environment,
         string endpoint,
         string logLevel,
+        bool logLevelWasChosen,
         CancellationToken cancellationToken)
     {
         Ensure.That(variables).IsNotNull();
@@ -143,6 +144,7 @@ public static class IngestSpanMeasurement
             IntendedRatePerSecond: IngestRunShape.TargetRatePerSecond,
             AchievedRatePerSecond: achieved,
             LogLevel: logLevel,
+            LogLevelWasChosen: logLevelWasChosen,
             MeasurementSwitchOn: typical.RowsMeasured > 0 && typical.RowsMissingStamps == 0,
             RowsMeasured: landed,
             RowsMissingStamps: typical.RowsMissingStamps);
