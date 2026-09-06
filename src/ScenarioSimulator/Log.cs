@@ -131,12 +131,10 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Warning, Message = "MQTT publisher disconnected from '{Host}'; reconnecting.")]
     public static partial void MqttPublisherDisconnected(this ILogger logger, string host);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "MQTT publish to '{Topic}' failed: {Reason}.")]
-    public static partial void MqttPublishFailed(this ILogger logger, string topic, string reason);
-
-    // Its own line rather than MqttPublishFailed("(connect)", …). A connect
-    // failure is not a publish failure, and the loop that reads this log is
-    // EventIngestion's twin, whose connect failures have their own line too.
+    // Replaces MqttPublishFailed, whose only caller passed the topic "(connect)".
+    // A connect failure is not a publish failure, and a publish failure has no
+    // line at all by design: samples the broker did not take are counted and
+    // reported once per outage, because the timeline emits many a second.
     [LoggerMessage(Level = LogLevel.Error, Message = "MQTT publisher could not connect to '{Host}': {Error}.")]
     public static partial void MqttPublisherConnectFailed(this ILogger logger, string host, string error);
 
