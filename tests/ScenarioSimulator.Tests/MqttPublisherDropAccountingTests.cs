@@ -90,8 +90,7 @@ public class MqttPublisherDropAccountingTests
     {
         await using PublisherUnderTest publisher = PublisherUnderTest.Create();
 
-        await publisher.Publisher.StartAsync(CancellationToken.None);
-        (await publisher.WaitUntilConnectedAsync()).ShouldBeTrue("the publisher never connected");
+        await publisher.StartAndSettleAsync();
 
         publisher.Client.FailNextPublishAsNotConnected = true;
 
@@ -102,6 +101,91 @@ public class MqttPublisherDropAccountingTests
             $"a {nameof(MqttClientNotConnectedException)} raised by the race must be counted like any "
             + "other drop, not rethrown at the timeline and not logged per occurrence.");
     }
+
+    /// <summary>
+    /// <b>A refusal is not a connection, and here that costs more than a wrong
+    /// log line.</b> MQTTnet 4's builder set
+    /// <c>ThrowOnNonSuccessfulConnectResponse = true</c>, so a rejected CONNECT
+    /// arrived as an exception; in MQTTnet 5 the property is gone and a refusal
+    /// returns a result otherwise indistinguishable from success.
+    ///
+    /// <para>
+    /// Taken for a connection it announces one and then runs
+    /// <c>ReportDrops</c> — which <c>Interlocked.Exchange</c>es the counter to
+    /// zero and writes the one warning an outage gets. So samples already lost
+    /// are declared recovered by a connection that does not exist, and the loop
+    /// then waits on a drop no connection could ever raise: every later sample
+    /// counted, none ever reported, until the process is restarted.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_refused_connect_neither_announces_a_connection_nor_ends_the_outage()
+    {
+        await using PublisherUnderTest publisher = PublisherUnderTest.Create();
+        publisher.Client.RefuseEveryConnect();
+
+        for (int i = 0; i < 3; i++)
+        {
+            await publisher.Publisher.PublishAsync(Topic, "{}", CancellationToken.None);
+        }
+
+        publisher.Publisher.DroppedSamples.ShouldBe(3, "arrange: three samples were lost before the loop ran");
+
+        await publisher.Publisher.StartAsync(CancellationToken.None);
+
+        (await PublisherUnderTest.WaitUntilAsync(
+            () => publisher.Client.ConnectAttempts >= 2 || publisher.Logger.Entries.Any(entry => Announces(entry.Message)))).ShouldBeTrue(
+            "the loop neither retried nor said anything, so there is nothing to read");
+
+        List<string> lines = [.. publisher.Logger.Entries.Select(entry => entry.Message)];
+
+        lines.ShouldNotContain(
+            line => line.Contains("publisher connected", StringComparison.Ordinal),
+            "the broker answered NotAuthorized and the client is not connected. The simulator "
+            + "registers no MQTT health check either, so an Information line claiming a connection "
+            + "is the only signal there is, saying the opposite of what happened.");
+
+        publisher.Publisher.DroppedSamples.ShouldBe(
+            3,
+            "ReportDrops must not run on a CONNECT that was refused. It exchanges the counter to zero "
+            + "and writes the one warning an outage gets, so a refusal taken for a connection declares "
+            + "over an outage that never began — and the loop then blocks for good on a drop that no "
+            + "connection can raise.");
+    }
+
+    /// <summary>
+    /// A QoS 1 publish whose PUBACK never arrives raises
+    /// <c>MqttCommunicationTimedOutException</c>, not
+    /// <see cref="MqttClientNotConnectedException"/>. A catch naming only the
+    /// latter lets it out of <c>PublishAsync</c> and into
+    /// <c>BilletTimelineHostedService</c>, a <c>BackgroundService</c> catching
+    /// nothing but <c>OperationCanceledException</c> — so .NET's default
+    /// <c>BackgroundServiceExceptionBehavior.StopHost</c> stops the host. A
+    /// broker that answers slowly is this spec's own scenario, so it must not be
+    /// the thing that ends the simulator run.
+    /// </summary>
+    [Fact]
+    public async Task A_publish_whose_acknowledgement_never_arrives_is_counted_rather_than_stopping_the_host()
+    {
+        await using PublisherUnderTest publisher = PublisherUnderTest.Create();
+
+        await publisher.StartAndSettleAsync();
+
+        publisher.Client.FailNextPublishAsTimedOut = true;
+
+        await Should.NotThrowAsync(
+            () => publisher.Publisher.PublishAsync(Topic, "{}", CancellationToken.None),
+            $"a {nameof(MqttCommunicationTimedOutException)} escaping here faults the timeline's "
+            + "BackgroundService, and the default StopHost behaviour then stops the simulator.");
+
+        publisher.Publisher.DroppedSamples.ShouldBe(
+            1,
+            "the broker never acknowledged the sample, so it is gone — a drop like any other, "
+            + "counted and reported once when the outage ends.");
+    }
+
+    private static bool Announces(string message) =>
+        message.Contains("publisher connected", StringComparison.Ordinal);
 
     private sealed class PublisherUnderTest : IAsyncDisposable
     {
@@ -143,10 +227,42 @@ public class MqttPublisherDropAccountingTests
             return new PublisherUnderTest(client, new RecordingLogger<MqttPublisher>(), tokens);
         }
 
+        /// <summary>
+        /// Starts the loop and waits until it is <b>past</b> everything a
+        /// connect sets off — <c>ReportDrops</c> included, which
+        /// <c>Interlocked.Exchange</c>es the drop counter to zero.
+        ///
+        /// <para>
+        /// <b>Waiting on <c>IsConnected</c> is not enough.</b> The fake yields
+        /// before answering CONNECT, because the real client cannot complete a
+        /// network round trip synchronously, so the loop resumes on a pool
+        /// thread somewhere after the flag is set. A test that arms a publish
+        /// failure the moment the flag turns true can therefore count its drop
+        /// and then have the loop clear the counter underneath it — observed as
+        /// a two-in-three failure rate, not a rare race.
+        /// </para>
+        ///
+        /// <para>
+        /// So one sample is dropped first, giving the connect an outage to
+        /// report, and the warning that reports it is the signal that the loop
+        /// has gone past. The counter is back to zero when this returns.
+        /// </para>
+        /// </summary>
+        public async Task StartAndSettleAsync()
+        {
+            Client.GateConnect();
+            await Publisher.StartAsync(CancellationToken.None);
+
+            await Publisher.PublishAsync(Topic, "{}", CancellationToken.None);
+
+            Client.AllowConnect();
+
+            (await WaitForWarningAsync()).ShouldBeTrue("the publisher never connected");
+            Publisher.DroppedSamples.ShouldBe(0, "the settling sample was reported and the count cleared");
+        }
+
         public Task<bool> WaitForWarningAsync() =>
             WaitUntilAsync(() => Logger.Entries.Any(entry => entry.Level == LogLevel.Warning));
-
-        public Task<bool> WaitUntilConnectedAsync() => WaitUntilAsync(() => Client.IsConnected);
 
         public async ValueTask DisposeAsync()
         {
@@ -154,7 +270,7 @@ public class MqttPublisherDropAccountingTests
             tokens.Dispose();
         }
 
-        private static async Task<bool> WaitUntilAsync(Func<bool> condition)
+        public static async Task<bool> WaitUntilAsync(Func<bool> condition)
         {
             DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(10);
             while (DateTimeOffset.UtcNow < deadline)
