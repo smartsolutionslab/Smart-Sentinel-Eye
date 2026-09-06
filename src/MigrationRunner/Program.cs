@@ -69,20 +69,10 @@ ILogger<Program> logger = host.Services.GetRequiredService<ILogger<Program>>();
 
 await host.StartAsync();
 
-// Resolved from a scope rather than the root provider. Every migrator was a
-// singleton until spec 019 added one that depends on the Keycloak admin client,
-// which is scoped — and resolving a scoped service from the root throws under
-// the scope validation the Development environment turns on. That throw exits
-// this process non-zero, and because all nine services WaitForCompletion on it,
-// every one of them reports FailedToStart with nothing to say why.
-await using AsyncServiceScope scope = host.Services.CreateAsyncScope();
+int exitCode = await MigrationRun.ExecuteAsync(
+    host.Services,
+    logger,
+    host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping);
 
-IEnumerable<IMigrator> migrators = scope.ServiceProvider.GetServices<IMigrator>();
-foreach (IMigrator migrator in migrators)
-{
-    logger.RunningMigrations(migrator.ContextName);
-    await migrator.RunAsync(host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping);
-}
-
-logger.AllMigrationsApplied();
 await host.StopAsync();
+return exitCode;
