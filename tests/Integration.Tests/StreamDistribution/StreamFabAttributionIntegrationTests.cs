@@ -154,6 +154,16 @@ public class StreamFabAttributionIntegrationTests(AspireFixture aspire) : IAsync
     /// before that handler lands is the write that loses — and the row this
     /// test depends on would quietly still have its fab.
     /// </para>
+    ///
+    /// <para>
+    /// SC-002 is observed rather than derived. The stored row proves the pass
+    /// happened; the pair of reads around it proves the fab reached the
+    /// reader, which is what the criterion actually claims. Retirement does
+    /// not hide the stream — neither read filters on <c>StreamState</c> — so
+    /// the 404 before and the 200 after are both the fab talking, and the
+    /// "before" half is what tells "the pass fixed it" apart from "it was
+    /// visible all along".
+    /// </para>
     /// </summary>
     [Fact]
     public async Task A_stream_whose_camera_was_decommissioned_reacquires_its_fab()
@@ -173,6 +183,13 @@ public class StreamFabAttributionIntegrationTests(AspireFixture aspire) : IAsync
         retired.GetProperty("status").GetString().ShouldBe("Decommissioned");
         retired.GetProperty("fab").GetString().ShouldBe("munich");
 
+        // SC-002, first half: with the fab blanked the stream is a 404 even to
+        // its own fab's operator. One extra GET on a client this test needs
+        // anyway, and without it the 200 at the end is equally consistent with
+        // a stream that was never hidden.
+        using HttpClient munich = await aspire.CreateAdminClientAsync("stream-distribution");
+        (await munich.GetAsync($"/streams/{camera}")).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+
         IReadOnlyDictionary<Guid, string> fabsByCamera =
             await RealLookup().FabsByCameraAsync(CancellationToken.None);
 
@@ -189,6 +206,16 @@ public class StreamFabAttributionIntegrationTests(AspireFixture aspire) : IAsync
 
         stored.Fab.ShouldNotBeNull();
         stored.Fab.Value.ShouldBe("munich");
+
+        // SC-002, second half — the criterion's actual claim. The row above is
+        // the attribution; this is that attribution reaching the reader, from
+        // the same operator who got the 404.
+        HttpResponseMessage afterwards = await munich.GetAsync($"/streams/{camera}");
+        afterwards.StatusCode.ShouldBe(
+            HttpStatusCode.OK, await afterwards.Content.ReadAsStringAsync());
+
+        JsonElement visible = await afterwards.Content.ReadFromJsonAsync<JsonElement>();
+        visible.GetProperty("fab").GetString().ShouldBe("munich");
     }
 
     /// <summary>
