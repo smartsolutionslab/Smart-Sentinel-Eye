@@ -131,9 +131,32 @@ what this endpoint discloses, and would be the moment to revisit it.
   successful TCP connect does not already disclose.
 - `/health` — no predicate, so both checks. Runs one Postgres query per
   request. Returns `200` for Healthy **and Degraded** (framework default
-  `ResultStatusCodes`), `503` only for Unhealthy — which is the correct
-  readiness semantic: an outbox backlog must not pull a replica out of
-  rotation.
+  `ResultStatusCodes`) and `503` only for Unhealthy — and **nothing in this
+  system can produce Unhealthy**, so that last clause is true but vacuous and
+  `/health` is a constant `200`. `self` returns `Healthy()` unconditionally.
+  `outbox-{module}` returns only Healthy or Degraded, including on the
+  Postgres-unreachable path, and its `failureStatus: Degraded`
+  (`src/ServiceDefaults/WolverineDefaults.cs`) maps even a throw to Degraded.
+  Part of that is deliberate — an outbox backlog must not pull a replica out
+  of rotation — but the unreachable-database path is not, and the endpoint
+  answers `200` either way.
+
+**`/health`'s inability to fail is pre-existing, and this spec makes it
+load-bearing.** Nothing in this change causes it; mapping the probes in
+Production is what makes a k8s readiness probe depend on it, so a constant
+`200` stops being a curiosity and becomes the answer an orchestrator acts on.
+Filed as **#2125**, with two options and neither decided here: state the
+position explicitly — readiness means "this process is serving", and an
+outage of a shared dependency is not a reason to drain every replica at once
+— or add a `ready`-tagged reachability check, which reopens the exposure
+analysis above, because a check whose *name* encodes a dependency is
+precisely the case that analysis and FR-006 rule out.
+
+**Do not read that as the mapping being worthless.** `/alive` binds to a real
+signal — the process is up and serving the ASP.NET pipeline — and before this
+change both paths answered `404` in Production, which a liveness probe reads
+as a dead container. A constant `200` on `/health` is a weaker answer than it
+looks, not the absence of one.
 
 **To whom.** In-cluster, the kubelet on the pod network. Publicly, only if an
 Ingress routes it — and the gateway's route table means that path is real once
@@ -157,8 +180,10 @@ the Ingress. FR-005 below exists so that decision is met rather than discovered.
 
 **As** whoever deploys Smart Sentinel Eye to k3s,
 **I want** every service to answer `/alive` and `/health` in Production,
-**so that** k8s liveness and readiness probes bind to a real signal and
-`.WithReplicas(2)` delivers the availability ADR-0106 claims for it.
+**so that** k8s probes bind to an answer rather than a `404` — `/alive` to a
+real signal, and `/health` to a constant `200` until #2125 settles what
+readiness should mean here — and `.WithReplicas(2)` delivers the availability
+ADR-0106 claims for it.
 
 There is no second story. The slice is one method in one file, and it is the
 smallest change that makes all ten hosts probeable (ADR-0036).
