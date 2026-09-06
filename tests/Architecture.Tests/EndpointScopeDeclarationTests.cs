@@ -695,7 +695,8 @@ public class EndpointScopeDeclarationTests
             "these endpoints enforce a scope their summary never names: "
             + $"{Environment.NewLine}{string.Join(Environment.NewLine, silent)}{Environment.NewLine}"
             + "The required-scope catalogue is only legible at the surface if the surface says it. "
-            + "Eighteen endpoints already spell the sentence exactly this way; nothing enforced it, and "
+            + "Eighteen endpoints already spelled the sentence exactly this way at spec 070; nothing "
+            + "enforced it, and "
             + "the gap that opened is issue 2070 — a scope granted in the realm, absent from the chain, "
             + "and absent from prose that described everything else about the endpoint in detail. Append "
             + "the sentence; change no route, handler, policy or Produces declaration.");
