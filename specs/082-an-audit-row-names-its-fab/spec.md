@@ -25,15 +25,22 @@ The symptom recorded on a long-lived run-mode Postgres (#2068): three
 sites, and 19 `EventMetadata(` spellings plus 2 target-typed `Metadata: new(`.
 
 **6 pass a literal `null` in the fab position. Exactly 3 of those 6 have a fab on
-their source record — those 3 are the defect. The other 3 are legitimate, and
-legitimate *derivably*.**
+their source record — those 3 are the defect.**
+
+**What the guard actually sees is 20 of those 21 sites, 5 of the 6 literal nulls,
+and all 3 defects.** `AuditRetentionHostedService` publishes from a private
+`ArchiveAndDropAsync` and its file declares no `Handle`/`HandleAsync`, so the scan
+never reaches it. Its exemption is therefore **structural** — out of scope by
+construction — and not derived from `AuditChunk` carrying no `Fab`. Recorded because
+"the guard derives all six verdicts" is a stronger claim than what runs, and this
+repository has had to correct a summary that outran its evidence before.
 
 | Site | Source record | Record carries `Fab`? | Fab argument | Verdict |
 |---|---|---|---|---|
 | `SystemVariables/…/VariableArchivedDomainEventHandler.cs:39` | `VariableArchivedDomainEvent` | **yes** | **`null`** | **defect — #2068** |
 | `LayoutComposition/…/LayoutRevisionArchivedDomainEventHandler.cs:33` | `LayoutRevisionArchivedDomainEvent` | **yes** | **`null`** | **defect — #2071** |
 | `LayoutComposition/…/LayoutRevisionPublishedDomainEventHandler.cs:54` | `LayoutRevisionPublishedDomainEvent` | **yes** | **`null`** | **defect — #2071** |
-| `OverlayDesigner/…/OverlayRevisionArchivedDomainEventHandler.cs:34` | `OverlayRevisionArchivedDomainEvent` | **no** | `null` | correct (ADR-0115) |
+| `OverlayDesigner/…/OverlayRevisionArchivedDomainEventHandler.cs:31` | `OverlayRevisionArchivedDomainEvent` | **no** | `null` | correct (ADR-0115) |
 | `OverlayDesigner/…/OverlayRevisionPublishedDomainEventHandler.cs:44` | `OverlayRevisionPublishedDomainEvent` | **no** | `null` | correct (ADR-0115) |
 | `AuditObservability/…/AuditRetentionHostedService.cs:145` | `AuditChunk` | **no** | `null` | correct — a Timescale chunk spans fabs |
 | `StreamDistribution/…/StreamHealthChangedDomainEventHandler.cs:56` | `StreamHealthChangedDomainEvent` | yes, but `FabIdentifier?` | `Fab?.Value` | not a literal null — **#2076** |
@@ -49,8 +56,10 @@ legitimate *derivably*.**
 **The exemptions are derived, not registered.** An overlay revision genuinely has
 no fab — `OverlayRevisionPublishedDomainEvent` and `OverlayRevisionArchivedDomainEvent`
 have no `Fab` component at all, which is ADR-0115 expressed in the type. `AuditChunk`
-likewise. So the rule needs no hand-typed exemption list, and that is the whole reason
-a guard is worth building here rather than a pinned register (contrast spec 075).
+carries no fab either, but its site is exempt for the structural reason above rather
+than by that derivation — the guard never reads it. So the rule needs no hand-typed
+exemption list, and that is the whole reason a guard is worth building here rather
+than a pinned register (contrast spec 075).
 
 **A per-handler test register would not have caught this, and demonstrably did not.**
 `VariableArchivedDomainEventHandlerTests` already asserts `push.Metadata.Fab.ShouldBe("munich")`
