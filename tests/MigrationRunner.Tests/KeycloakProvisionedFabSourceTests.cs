@@ -9,6 +9,11 @@ namespace SmartSentinelEye.MigrationRunner.Tests;
 /// Spec 019 T012. Two rules live here and nowhere else: a group name the domain
 /// cannot use is skipped rather than fatal (FR-005), and nothing usable is
 /// fatal rather than empty (FR-011).
+///
+/// <para>
+/// A third thing is pinned here since #2062, and it is a reading rather than a
+/// rule: the two fatal verdicts are two messages, not one.
+/// </para>
 /// </summary>
 public class KeycloakProvisionedFabSourceTests
 {
@@ -69,6 +74,36 @@ public class KeycloakProvisionedFabSourceTests
 
         await Should.ThrowAsync<InvalidOperationException>(
             () => source.GetFabsAsync(CancellationToken.None));
+    }
+
+    /// <summary>
+    /// The two fatal verdicts must not read as one. Both are
+    /// <see cref="InvalidOperationException"/>, so neither test above can tell
+    /// them apart — and before f059b237 they genuinely were one message, "no
+    /// usable fab found under '/fabs'", for a realm with no such group and for
+    /// a realm whose groups are all named unusably alike. Naming the abort is
+    /// what issue #2062 is for, and nothing else here holds that.
+    ///
+    /// <para>
+    /// Asserts the discriminator, not the prose: the names verdict quotes the
+    /// name it rejected, and the two verdicts are not the same sentence.
+    /// Rewording either message keeps this green; collapsing them back into one
+    /// shared string does not. <c>ShouldNotContain("NOT-A-FAB")</c> on the
+    /// absent verdict would be the obvious third assertion and is deliberately
+    /// missing: that call never saw the name, so no implementation could put it
+    /// there, and an assertion nothing can fail is worse than none.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Tells_a_realm_with_no_fab_groups_apart_from_one_whose_groups_are_unusable()
+    {
+        InvalidOperationException unusable = await Should.ThrowAsync<InvalidOperationException>(
+            () => Source(["NOT-A-FAB"]).GetFabsAsync(CancellationToken.None));
+        InvalidOperationException absent = await Should.ThrowAsync<InvalidOperationException>(
+            () => Source([]).GetFabsAsync(CancellationToken.None));
+
+        unusable.Message.ShouldContain("NOT-A-FAB");
+        absent.Message.ShouldNotBe(unusable.Message);
     }
 
     /// <summary>An unreachable realm surfaces, rather than becoming "no fabs".</summary>
