@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using MQTTnet;
 using MQTTnet.Protocol;
@@ -96,9 +97,7 @@ internal sealed class MqttConnectionLoop
             return;
         }
 
-        // Reset only after a connect that worked, so a drop reconnects at once
-        // and only repeated failures back off.
-        backoff.Reset();
+        long connectedAt = Stopwatch.GetTimestamp();
         logger.MqttSubscriberConnected(Broker(), options.Username);
 
         if (!await SubscribeAsync(client, cancellationToken))
@@ -107,6 +106,13 @@ internal sealed class MqttConnectionLoop
         }
 
         await drop.Task.WaitAsync(cancellationToken);
+
+        // Cleared here rather than on the CONNACK. A session takeover answers
+        // CONNACK and then closes — both clients connect with a fixed client id,
+        // so a second pod, or a restart before the broker reaps the old session,
+        // is exactly that — and a reset on arrival clears a backoff that never
+        // gets to apply, so the takeover becomes a hot reconnect loop.
+        backoff.ResetIfHeld(Stopwatch.GetElapsedTime(connectedAt));
     }
 
     /// <summary>
@@ -250,6 +256,26 @@ internal sealed class MqttBackoff(TimeSpan first, TimeSpan cap)
 
     /// <summary>Puts the next wait back to nothing, after a connect that worked.</summary>
     public void Reset() => attempts = 0;
+
+    /// <summary>
+    /// Clears the debt for a connection that <b>held</b>, and leaves it alone for
+    /// one that merely arrived.
+    ///
+    /// <para>
+    /// The yardstick is the shortest wait this backoff schedules: a connection
+    /// that did not outlast even that was a handshake, not a connection, and
+    /// resetting on it means the next attempt waits for nothing. A session
+    /// takeover — CONNACK, then close — would otherwise reconnect at full speed
+    /// for as long as the other client is there.
+    /// </para>
+    /// </summary>
+    public void ResetIfHeld(TimeSpan held)
+    {
+        if (held >= first)
+        {
+            Reset();
+        }
+    }
 
     // Not a security decision: this de-synchronises retries between clients, it
     // does not generate anything anyone could guess their way into.
