@@ -30,7 +30,6 @@
     <PackageReference Include="WolverineFx.RabbitMQ" />
     <!-- spec 006 (ADR-0096): MQTT subscriber for the Mosquitto broker (ADR-0095). -->
     <PackageReference Include="MQTTnet" />
-    <PackageReference Include="MQTTnet.Extensions.ManagedClient" />
   </ItemGroup>
 
   <ItemGroup>

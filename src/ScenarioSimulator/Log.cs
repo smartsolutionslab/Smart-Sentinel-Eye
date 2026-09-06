@@ -133,4 +133,13 @@ internal static partial class Log
 
     [LoggerMessage(Level = LogLevel.Error, Message = "MQTT publish to '{Topic}' failed: {Reason}.")]
     public static partial void MqttPublishFailed(this ILogger logger, string topic, string reason);
+
+    // One line per outage, not one per drop. The timeline emits many samples a
+    // second, so per-sample logging would bury the summary it is meant to be.
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "{Count} sample(s) dropped while the broker was away ({Seconds:F1}s). "
+            + "The gap in the timeline is the outage; nothing was buffered, because a replayed "
+            + "sample carries a stale occurredAt at a live wall.")]
+    public static partial void MqttSamplesDropped(this ILogger logger, long count, double seconds);
 }

@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
 using MQTTnet;
-using MQTTnet.Client;
 using SmartSentinelEye.Integration.Tests.Fixtures;
 using Xunit.Abstractions;
 
@@ -176,7 +175,7 @@ public class NFR002_MqttConnectAuthTests(AspireFixture aspire, ITestOutputHelper
 
     private static async Task ConnectOnceAsync(string host, int port, string clientId, string jwt)
     {
-        using IMqttClient client = new MqttFactory().CreateMqttClient();
+        using IMqttClient client = new MqttClientFactory().CreateMqttClient();
         MqttClientOptions options = new MqttClientOptionsBuilder()
             .WithClientId($"{clientId}-{Guid.CreateVersion7():N}")
             .WithTcpServer(host, port)

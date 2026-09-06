@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json;
 using MQTTnet;
-using MQTTnet.Client;
 using MQTTnet.Protocol;
 
 namespace SmartSentinelEye.Integration.Tests.Fixtures;
@@ -51,7 +50,7 @@ public sealed class PlantFloor(AspireFixture aspire)
         string jwt = await SimulatorTokenAsync();
 
         Uri broker = aspire.App.GetEndpoint("mosquitto", "mqtt");
-        using IMqttClient client = new MqttFactory().CreateMqttClient();
+        using IMqttClient client = new MqttClientFactory().CreateMqttClient();
         MqttClientConnectResult connected = await client.ConnectAsync(new MqttClientOptionsBuilder()
             .WithClientId($"{SimulatorClientId}-{Guid.CreateVersion7():N}")
             .WithCredentials(SimulatorClientId, jwt)

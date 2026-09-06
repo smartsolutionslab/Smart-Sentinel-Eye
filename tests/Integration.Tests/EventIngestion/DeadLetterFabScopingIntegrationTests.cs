@@ -2,7 +2,6 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using MQTTnet;
-using MQTTnet.Client;
 using MQTTnet.Protocol;
 using SmartSentinelEye.EventIngestion.Domain.DeadLetter;
 using SmartSentinelEye.EventIngestion.Domain.Event;
@@ -186,7 +185,7 @@ public class DeadLetterFabScopingIntegrationTests(AspireFixture aspire) : IAsync
         string jwt = await MintSimulatorTokenAsync();
         Uri broker = aspire.App.GetEndpoint("mosquitto", "mqtt");
 
-        using IMqttClient client = new MqttFactory().CreateMqttClient();
+        using IMqttClient client = new MqttClientFactory().CreateMqttClient();
         MqttClientOptions options = new MqttClientOptionsBuilder()
             .WithClientId($"{SimulatorClientId}-{Guid.CreateVersion7():N}")
             // The go-auth plugin requires the username to equal the token's azp.

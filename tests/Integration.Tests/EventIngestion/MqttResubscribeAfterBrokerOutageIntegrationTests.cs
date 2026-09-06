@@ -5,7 +5,6 @@ using Aspire.Hosting.ApplicationModel;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using MQTTnet;
-using MQTTnet.Client;
 using MQTTnet.Exceptions;
 using MQTTnet.Protocol;
 using SmartSentinelEye.EventIngestion.Infrastructure.Persistence;
@@ -276,7 +275,7 @@ public class MqttResubscribeAfterBrokerOutageIntegrationTests(
         string jwt = await SimulatorTokenAsync();
         Uri broker = aspire.App.GetEndpoint(Broker, "mqtt");
 
-        using IMqttClient client = new MqttFactory().CreateMqttClient();
+        using IMqttClient client = new MqttClientFactory().CreateMqttClient();
 
         try
         {

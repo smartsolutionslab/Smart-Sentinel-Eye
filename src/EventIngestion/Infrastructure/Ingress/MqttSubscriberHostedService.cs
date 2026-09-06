@@ -1,12 +1,11 @@
+using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using MQTTnet.Client;
-using MQTTnet.Extensions.ManagedClient;
-using MQTTnet.Protocol;
+using MQTTnet;
 using SmartSentinelEye.EventIngestion.Application.Ingress;
 using SmartSentinelEye.EventIngestion.Domain.DeadLetter;
 using SmartSentinelEye.EventIngestion.Domain.Event;
@@ -40,123 +39,82 @@ public sealed class MqttSubscriberHostedService(
     IServiceScopeFactory scopeFactory,
     IClock clock,
     IOptions<MosquittoOptions> options,
-    ILogger<MqttSubscriberHostedService> logger) : IHostedService
+    ILogger<MqttSubscriberHostedService> logger) : IHostedService, IDisposable
 {
-    private IManagedMqttClient? client;
     private MqttConnection? connection;
+    private CancellationTokenSource? loopCancellation;
+    private Task? loop;
 
     // Deliveries this process rejected without being able to name their plant
     // (FR-012). Interlocked because MQTTnet dispatches handlers concurrently.
     private long unattributableDeadLetters;
 
+    /// <summary>
+    /// Attaches the message handler and <b>launches</b> the connect loop —
+    /// deliberately without awaiting a first connection.
+    ///
+    /// <para>
+    /// A plain <c>IMqttClient.ConnectAsync</c> throws when the broker is
+    /// unreachable, and an exception escaping here does not fail a connection,
+    /// it fails the whole host. Awaiting the first connect would therefore put
+    /// event-ingestion into <c>FailedToStart</c> because mosquitto was slow —
+    /// #2038 again, from the broker's side rather than Keycloak's. The loop
+    /// retries on its own and there is nothing here worth waiting for.
+    /// </para>
+    /// </summary>
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         connection = await connectionFactory.CreateAsync(cancellationToken);
-        client = connection.Client;
+        connection.Client.ApplicationMessageReceivedAsync += OnMessageReceived;
 
-        client.ApplicationMessageReceivedAsync += OnMessageReceived;
-        client.ConnectedAsync += OnConnectedAsync;
-        client.DisconnectedAsync += OnDisconnectedAsync;
-        client.ConnectingFailedAsync += OnConnectingFailedAsync;
+        loopCancellation = new CancellationTokenSource();
+        loop = new MqttConnectionLoop(connection, new MqttBackoff(), options.Value, logger)
+            .RunAsync(loopCancellation.Token);
 
-        string topic = options.Value.SubscribeTopic;
-        await client.SubscribeAsync(topic, MqttQualityOfServiceLevel.AtLeastOnce);
-        await client.StartAsync(connection.Options);
-
-        logger.MqttSubscriberStarted(topic);
+        logger.MqttSubscriberStarted(options.Value.SubscribeTopic);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        if (client is null)
+        if (connection is null)
         {
             return;
         }
 
-        client.ApplicationMessageReceivedAsync -= OnMessageReceived;
-        client.ConnectedAsync -= OnConnectedAsync;
-        client.DisconnectedAsync -= OnDisconnectedAsync;
-        client.ConnectingFailedAsync -= OnConnectingFailedAsync;
-        await client.StopAsync();
-        client.Dispose();
-        client = null;
+        IMqttClient stopping = connection.Client;
+        stopping.ApplicationMessageReceivedAsync -= OnMessageReceived;
+
+        if (loopCancellation is not null)
+        {
+            await loopCancellation.CancelAsync();
+        }
+
+        if (loop is not null)
+        {
+            // The loop swallows its own cancellation; this awaits it so the
+            // disconnect below cannot race a connect the loop is still making.
+            await loop;
+        }
+
+        await stopping.TryDisconnectAsync(
+            MqttClientDisconnectOptionsReason.NormalDisconnection, "shutting down");
+        stopping.Dispose();
+        loopCancellation?.Dispose();
+
         connection = null;
+        loop = null;
+        loopCancellation = null;
         logger.MqttSubscriberStopped();
     }
 
-    private Task OnConnectedAsync(MqttClientConnectedEventArgs args)
-    {
-        MosquittoOptions opts = options.Value;
-        logger.MqttSubscriberConnected($"{opts.Host}:{opts.Port}", opts.Username);
-        return Task.CompletedTask;
-    }
-
     /// <summary>
-    /// Refreshes the JWT so the imminent auto-reconnect presents a live one.
-    /// The broker closes the connection when the token expires, so without
-    /// this the subscriber would reconnect-loop on a stale credential.
+    /// The safety net for a host that disposes without a clean
+    /// <see cref="StopAsync"/> — after one, everything here is already null.
     /// </summary>
-    private async Task OnDisconnectedAsync(MqttClientDisconnectedEventArgs args)
+    public void Dispose()
     {
-        logger.MqttSubscriberDisconnected(args.Reason.ToString());
-
-        if (connection is null)
-        {
-            return;
-        }
-
-        try
-        {
-            await connection.RefreshTokenAsync(CancellationToken.None);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.MqttReconnectTokenFailed(ex.Message);
-        }
-    }
-
-    /// <summary>
-    /// Re-mints the JWT after a failed connect attempt, for the same reason
-    /// <see cref="OnDisconnectedAsync"/> does after a dropped one.
-    ///
-    /// <para>
-    /// <b>These are different events and only one of them was covered.</b>
-    /// <c>DisconnectedAsync</c> fires when an established connection drops;
-    /// a CONNECT the broker refuses — an expired or absent token — raises this
-    /// instead. So a subscriber that never managed a first connection re-presented
-    /// the same dead credential every five seconds, forever, and the log said
-    /// only that connecting had failed. Nothing recovered it but a restart.
-    /// </para>
-    ///
-    /// <para>
-    /// That path became reachable on purpose when the startup mint stopped being
-    /// fatal (see <see cref="MosquittoConnectionFactory"/>): the client may now
-    /// legitimately start with no token at all, and this is what turns that into
-    /// a connection rather than a loop.
-    /// </para>
-    /// </summary>
-    private async Task OnConnectingFailedAsync(ConnectingFailedEventArgs args)
-    {
-        MosquittoOptions opts = options.Value;
-        logger.MqttSubscriberConnectFailed(
-            $"{opts.Host}:{opts.Port}", args.Exception?.Message ?? "connect failed");
-
-        if (connection is null)
-        {
-            return;
-        }
-
-        try
-        {
-            await connection.RefreshTokenAsync(CancellationToken.None);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // Keycloak is still away. The next attempt is five seconds off and
-            // will try again; failing here would only replace a retry with a
-            // crash.
-            logger.MqttReconnectTokenFailed(ex.Message);
-        }
+        loopCancellation?.Dispose();
+        connection?.Client.Dispose();
     }
 
     private async Task OnMessageReceived(MqttApplicationMessageReceivedEventArgs args)
@@ -169,7 +127,7 @@ public sealed class MqttSubscriberHostedService(
         args.AutoAcknowledge = false;
 
         string topic = args.ApplicationMessage.Topic;
-        ReadOnlyMemory<byte> body = args.ApplicationMessage.PayloadSegment;
+        ReadOnlyMemory<byte> body = Body(args.ApplicationMessage);
 
         ParseResult result = TryParseEnvelope(topic, body);
         if (result.Envelope is null)
@@ -221,6 +179,21 @@ public sealed class MqttSubscriberHostedService(
         public Task AbandonedAsync(CancellationToken cancellationToken) =>
             args.AcknowledgeAsync(cancellationToken);
     }
+
+    /// <summary>
+    /// The delivery's bytes as one contiguous block.
+    ///
+    /// <para>
+    /// MQTTnet 5 made <c>PayloadSegment</c> write-only; the readable payload is
+    /// a <see cref="ReadOnlySequence{T}"/>, which a broker is free to hand over
+    /// in several segments. The overwhelmingly common single-segment case is
+    /// passed through without copying, and the rest is flattened rather than
+    /// parsed segment-wise — one allocation on a path that would otherwise need
+    /// a second JSON reader for a case MQTT payloads under 64 KB do not hit.
+    /// </para>
+    /// </summary>
+    private static ReadOnlyMemory<byte> Body(MqttApplicationMessage message) =>
+        message.Payload.IsSingleSegment ? message.Payload.First : message.Payload.ToArray();
 
     private static ParseResult TryParseEnvelope(string topic, ReadOnlyMemory<byte> body)
     {
