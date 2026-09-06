@@ -152,7 +152,47 @@ public class DefaultEndpointsTests
         body.ShouldBe("Healthy");
     }
 
-    private static WebApplication ProbeHost(string environmentName, bool withFailingReadyCheck = false)
+    /// <summary>
+    /// The premise the Production mapping rests on, driven rather than asserted
+    /// in prose. The real <c>outbox-{module}</c> check registers
+    /// <c>failureStatus: Degraded</c> (<c>WolverineDefaults</c>), and the
+    /// framework default maps Degraded to 200. Were it 503, a genuine outbox
+    /// backlog — a condition this system deliberately calls non-fatal — would
+    /// fail the readiness probe on every replica at once, and Kubernetes would
+    /// take the whole service out of rotation for it.
+    ///
+    /// <para>
+    /// Production rather than Development, though the mapping itself is
+    /// environment-independent: only in Production is <c>/health</c> newly
+    /// reachable and read by a kubelet, so only there does the consequence
+    /// exist — and no other test in this file invokes a Production
+    /// <c>/health</c> at all.
+    /// </para>
+    ///
+    /// <para>
+    /// The body is asserted as an exact word for the same reason as its
+    /// Development sibling: a check name, a description or a <c>data</c> entry
+    /// reaching the payload fails this.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_production_readiness_probe_answers_two_hundred_for_a_degraded_ready_tagged_check()
+    {
+        await using WebApplication app = ProbeHost(
+            Environments.Production,
+            withFailingReadyCheck: true,
+            readyCheckFailureStatus: HealthStatus.Degraded);
+
+        (int status, string body) = await CallAsync(app, HealthPath);
+
+        status.ShouldBe(StatusCodes.Status200OK);
+        body.ShouldBe("Degraded");
+    }
+
+    private static WebApplication ProbeHost(
+        string environmentName,
+        bool withFailingReadyCheck = false,
+        HealthStatus readyCheckFailureStatus = HealthStatus.Unhealthy)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder(
             new WebApplicationOptions { EnvironmentName = environmentName });
@@ -162,7 +202,7 @@ public class DefaultEndpointsTests
         if (withFailingReadyCheck)
         {
             builder.Services.AddHealthChecks()
-                .AddCheck("probe-ready", () => HealthCheckResult.Unhealthy(), ["ready"]);
+                .AddCheck("probe-ready", () => new HealthCheckResult(readyCheckFailureStatus), ["ready"]);
         }
 
         WebApplication app = builder.Build();
