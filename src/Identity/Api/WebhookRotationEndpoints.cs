@@ -41,6 +41,7 @@ public static class WebhookRotationEndpoints
             .WithSummary("Rotate a webhook integration's bearer onto a Keycloak JWT. Send If-Match with the version from GET /webhook-integrations to rotate an existing client, or If-None-Match: * to create one. Required scope: sse.webhooks.write")
             .Produces<WebhookClientCredentialsDto>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired)
@@ -55,7 +56,8 @@ public static class WebhookRotationEndpoints
             .WithName("ListWebhookClients")
             .WithSummary("List webhook service-account clients and the version each must be rotated at. Required scope: sse.webhooks.write")
             .Produces<IReadOnlyList<RegisteredClientSummaryDto>>(StatusCodes.Status200OK)
-            .ProducesProblem(StatusCodes.Status400BadRequest);
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
 
         return app;
     }
