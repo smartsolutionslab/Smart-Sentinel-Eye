@@ -153,6 +153,15 @@ public static class Extensions
         // detail, or a check whose *name* encodes a dependency, turns an
         // aggregate word into an unauthenticated inventory of the system's
         // internals, and the analysis has to be redone before it ships.
+        //
+        // In-cluster that audience is the kubelet, but the gateway's
+        // "/{context}/{**catch-all}" routes (src/ApiGateway/appsettings.json)
+        // forward "/{context}/health" to each of the nine context services
+        // unauthenticated, so an Ingress placed in front of the gateway would
+        // publish these endpoints publicly without another line of routing
+        // being written. Whether the public edge should expose them is #1015
+        // item 3's call, taken with the Ingress that work builds; this comment
+        // exists so that decision is met rather than discovered.
         // See https://aka.ms/aspire/healthchecks.
 
         // All health checks must pass for app to be considered ready to accept traffic after starting

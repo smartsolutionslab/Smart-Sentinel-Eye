@@ -128,9 +128,15 @@ public sealed class OutboxBacklogHealthCheck<TDbContext>(
         }
         catch (DbException ex) when (IsUnreachable(ex))
         {
-            // The database being unreachable is already reported by the
-            // connection's own check. Repeating it as an outbox failure would
-            // be one cause producing two alarms.
+            // Nothing else reports the database being unreachable. The check
+            // set is exactly two members — "self", which returns Healthy
+            // unconditionally, and this one — so there is no connection check
+            // to defer to, and the Healthy below is not deduplication. It is a
+            // deliberate choice not to fail readiness on a dependency every
+            // replica shares: draining all of them at once helps nobody, and a
+            // backlog monitor is the wrong place to own that signal. Whether
+            // that is the right answer, and what should own it instead, is
+            // #2125.
             return HealthCheckResult.Healthy(
                 "Backlog not readable; the database check owns this.",
                 new Dictionary<string, object>(StringComparer.Ordinal) { ["error"] = ex.GetType().Name });
