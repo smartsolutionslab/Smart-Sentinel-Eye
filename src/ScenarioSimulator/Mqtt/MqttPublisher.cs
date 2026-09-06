@@ -68,8 +68,6 @@ public sealed class MqttPublisher : IAsyncDisposable
 
     private CancellationTokenSource? loopCancellation;
     private Task? loop;
-    private MqttClientOptions? clientOptions;
-    private TaskCompletionSource? dropped;
 
     private long droppedSamples;
     private long outageStartedAt;
@@ -119,7 +117,7 @@ public sealed class MqttPublisher : IAsyncDisposable
         // clients are talking to a broker whose ACL and auth behaviour (ADR-0100)
         // were proven on 3.1.1. Nothing here needs MQTT 5, and a silent
         // protocol change is what cost the subscriber its persistent session.
-        clientOptions = new MqttClientOptionsBuilder()
+        MqttClientOptions clientOptions = new MqttClientOptionsBuilder()
             .WithProtocolVersion(MqttProtocolVersion.V311)
             .WithClientId(Username)
             .WithTcpServer(host, port)
@@ -129,7 +127,11 @@ public sealed class MqttPublisher : IAsyncDisposable
             .Build();
 
         loopCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        loop = RunAsync(loopCancellation.Token);
+
+        // Carried down the loop rather than parked in a field: the loop is the
+        // only reader, and a field would have to be dereferenced with a `!` on
+        // every attempt to satisfy NRT for something StartAsync has always set.
+        loop = RunAsync(clientOptions, loopCancellation.Token);
         return Task.CompletedTask;
     }
 
@@ -202,28 +204,30 @@ public sealed class MqttPublisher : IAsyncDisposable
         loopCancellation = null;
     }
 
-    private async Task RunAsync(CancellationToken cancellationToken)
+    private async Task RunAsync(MqttClientOptions clientOptions, CancellationToken cancellationToken)
     {
-        client.DisconnectedAsync += OnDisconnectedAsync;
-
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                await AttemptAsync(cancellationToken);
+                await AttemptAsync(clientOptions, cancellationToken);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // Disposal cancelled the loop. Shutting down is not a failure.
         }
-        finally
-        {
-            client.DisconnectedAsync -= OnDisconnectedAsync;
-        }
     }
 
-    private async Task AttemptAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// One attempt owns one <see cref="DropSignal"/>, subscribed <b>before</b>
+    /// the CONNECT and unsubscribed when the attempt ends, for the reason the
+    /// subscriber's copy gives: MQTTnet 5 dispatches the disconnect handler
+    /// fire-and-forget from the <c>DisconnectInternal</c> a refused CONNECT
+    /// performs, so a stale disconnect is in flight after every refusal and a
+    /// handler owned by the loop would let it complete a later attempt's wait.
+    /// </summary>
+    private async Task AttemptAsync(MqttClientOptions clientOptions, CancellationToken cancellationToken)
     {
         TimeSpan delay = backoff.Next();
         if (delay > TimeSpan.Zero)
@@ -232,10 +236,23 @@ public sealed class MqttPublisher : IAsyncDisposable
             await Task.Delay(delay, cancellationToken);
         }
 
-        TaskCompletionSource drop = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        dropped = drop;
+        DropSignal drop = new(client, logger, $"{host}:{port}");
+        client.DisconnectedAsync += drop.OnDisconnectedAsync;
 
-        if (!await ConnectAsync(cancellationToken))
+        try
+        {
+            await HoldConnectionAsync(clientOptions, drop, cancellationToken);
+        }
+        finally
+        {
+            client.DisconnectedAsync -= drop.OnDisconnectedAsync;
+        }
+    }
+
+    private async Task HoldConnectionAsync(
+        MqttClientOptions clientOptions, DropSignal drop, CancellationToken cancellationToken)
+    {
+        if (!await ConnectAsync(clientOptions, cancellationToken))
         {
             return;
         }
@@ -244,7 +261,7 @@ public sealed class MqttPublisher : IAsyncDisposable
         logger.MqttPublisherConnected($"{host}:{port}", Username);
         ReportDrops();
 
-        await drop.Task.WaitAsync(cancellationToken);
+        await drop.WaitAsync(cancellationToken);
 
         // Cleared here rather than on the CONNACK, for the reason the
         // subscriber's copy gives: a session takeover answers CONNACK and then
@@ -257,7 +274,8 @@ public sealed class MqttPublisher : IAsyncDisposable
     /// CONNECT, so no wait — however long the backoff has grown — sits between
     /// minting a token and presenting it.
     /// </summary>
-    private async Task<bool> ConnectAsync(CancellationToken cancellationToken)
+    private async Task<bool> ConnectAsync(
+        MqttClientOptions clientOptions, CancellationToken cancellationToken)
     {
         try
         {
@@ -286,7 +304,7 @@ public sealed class MqttPublisher : IAsyncDisposable
             // outage over that never ended and clears the counter. The loop then
             // waited on a drop no connection could ever raise: a permanent hang,
             // with every later sample counted and never reported.
-            MqttClientConnectResult result = await client.ConnectAsync(clientOptions!, cancellationToken);
+            MqttClientConnectResult result = await client.ConnectAsync(clientOptions, cancellationToken);
             if (result.ResultCode == MqttClientConnectResultCode.Success)
             {
                 return true;
@@ -311,13 +329,6 @@ public sealed class MqttPublisher : IAsyncDisposable
     /// </summary>
     private static bool IsShutdown(Exception exception, CancellationToken cancellationToken) =>
         exception is OperationCanceledException && cancellationToken.IsCancellationRequested;
-
-    private Task OnDisconnectedAsync(MqttClientDisconnectedEventArgs args)
-    {
-        logger.MqttPublisherDisconnected($"{host}:{port}");
-        dropped?.TrySetResult();
-        return Task.CompletedTask;
-    }
 
     /// <summary>
     /// Counts a discarded sample. <b>Nothing is logged here</b>: the timeline
@@ -374,5 +385,45 @@ public sealed class MqttPublisher : IAsyncDisposable
         public string GetUserName(MqttClientOptions clientOptions) => Username;
 
         public byte[] GetPassword(MqttClientOptions clientOptions) => Encoding.UTF8.GetBytes(token.Value);
+    }
+    /// <summary>
+    /// One attempt's wait for its own connection to go.
+    ///
+    /// <para>
+    /// <b>The event is the nudge; the client's state is the authority.</b> A
+    /// disconnect event does not prove this connection ended — MQTTnet 5
+    /// dispatches the handler fire-and-forget from the <c>DisconnectInternal</c>
+    /// a refused CONNECT performs, so one can arrive while a later connection is
+    /// up. Taken for a drop it makes the loop reconnect a live client, which
+    /// <c>MqttClient.ThrowIfConnected</c> refuses — and nothing closes that
+    /// connection, so the refusal repeats for as long as the process runs.
+    /// </para>
+    ///
+    /// <para>
+    /// Reading <c>IsConnected</c> here is decisive rather than a poll:
+    /// <c>DisconnectIsPendingOrFinished</c> moves the connection status off
+    /// <c>Connected</c> before <c>DisconnectCore</c> runs, and
+    /// <c>DisconnectCore</c> sets it to <c>Disconnected</c> before it builds the
+    /// event args, so a genuine drop cannot reach this handler with the client
+    /// still reporting a connection.
+    /// </para>
+    /// </summary>
+    private sealed class DropSignal(IMqttClient client, ILogger logger, string broker)
+    {
+        private readonly TaskCompletionSource dropped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task WaitAsync(CancellationToken cancellationToken) => dropped.Task.WaitAsync(cancellationToken);
+
+        public Task OnDisconnectedAsync(MqttClientDisconnectedEventArgs args)
+        {
+            logger.MqttPublisherDisconnected(broker, args.Reason.ToString());
+
+            if (!client.IsConnected)
+            {
+                dropped.TrySetResult();
+            }
+
+            return Task.CompletedTask;
+        }
     }
 }
