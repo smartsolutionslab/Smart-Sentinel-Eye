@@ -36,7 +36,7 @@ public sealed class VariableArchivedDomainEventHandler(
             Name: variableName.Value,
             ArchivedAt: archivedAt,
             ArchivedBy: archivedBy.Value,
-            Metadata: new EventMetadata(Guid.CreateVersion7(), archivedAt, null, archivedBy.Value));
+            Metadata: new EventMetadata(Guid.CreateVersion7(), archivedAt, fab.Value, archivedBy.Value));
 
         await events.PublishAsync(systemVariableArchivedEvent, cancellationToken);
 

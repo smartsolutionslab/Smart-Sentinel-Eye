@@ -51,7 +51,7 @@ public sealed class LayoutRevisionPublishedDomainEventHandler(
                 GridCols: grid.Cols,
                 PublishedAt: publishedAt,
                 PublishedBy: publishedBy.Value,
-                Metadata: new EventMetadata(Guid.CreateVersion7(), publishedAt, null, publishedBy.Value)),
+                Metadata: new EventMetadata(Guid.CreateVersion7(), publishedAt, fab.Value, publishedBy.Value)),
             cancellationToken);
 
         await broadcaster.PublishedAsync(
