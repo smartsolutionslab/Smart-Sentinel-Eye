@@ -128,8 +128,14 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Information, Message = "MQTT publisher connected to '{Host}' as '{Username}'.")]
     public static partial void MqttPublisherConnected(this ILogger logger, string host, string username);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "MQTT publisher disconnected from '{Host}'; reconnecting.")]
-    public static partial void MqttPublisherDisconnected(this ILogger logger, string host);
+    // The reason is carried for the same purpose the subscriber's line carries
+    // it: the disconnect event is the loop's only account of why the connection
+    // went, and a clean "NormalDisconnection" reads very differently from a
+    // broker that closed the socket underneath it.
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "MQTT publisher disconnected from '{Host}' ({Reason}); reconnecting.")]
+    public static partial void MqttPublisherDisconnected(this ILogger logger, string host, string reason);
 
     // Replaces MqttPublishFailed, whose only caller passed the topic "(connect)".
     // A connect failure is not a publish failure, and a publish failure has no
