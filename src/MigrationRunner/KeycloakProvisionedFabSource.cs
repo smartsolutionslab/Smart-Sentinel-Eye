@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using SmartSentinelEye.EventIngestion.Application.Ingress;
 using SmartSentinelEye.EventIngestion.Domain.Event;
@@ -20,6 +19,16 @@ namespace SmartSentinelEye.MigrationRunner;
 /// already references all nine. Moving this file into either context would be
 /// a boundary violation that the architecture test fails on.
 /// </para>
+///
+/// <para>
+/// The question is asked once, because a second ask cannot answer differently.
+/// <c>/fabs</c> and its children are imported with the realm, from the same
+/// document as the <c>migration-runner</c> client whose token this call needs,
+/// and Keycloak binds its HTTP listener only after that import has finished —
+/// so a caller that can reach the admin API at all is talking to a realm whose
+/// groups are already there. Nothing creates a fab group at runtime either.
+/// An empty tree is therefore a verdict, not a "not yet".
+/// </para>
 /// </summary>
 internal sealed class KeycloakProvisionedFabSource(
     IKeycloakAdminClient keycloak,
@@ -28,61 +37,36 @@ internal sealed class KeycloakProvisionedFabSource(
     /// <summary>The group whose children are the fabs.</summary>
     private const string FabGroupPath = "/fabs";
 
-    /// <summary>
-    /// How long the group tree may stay empty before that is taken as the
-    /// answer rather than as "not yet". MigrationRunner is gated on Keycloak's
-    /// <c>/health/ready</c>, which is not the same fact as "the realm is
-    /// queryable" — <c>AspireFixture.WaitForKeycloakRealmAsync</c> polls the
-    /// realm separately for exactly that reason. Half its 60 s, because that
-    /// budget covers a cold container boot as well as the import and this one
-    /// starts after readiness.
-    /// </summary>
-    private static readonly TimeSpan RealmWaitBudget = TimeSpan.FromSeconds(30);
-
-    /// <summary>Matches the fixture's poll interval; nothing here is urgent.</summary>
-    private static readonly TimeSpan RealmPollInterval = TimeSpan.FromSeconds(1);
-
     public async Task<IReadOnlyList<FabIdentifier>> GetFabsAsync(CancellationToken cancellationToken)
     {
-        Stopwatch waited = Stopwatch.StartNew();
+        // Not caught: an unreachable realm must fail the run rather than
+        // provision nothing and report success (FR-011). "There are no fabs"
+        // and "I could not tell" are the same value and opposite facts.
+        IReadOnlyList<string> names =
+            await keycloak.GetSubGroupNamesAsync(FabGroupPath, cancellationToken);
 
-        while (true)
+        if (names.Count == 0)
         {
-            // Not caught: an unreachable realm must fail the run rather than
-            // provision nothing and report success (FR-011). "There are no fabs"
-            // and "I could not tell" are the same value and opposite facts.
-            IReadOnlyList<string> names =
-                await keycloak.GetSubGroupNamesAsync(FabGroupPath, cancellationToken);
-
-            // An answer with children in it is an answer: whatever those names
-            // are, the tree is there and re-asking returns the same thing.
-            if (names.Count > 0)
-            {
-                return Usable(names);
-            }
-
-            if (waited.Elapsed >= RealmWaitBudget)
-            {
-                throw new InvalidOperationException(
-                    $"Nothing at all under '{FabGroupPath}' after waiting " +
-                    $"{RealmWaitBudget.TotalSeconds:F0}s for the realm's group tree to answer. " +
-                    "Provisioning cannot continue: every event written by any fab would be lost, " +
-                    "and proceeding would report success while doing nothing.");
-            }
-
-            // Said out loud, every attempt: from outside the process a pause and
-            // a hang are the same thing, and nine services are gated on this one.
-            logger.WaitingForFabGroups(
-                FabGroupPath, waited.Elapsed.TotalSeconds, RealmWaitBudget.TotalSeconds);
-
-            await Task.Delay(RealmPollInterval, cancellationToken);
+            // Separated from the verdict below because the two send the reader
+            // to different places: nothing under '/fabs' is a question about
+            // the realm, while nothing usable is a question about the names in
+            // it. Collapsing them is what made the run's own account of itself
+            // unhelpful.
+            throw new InvalidOperationException(
+                $"Nothing at all under '{FabGroupPath}' in the realm: the group is absent, or " +
+                "present with no children. It is imported with the realm and nothing creates it " +
+                "later, so this is a realm that was imported without fabs rather than one still " +
+                "importing. Provisioning cannot continue: every event written by any fab would " +
+                "be lost, and proceeding would report success while doing nothing.");
         }
+
+        return Usable(names);
     }
 
     /// <summary>
     /// The fabs among <paramref name="names"/>, or a failed run. Reached only
     /// once the group tree has answered with something, so the verdict here is
-    /// about the names rather than about the realm's readiness.
+    /// about the names rather than about the realm.
     /// </summary>
     private List<FabIdentifier> Usable(IReadOnlyList<string> names)
     {
@@ -116,9 +100,10 @@ internal sealed class KeycloakProvisionedFabSource(
         if (fabs.Count == 0)
         {
             throw new InvalidOperationException(
-                $"No usable fab found under '{FabGroupPath}' in the realm. Provisioning cannot " +
-                "continue: every event written by any fab would be lost, and proceeding would " +
-                "report success while doing nothing.");
+                $"No usable fab found under '{FabGroupPath}' in the realm: {names.Count} group(s) " +
+                $"are there and none is a usable fab name ({string.Join(", ", unusable)}). " +
+                "Provisioning cannot continue: every event written by any fab would be lost, " +
+                "and proceeding would report success while doing nothing.");
         }
 
         return fabs;
