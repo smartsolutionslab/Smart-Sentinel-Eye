@@ -131,8 +131,26 @@ internal sealed class MqttConnectionLoop
 
         try
         {
-            await client.ConnectAsync(connection.Options, cancellationToken);
-            return true;
+            // **The result code is the answer; the absence of an exception is
+            // not.** MQTTnet 4's builder set
+            // ThrowOnNonSuccessfulConnectResponse = true, so a rejected CONNECT
+            // arrived here as a throw. In MQTTnet 5 the property is gone and a
+            // refusal returns normally — verified against mosquitto 2.0.18,
+            // where a bad credential answers NotAuthorized with
+            // IsConnected=false and throws nothing. Discarding the result made
+            // every refusal an Information line saying the subscriber was
+            // connected, which during an outage is the only signal an operator
+            // has and says the opposite of what happened.
+            MqttClientConnectResult result =
+                await client.ConnectAsync(connection.Options, cancellationToken);
+
+            if (result.ResultCode == MqttClientConnectResultCode.Success)
+            {
+                return true;
+            }
+
+            logger.MqttSubscriberConnectFailed(Broker(), result.ResultCode.ToString());
+            return false;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
