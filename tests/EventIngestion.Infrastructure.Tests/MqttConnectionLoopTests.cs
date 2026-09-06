@@ -33,7 +33,32 @@ public class MqttConnectionLoopTests
     /// </summary>
     private const int SpinCeiling = 20;
 
+    /// <summary>
+    /// Connects a 100 ms/400 ms backoff cannot reach in <see cref="FlapWindow"/>
+    /// once it engages: the delays run 0, 100, 200, 400, 400 … and each cycle
+    /// also spends <see cref="JustPastTheFloor"/> connected, so eight or so are
+    /// due in three seconds. A backoff that resets every cycle instead runs at
+    /// the hold period alone — about 27. Sixteen sits clear of both.
+    /// </summary>
+    private const int FlapCeiling = 16;
+
     private static readonly TimeSpan SpinWindow = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Long enough for a failed-connect cycle to repeat several times against a
+    /// 100 ms/400 ms backoff, and short enough to keep the suite quick.
+    /// </summary>
+    private static readonly TimeSpan StaleWindow = TimeSpan.FromSeconds(2);
+
+    private static readonly TimeSpan FlapWindow = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// A hold that clears <see cref="LoopUnderTest.Patient"/>'s 100 ms floor and
+    /// nothing more. The margin is the whole point: <c>ResetIfHeld</c> compares
+    /// against that floor, so any hold at all above it counts as a connection
+    /// that held.
+    /// </summary>
+    private static readonly TimeSpan JustPastTheFloor = TimeSpan.FromMilliseconds(110);
 
     [Fact]
     public async Task The_loop_reconnects_after_the_connection_drops()
@@ -226,6 +251,104 @@ public class MqttConnectionLoopTests
             + "with no delay at all, for as long as the other client is there.");
     }
 
+    /// <summary>
+    /// <b>A refusal leaves a disconnect in flight, and the loop has nowhere to
+    /// put it.</b> MQTTnet 5's <c>ConnectAsync</c> calls
+    /// <c>DisconnectInternal</c> on a non-success CONNACK, and
+    /// <c>DisconnectCore</c> dispatches the handler fire-and-forget
+    /// (<c>Task.Run(...).RunInBackground(_logger)</c>, not awaited). So after
+    /// every refusal a stale disconnect is on its way, and it can land after a
+    /// later CONNECT has succeeded — completing that attempt's <c>dropped</c>
+    /// task for a connection that is up and subscribed.
+    ///
+    /// <para>
+    /// <b>The cost is not one spurious cycle.</b> The loop wakes, sees a drop
+    /// that did not happen, and reconnects a client that is still connected —
+    /// which <c>MqttClient.ThrowIfConnected</c> refuses. The attempt fails, the
+    /// connection is never closed, so the next attempt fails the same way, and
+    /// the one after that: a false <c>Error</c> saying the subscriber could not
+    /// connect, forever, on the only outage signal EventIngestion has — there is
+    /// no MQTT health check. Worse, <c>ResetIfHeld</c> never runs on the held
+    /// connection, so the attempt counter climbs to the cap and the next
+    /// <em>genuine</em> outage waits up to 30 s: a recovery regression on the
+    /// leg this spec exists to protect.
+    /// </para>
+    ///
+    /// <para>
+    /// The allowance of one failed connect is deliberate. A single spurious wake
+    /// at the refused-to-success transition is the bounded part of this, and is
+    /// not what this asserts against.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_stale_disconnect_does_not_start_a_failed_connect_cycle_against_a_live_connection()
+    {
+        using LoopUnderTest loop = LoopUnderTest.Start(_ => { }, LoopUnderTest.Patient());
+
+        (await LoopUnderTest.WaitUntilAsync(
+            () => loop.Client.IsConnected && loop.Client.SubscribedTopics.Count == 1)).ShouldBeTrue(
+            "the loop never reached a connected, subscribed client, so there is nothing to disturb");
+
+        await loop.Client.RaiseStaleDisconnectAsync();
+
+        // The whole window is observed rather than exited at the threshold: what
+        // is in doubt is the rate, and a count that stopped at the bound it was
+        // compared against would report the bound rather than the cycle.
+        await Task.Delay(StaleWindow);
+
+        loop.FailedConnects.ShouldBeLessThanOrEqualTo(
+            1,
+            $"\"could not connect\" errors written in {StaleWindow.TotalSeconds:F0}s while the client was "
+            + "connected and subscribed. Each is ThrowIfConnected refusing to reconnect a live "
+            + "connection, and nothing closes that connection — so the cycle does not end: a permanent "
+            + "stream of false outage errors, and an attempt counter climbing to the cap that the next "
+            + "real outage then waits out. One is allowed for the bounded spurious wake.");
+
+        loop.Client.IsConnected.ShouldBeTrue(
+            "arrange check — a stale disconnect is an event, not a disconnection. If the client is down, "
+            + "this test is measuring an ordinary reconnect rather than the cycle it was written for.");
+    }
+
+    /// <summary>
+    /// <b>The yardstick <c>ResetIfHeld</c> measures against is a constant, so a
+    /// peer can sit just above it forever.</b> A connection held for
+    /// <c>first + ε</c> clears the backoff every single time, which puts the next
+    /// attempt back to no delay at all — so the backoff never engages, and the
+    /// flap runs at the peer's period instead of at a growing one.
+    ///
+    /// <para>
+    /// This is the guard's own scenario, not an exotic one. Its comment names a
+    /// session takeover, and with a fixed client id two pods take the session
+    /// off each other at roughly one another's reconnect period — which is what
+    /// that period converges on: a little above the floor. At the production
+    /// floor of 1 s it is a reconnect, a resubscribe and three log lines every
+    /// second, indefinitely.
+    /// </para>
+    ///
+    /// <para>
+    /// Distinct from
+    /// <see cref="A_connection_that_dies_on_arrival_is_retried_with_a_delay_rather_than_a_spin"/>,
+    /// which covers a hold of zero — the one case the fixed yardstick does
+    /// catch.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_connection_held_just_past_the_floor_still_backs_off()
+    {
+        using LoopUnderTest loop = LoopUnderTest.Start(
+            client => client.HoldEveryConnectionFor(JustPastTheFloor), LoopUnderTest.Patient());
+
+        await Task.Delay(FlapWindow);
+
+        loop.Client.ConnectAttempts.ShouldBeLessThan(
+            FlapCeiling,
+            $"connects made in {FlapWindow.TotalSeconds:F0}s against a peer holding each one for "
+            + $"{JustPastTheFloor.TotalMilliseconds:F0} ms — a 100 ms floor exceeded by a hair. "
+            + "ResetIfHeld clears the backoff on every one of them, so there is never a delay left to "
+            + "wait: the takeover the guard was written for reconnects at full speed anyway, one cycle "
+            + "per peer period, for as long as the other client is there.");
+    }
+
     private sealed class LoopUnderTest : IDisposable
     {
         private readonly CancellationTokenSource cancellation = new();
@@ -245,6 +368,15 @@ public class MqttConnectionLoopTests
         public FakeMqttClient Client { get; }
 
         public RecordingLogger Logger { get; } = new();
+
+        /// <summary>
+        /// How many times the loop has said it could not connect. Counted from
+        /// the log rather than from <c>ConnectAttempts</c> because a CONNECT
+        /// refused by <c>ThrowIfConnected</c> never leaves the client, so it
+        /// shows up only here.
+        /// </summary>
+        public int FailedConnects =>
+            Logger.Entries.Count(entry => entry.Message.Contains("could not connect", StringComparison.Ordinal));
 
         /// <summary>
         /// Milliseconds rather than the production 1 s/30 s: what most of these
