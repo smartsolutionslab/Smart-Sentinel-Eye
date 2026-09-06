@@ -288,8 +288,19 @@ carries it.
 > ~103 ev/s of the EF-only remedy and the 169.8–244.4 of `Warning` is where the
 > shipped configuration sits, against a 100 ev/s target — which is to say it is
 > not known to clear it. **#2133** is filed to measure it, and until it reports,
-> the inherited-level refusal above is what keeps an uncharacterised
-> configuration from being certified by a run taken under it.
+> the refusal above keeps a run taken at a level *nobody chose for it* from
+> being certified.
+>
+> That is narrower than it may read, and the narrower claim is the true one.
+> The refusal does **not** keep every uncharacterised configuration from being
+> certified: a run launched with `Logging__LogLevel__Default=Information` has
+> chosen its level, `"Information"` is neither `Debug` nor `Trace`, and so it is
+> certified — under an effective configuration identical to the inherited one,
+> since the chosen value equals the appsettings value and
+> `Database.Command: Warning` still comes from the file. That is exactly the
+> pairing #2133 says nobody has measured. Refusing a *chosen* `Information` too
+> would close the gap, but it is a behaviour change, and it is the change #2133's
+> figure exists to inform — so it is deliberately not taken here.
 
 ## Alternatives Considered
 
