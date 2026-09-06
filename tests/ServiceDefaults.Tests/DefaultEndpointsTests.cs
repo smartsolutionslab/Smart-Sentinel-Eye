@@ -44,6 +44,28 @@ public class DefaultEndpointsTests
 
     private const string AlivenessPath = "/alive";
 
+    /// <summary>
+    /// The failing <c>ready</c> check carries a payload shaped like the real
+    /// <c>outbox-{module}</c> one — <c>OutboxBacklogHealthCheck</c>'s own
+    /// description and its <c>pending</c>/<c>maxAttempts</c>/<c>schema</c>
+    /// entries — because the two exact-string body assertions are the only
+    /// automated guard on the spec's security argument, and a hollow
+    /// <c>new HealthCheckResult(status)</c> cannot carry it: a
+    /// <c>ResponseWriter</c> that rendered check names, descriptions and
+    /// <c>data</c> would emit the same single word for a check that has none,
+    /// and both tests would stay green while the guarantee was gone.
+    /// </summary>
+    private const string ReadyCheckDescription =
+        "4211 announcement(s) waiting; most-retried has failed 9 time(s).";
+
+    private static readonly IReadOnlyDictionary<string, object> ReadyCheckData =
+        new Dictionary<string, object>(StringComparer.Ordinal)
+        {
+            ["pending"] = 4211L,
+            ["maxAttempts"] = 9,
+            ["schema"] = "wolverine_camera_catalog",
+        };
+
     [Fact]
     public void A_production_host_maps_the_readiness_probe()
     {
@@ -129,6 +151,12 @@ public class DefaultEndpointsTests
     /// framework default writes the aggregate status and nothing else — no
     /// check names, no descriptions, and not the <c>data</c> dictionary, which
     /// does carry the outbox schema name and its pending counts.
+    ///
+    /// <para>
+    /// The check is failed with the payload a real one carries
+    /// (<see cref="ReadyCheckDescription"/>, <see cref="ReadyCheckData"/>), so
+    /// "one word" is a claim about the writer and not about an empty result.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task A_development_readiness_probe_reports_a_failing_ready_tagged_check_as_one_word()
@@ -172,7 +200,9 @@ public class DefaultEndpointsTests
     /// <para>
     /// The body is asserted as an exact word for the same reason as its
     /// Development sibling: a check name, a description or a <c>data</c> entry
-    /// reaching the payload fails this.
+    /// reaching the payload fails this — the check carries all three
+    /// (<see cref="ReadyCheckDescription"/>, <see cref="ReadyCheckData"/>), so
+    /// there is something for a detailed writer to leak.
     /// </para>
     /// </summary>
     [Fact]
@@ -202,7 +232,14 @@ public class DefaultEndpointsTests
         if (withFailingReadyCheck)
         {
             builder.Services.AddHealthChecks()
-                .AddCheck("probe-ready", () => new HealthCheckResult(readyCheckFailureStatus), ["ready"]);
+                .AddCheck(
+                    "probe-ready",
+                    () => new HealthCheckResult(
+                        readyCheckFailureStatus,
+                        ReadyCheckDescription,
+                        exception: null,
+                        ReadyCheckData),
+                    ["ready"]);
         }
 
         WebApplication app = builder.Build();
