@@ -32,4 +32,10 @@ internal static partial class Log
     // provisioned; saying nothing would make that loss unattributable.
     [LoggerMessage(Level = LogLevel.Warning, Message = "Ignoring unusable fab group name(s) under '{ParentPath}': {Names}. No event storage is provisioned for them.")]
     public static partial void UnusableFabGroupNames(this ILogger logger, string names, string parentPath);
+
+    // Issue #2062, deliverable B. Information rather than Debug for the reason
+    // `PostgresWarning` already records (#1394): at Debug the default filter
+    // hides it, and a wait nobody can see is indistinguishable from a hang.
+    [LoggerMessage(Level = LogLevel.Information, Message = "No groups under '{ParentPath}' yet; the realm may still be importing. Re-asking ({ElapsedSeconds:F0}s of {BudgetSeconds:F0}s).")]
+    public static partial void WaitingForFabGroups(this ILogger logger, string parentPath, double elapsedSeconds, double budgetSeconds);
 }
