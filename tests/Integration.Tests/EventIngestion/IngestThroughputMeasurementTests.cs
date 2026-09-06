@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using MQTTnet;
+using MQTTnet.Formatter;
 using MQTTnet.Protocol;
 using SmartSentinelEye.EventIngestion.Infrastructure.Persistence;
 using SmartSentinelEye.Integration.Tests.Fixtures;
@@ -248,6 +249,7 @@ public class IngestThroughputMeasurementTests(AspireFixture aspire, ITestOutputH
         using IMqttClient client = new MqttClientFactory().CreateMqttClient();
         await client.ConnectAsync(
             new MqttClientOptionsBuilder()
+                .WithProtocolVersion(MqttProtocolVersion.V311)
                 .WithClientId($"{SimulatorClientId}-load-{publisher}-{Guid.CreateVersion7():N}")
                 .WithCredentials(SimulatorClientId, jwt)
                 .WithTcpServer(broker.Host, broker.Port)

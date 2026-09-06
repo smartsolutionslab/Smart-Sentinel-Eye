@@ -24,6 +24,17 @@ public class MqttConnectionLoopTests
 {
     private const string Topic = "fab/+/+/+";
 
+    /// <summary>
+    /// Attempts that a 100 ms/400 ms backoff cannot reach in <see cref="SpinWindow"/>:
+    /// the delays run 0, 100, 200, 400, 400 … so about five are due, and even a
+    /// fix that only ever waited the first 100 ms could manage a dozen. Twenty is
+    /// therefore comfortably above any loop that waits and far below one that does
+    /// not — a spin makes thousands.
+    /// </summary>
+    private const int SpinCeiling = 20;
+
+    private static readonly TimeSpan SpinWindow = TimeSpan.FromSeconds(1);
+
     [Fact]
     public async Task The_loop_reconnects_after_the_connection_drops()
     {
@@ -125,35 +136,140 @@ public class MqttConnectionLoopTests
             + "for repeated failures, not for the first attempt after a connection that worked.");
     }
 
+    /// <summary>
+    /// <b>A refusal is not a connection, and only the result code says which it
+    /// was.</b> MQTTnet 4's builder set
+    /// <c>ThrowOnNonSuccessfulConnectResponse = true</c>, so a rejected CONNECT
+    /// arrived as an exception; in MQTTnet 5 the property is gone and the
+    /// refusal comes back as <c>ResultCode</c> on a result that is otherwise
+    /// indistinguishable from success. Confirmed against mosquitto 2.0.18 — a
+    /// bad credential answers <c>NotAuthorized</c> with <c>IsConnected=false</c>
+    /// and throws nothing.
+    ///
+    /// <para>
+    /// The log line is the assertion because the log is what an operator has.
+    /// EventIngestion registers no MQTT health check, so during an outage an
+    /// Information line saying the subscriber is connected is not merely
+    /// untidy — it is the only signal there is, saying the opposite of what
+    /// happened.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_refused_connect_is_not_announced_as_a_connection()
+    {
+        using LoopUnderTest loop = LoopUnderTest.Start(client => client.RefuseEveryConnect());
+
+        (await LoopUnderTest.WaitUntilAsync(() => loop.Client.ConnectAttempts >= 3)).ShouldBeTrue(
+            "the loop stopped attempting, so there is nothing in the log to read");
+
+        List<string> lines = [.. loop.Logger.Entries.Select(entry => entry.Message)];
+
+        lines.ShouldNotContain(
+            line => line.Contains("subscriber connected", StringComparison.Ordinal),
+            "the broker answered NotAuthorized and the client is not connected. Announcing a "
+            + "connection the loop does not have makes the only signal an operator gets during "
+            + "an outage report the opposite of the truth.");
+    }
+
+    /// <summary>
+    /// The same defect, in the form that costs CPU rather than trust: a refusal
+    /// taken for a success resets the backoff, so the next attempt waits for
+    /// nothing and the loop spins. Reachable and <b>permanent</b> — an
+    /// <c>acl.txt</c> that grants no read on the subscribe topic never resolves
+    /// itself, unlike the JWKS fetch the retry loop was designed around.
+    /// </summary>
+    [Fact]
+    public async Task A_broker_that_refuses_every_connect_is_retried_with_a_delay_rather_than_a_spin()
+    {
+        using LoopUnderTest loop = LoopUnderTest.Start(
+            client => client.RefuseEveryConnect(), LoopUnderTest.Patient());
+
+        bool spun = await LoopUnderTest.WaitUntilAsync(
+            () => loop.Client.ConnectAttempts >= SpinCeiling, SpinWindow);
+
+        spun.ShouldBeFalse(
+            $"the loop reached {loop.Client.ConnectAttempts} attempts inside a {SpinWindow.TotalSeconds:F0}s window "
+            + "against a 100 ms backoff, which allows about five. A refusal that resets the backoff "
+            + "leaves nothing to wait for, so a permanent refusal becomes a hot loop against the "
+            + "broker and a matching stream of error lines.");
+    }
+
+    /// <summary>
+    /// <c>backoff.Reset()</c> runs immediately after CONNECT, before the
+    /// connection has proved it can hold. A session takeover answers CONNACK and
+    /// then closes — both clients use a fixed client id
+    /// (<c>event-ingestion</c>, <c>scenario-simulator</c>), so a second pod, or a
+    /// restart before the broker reaps the old session, produces exactly that.
+    /// Every cycle then resets a backoff that never gets to apply.
+    ///
+    /// <para>
+    /// This does not contradict
+    /// <see cref="A_reconnect_after_a_success_does_not_inherit_the_previous_backoff"/>:
+    /// one drop after a connection that worked must reconnect at once, and a
+    /// <i>run</i> of connections that die on arrival must not. The difference is
+    /// repetition, not the first reconnect.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_connection_that_dies_on_arrival_is_retried_with_a_delay_rather_than_a_spin()
+    {
+        using LoopUnderTest loop = LoopUnderTest.Start(
+            client => client.DropEveryConnectionImmediately = true, LoopUnderTest.Patient());
+
+        bool spun = await LoopUnderTest.WaitUntilAsync(
+            () => loop.Client.ConnectAttempts >= SpinCeiling, SpinWindow);
+
+        spun.ShouldBeFalse(
+            $"the loop reached {loop.Client.ConnectAttempts} attempts inside a {SpinWindow.TotalSeconds:F0}s window "
+            + "against a 100 ms backoff, which allows about five. Resetting the backoff on a "
+            + "connection that has not lasted a single instant means a takeover loop reconnects "
+            + "with no delay at all, for as long as the other client is there.");
+    }
+
     private sealed class LoopUnderTest : IDisposable
     {
         private readonly CancellationTokenSource cancellation = new();
         private readonly MqttTokenProvider tokens;
         private readonly Task running;
 
-        private LoopUnderTest(FakeMqttClient client, MqttTokenProvider tokens, MqttConnection connection)
+        private LoopUnderTest(
+            FakeMqttClient client, MqttTokenProvider tokens, MqttConnection connection, MqttBackoff backoff)
         {
             Client = client;
             this.tokens = tokens;
 
-            // Milliseconds rather than the production 1 s/30 s: what these tests
-            // assert is the loop's ordering, not the arithmetic. The shape of the
-            // production delay is asserted directly in MqttBackoffTests, where it
-            // costs nothing to wait for.
-            running = new MqttConnectionLoop(
-                    connection,
-                    new MqttBackoff(TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(4)),
-                    OptionsValue(),
-                    NullLogger.Instance)
+            running = new MqttConnectionLoop(connection, backoff, OptionsValue(), Logger)
                 .RunAsync(cancellation.Token);
         }
 
         public FakeMqttClient Client { get; }
 
-        public static LoopUnderTest Start(int refuseFirstConnects = 0)
+        public RecordingLogger Logger { get; } = new();
+
+        /// <summary>
+        /// Milliseconds rather than the production 1 s/30 s: what most of these
+        /// tests assert is the loop's ordering, not the arithmetic. The shape of
+        /// the production delay is asserted directly in <c>MqttBackoffTests</c>,
+        /// where it costs nothing to wait for.
+        /// </summary>
+        public static MqttBackoff Brisk() =>
+            new(TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(4));
+
+        /// <summary>
+        /// Slow enough that a delay is distinguishable from none. A 1 ms wait and
+        /// no wait at all look the same to a test that counts attempts over a
+        /// window, so the tests that assert the loop <em>waits</em> use this.
+        /// </summary>
+        public static MqttBackoff Patient() =>
+            new(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(400));
+
+        public static LoopUnderTest Start(int refuseFirstConnects = 0) =>
+            Start(client => client.RefuseNextConnects(refuseFirstConnects));
+
+        public static LoopUnderTest Start(Action<FakeMqttClient> arrange, MqttBackoff? backoff = null)
         {
             FakeMqttClient client = new();
-            client.RefuseNextConnects(refuseFirstConnects);
+            arrange(client);
 
             IOptions<MosquittoOptions> options = Options.Create(OptionsValue());
             TokenHolder token = new();
@@ -169,7 +285,8 @@ public class MqttConnectionLoopTests
                 .WithCredentials(new TokenCredentials(options.Value.Username, token))
                 .Build();
 
-            return new LoopUnderTest(client, tokens, new MqttConnection(client, clientOptions, token, tokens));
+            return new LoopUnderTest(
+                client, tokens, new MqttConnection(client, clientOptions, token, tokens), backoff ?? Brisk());
         }
 
         public static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan? within = null)

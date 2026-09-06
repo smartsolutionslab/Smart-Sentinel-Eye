@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using MQTTnet.Formatter;
 using SmartSentinelEye.EventIngestion.Infrastructure.Ingress;
 
 namespace SmartSentinelEye.EventIngestion.Infrastructure.Tests;
@@ -66,6 +67,35 @@ public class MosquittoConnectionFactoryTests
                 connection.Options.Credentials.ShouldNotBeNull().GetPassword(
                     connection.Options))
             .ShouldBe("a-token", "the happy path is unchanged — the token is still minted before the first connect.");
+    }
+
+    /// <summary>
+    /// <b>The 3.1.1 pin, guarded where CI can see it.</b> Until this test the
+    /// only coverage of the protocol version lived in the integration suite's
+    /// <c>Category=Disruptive</c> tests, which <c>ci.yml</c> excludes — so the
+    /// regression this branch exists to fix could recur with every check green.
+    ///
+    /// <para>
+    /// MQTTnet 4 defaulted to 3.1.1 and MQTTnet 5 defaults to 5.0, where
+    /// <c>cleanSession=false</c> is only half of a persistent session. The other
+    /// half is <c>SessionExpiryInterval</c>, which defaults to 0 and means
+    /// "discard the session the moment the connection closes":
+    /// <c>RestartLosesNothingIntegrationTests</c> published 500 events across a
+    /// restart and stored none of them.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task The_subscriber_speaks_MQTT_3_1_1_rather_than_the_v5_default()
+    {
+        MosquittoConnectionFactory factory = Create(HttpStatusCode.OK);
+
+        MqttConnection connection = await factory.CreateAsync(CancellationToken.None);
+
+        connection.Options.ProtocolVersion.ShouldBe(
+            MqttProtocolVersion.V311,
+            "MQTTnet 5 defaults to V500, where SessionExpiryInterval=0 discards the session on "
+            + "disconnect — taking the subscription and every unacknowledged QoS 1 message with "
+            + "it. NFR-005 and FR-022 both rest on this one line.");
     }
 
     /// <summary>

@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using MQTTnet;
 using MQTTnet.Exceptions;
+using MQTTnet.Formatter;
 using MQTTnet.Protocol;
 using SmartSentinelEye.EventIngestion.Infrastructure.Persistence;
 using SmartSentinelEye.Integration.Tests.Fixtures;
@@ -37,13 +38,37 @@ namespace SmartSentinelEye.Integration.Tests.EventIngestion;
 ///
 /// <para>
 /// <b>Why a stop/start of the broker is decisive rather than probabilistic.</b>
-/// Under the fixture mosquitto is a throwaway container: <c>AppHost.cs</c>
-/// applies <c>ContainerLifetime.Persistent</c> and the <c>mosquitto-data</c>
-/// volume only when <c>isRunMode &amp;&amp; !isE2ETests</c>, and the fixture boots
-/// with <c>E2ETests=true</c>. The broker therefore comes back holding no session
-/// and no subscription for <c>event-ingestion</c>, so there is no window in which
-/// a surviving subscription could mask the defect. That is assumption A2 in the
-/// spec, and this test is what discharges it.
+/// Aspire's Stop and Start commands do not stop and start a container — they
+/// <b>recreate</b> it. Polled with <c>docker ps -a</c> across a run, the broker's
+/// container id changed from <c>27ba29136b4f</c> to <c>faff3a6d91e3</c>. The
+/// replacement starts with an empty writable layer, so the broker comes back
+/// holding no session and no subscription for <c>event-ingestion</c> and there is
+/// no window in which a surviving subscription could mask the defect. That is
+/// assumption A2 in the spec, and this test is what discharges it.
+/// </para>
+///
+/// <para>
+/// <b>The absent <c>mosquitto-data</c> volume is <i>not</i> the reason, and this
+/// comment claimed it was until spec 079's review.</b> <c>AppHost.cs</c> does
+/// apply <c>ContainerLifetime.Persistent</c> and that volume only when
+/// <c>isRunMode &amp;&amp; !isE2ETests</c>, and the fixture does boot with
+/// <c>E2ETests=true</c> — but <c>mosquitto.conf</c> sets
+/// <c>persistence_location /mosquitto/data/</c>, which without the volume is
+/// simply a path inside the container's own writable layer. A stop and start of
+/// the <i>same</i> container would preserve it, sessions and all. Recreation is
+/// what makes the outage total; the missing volume only means nothing else is
+/// keeping the data either.
+/// </para>
+///
+/// <para>
+/// <b>That reasoning is load-bearing, and it would fail silently.</b> If Aspire
+/// ever reuses the container, the subscriber's session survives the outage,
+/// event B arrives without anything having resubscribed, and this test passes
+/// while proving nothing — with the paragraph above still reading as valid.
+/// <see cref="SessionProbeAsync"/> is the tell: it connects a
+/// <c>cleanSession=false</c> client under a fixed id before and after the outage
+/// and prints <c>IsSessionPresent</c> both times, so the run's own output says
+/// which of the two worlds it was in.
 /// </para>
 ///
 /// <para>
@@ -73,6 +98,7 @@ public class MqttResubscribeAfterBrokerOutageIntegrationTests(
     AspireFixture aspire, ITestOutputHelper output)
 {
     private const string SimulatorClientId = "scenario-simulator";
+    private const string SessionProbeClientId = "scenario-simulator-spec079-session-probe";
     private const string SimulatorClientSecret = "dev-only-scenario-simulator-secret";
     private const string Broker = "mosquitto";
     private const string Subscriber = "event-ingestion";
@@ -96,9 +122,11 @@ public class MqttResubscribeAfterBrokerOutageIntegrationTests(
             "the control event never arrived, so nothing this test goes on to observe about the "
             + "reconnect would mean anything — ingestion was already not working before the outage");
         output.WriteLine($"control event {control} stored; ingestion is working");
+        output.WriteLine($"before the outage: {await SessionProbeAsync()}");
 
         await RestartBrokerAsync();
-        output.WriteLine($"{Broker} stopped and started again — it holds no session and no subscription");
+        output.WriteLine($"{Broker} stopped and started again");
+        output.WriteLine($"after the outage: {await SessionProbeAsync()}");
 
         string afterOutagePayload = Payload(afterOutage, "spec 079 probe, after the outage");
         bool stored = await PublishUntilStoredAsync(afterOutage, afterOutagePayload, RecoveryDeadline);
@@ -114,6 +142,57 @@ public class MqttResubscribeAfterBrokerOutageIntegrationTests(
             + "returned — the subscriber reconnected but did not resubscribe, so it is connected, "
             + "healthy, and receiving nothing. Read the log tail above: a connect line with no "
             + "resubscribe line beside it is the whole defect.");
+    }
+
+    /// <summary>
+    /// Asks the broker, in one line of test output, whether it still holds a
+    /// session it was handed before the outage.
+    ///
+    /// <para>
+    /// A fixed client id and <c>cleanSession=false</c> is the whole of the probe:
+    /// the first call creates the session, the second reports whether it came
+    /// back. <c>IsSessionPresent=True</c> afterwards means the broker survived
+    /// with its state — the world in which <c>event-ingestion</c>'s subscription
+    /// also survived and this test proves nothing. <c>False</c> is the world the
+    /// class comment describes.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>It never fails the test.</b> Every outcome, including no answer at all,
+    /// comes back as a string to print. A diagnostic that can turn a resubscribe
+    /// defect into a probe failure would be worse than no diagnostic. No
+    /// subscription is taken out either, so the session it leaves behind holds
+    /// nothing and delivers nothing to the other tests sharing this broker.
+    /// </para>
+    /// </summary>
+    private async Task<string> SessionProbeAsync()
+    {
+        string jwt = await SimulatorTokenAsync();
+        Uri broker = aspire.App.GetEndpoint(Broker, "mqtt");
+
+        using IMqttClient client = new MqttClientFactory().CreateMqttClient();
+
+        try
+        {
+            MqttClientConnectResult connected = await client.ConnectAsync(new MqttClientOptionsBuilder()
+                .WithProtocolVersion(MqttProtocolVersion.V311)
+                .WithClientId(SessionProbeClientId)
+                .WithCredentials(SimulatorClientId, jwt)
+                .WithTcpServer(broker.Host, broker.Port)
+                .WithCleanSession(false)
+                .WithTimeout(TimeSpan.FromSeconds(10))
+                .Build());
+
+            await client.DisconnectAsync();
+
+            return connected.ResultCode == MqttClientConnectResultCode.Success
+                ? $"session probe IsSessionPresent={connected.IsSessionPresent}"
+                : $"session probe refused ({connected.ResultCode})";
+        }
+        catch (MqttCommunicationException exception)
+        {
+            return $"session probe got no answer ({exception.Message})";
+        }
     }
 
     /// <summary>
@@ -280,6 +359,7 @@ public class MqttResubscribeAfterBrokerOutageIntegrationTests(
         try
         {
             MqttClientConnectResult connected = await client.ConnectAsync(new MqttClientOptionsBuilder()
+                .WithProtocolVersion(MqttProtocolVersion.V311)
                 .WithClientId($"{SimulatorClientId}-{Guid.CreateVersion7():N}")
                 .WithCredentials(SimulatorClientId, jwt)
                 .WithTcpServer(broker.Host, broker.Port)

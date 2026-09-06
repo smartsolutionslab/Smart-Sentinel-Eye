@@ -5,6 +5,7 @@ using Aspire.Hosting.ApplicationModel;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using MQTTnet;
+using MQTTnet.Formatter;
 using MQTTnet.Protocol;
 using SmartSentinelEye.EventIngestion.Infrastructure.Persistence;
 using SmartSentinelEye.Integration.Tests.Fixtures;
@@ -211,6 +212,7 @@ public class RestartLosesNothingIntegrationTests(AspireFixture aspire, ITestOutp
         Uri broker = aspire.App.GetEndpoint("mosquitto", "mqtt");
         using IMqttClient client = new MqttClientFactory().CreateMqttClient();
         MqttClientConnectResult connected = await client.ConnectAsync(new MqttClientOptionsBuilder()
+            .WithProtocolVersion(MqttProtocolVersion.V311)
             .WithClientId($"{SimulatorClientId}-{Guid.CreateVersion7():N}")
             .WithCredentials(SimulatorClientId, jwt)
             .WithTcpServer(broker.Host, broker.Port)
