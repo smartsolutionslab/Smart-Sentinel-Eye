@@ -134,6 +134,21 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Error, Message = "MQTT publish to '{Topic}' failed: {Reason}.")]
     public static partial void MqttPublishFailed(this ILogger logger, string topic, string reason);
 
+    // Its own line rather than MqttPublishFailed("(connect)", …). A connect
+    // failure is not a publish failure, and the loop that reads this log is
+    // EventIngestion's twin, whose connect failures have their own line too.
+    [LoggerMessage(Level = LogLevel.Error, Message = "MQTT publisher could not connect to '{Host}': {Error}.")]
+    public static partial void MqttPublisherConnectFailed(this ILogger logger, string host, string error);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Could not refresh the MQTT token before reconnect: {Error}.")]
+    public static partial void MqttPublisherTokenFailed(this ILogger logger, string error);
+
+    // Without this the publisher's backoff is invisible: a wall that has stopped
+    // animating looks the same whether the loop is waiting or has stopped.
+    [LoggerMessage(Level = LogLevel.Information,
+        Message = "MQTT publisher retrying in {DelaySeconds:F1}s (attempt {Attempt}).")]
+    public static partial void MqttPublisherRetryScheduled(this ILogger logger, double delaySeconds, int attempt);
+
     // One line per outage, not one per drop. The timeline emits many samples a
     // second, so per-sample logging would bury the summary it is meant to be.
     [LoggerMessage(
