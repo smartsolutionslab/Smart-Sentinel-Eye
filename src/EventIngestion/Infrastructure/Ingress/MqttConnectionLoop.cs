@@ -312,10 +312,29 @@ internal sealed class MqttConnectionLoop
 /// same moment, making the recovery the second outage.
 /// </para>
 /// </summary>
-internal sealed class MqttBackoff(TimeSpan first, TimeSpan cap)
+internal sealed class MqttBackoff
 {
+    private readonly TimeSpan first;
+    private readonly TimeSpan cap;
+
     private int attempts;
     private TimeSpan servedDelay;
+
+    /// <summary>
+    /// <paramref name="first"/> must be at least a millisecond, and the guard is
+    /// load-bearing rather than decorative: a floor of <c>Zero</c> makes
+    /// <see cref="Next"/> return <c>Zero</c> forever <b>and</b>
+    /// <see cref="ResetIfHeld"/> clear on every connection, which turns the
+    /// connect loop into a hard spin inside <c>IHostedService.StartAsync</c>
+    /// with no await anywhere in the cycle.
+    /// </summary>
+    public MqttBackoff(TimeSpan first, TimeSpan cap)
+    {
+        Ensure.That((int)first.TotalMilliseconds).AtLeast(1);
+
+        this.first = first;
+        this.cap = cap;
+    }
 
     public MqttBackoff()
         : this(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30))
