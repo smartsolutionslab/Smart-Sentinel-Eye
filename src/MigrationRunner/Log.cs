@@ -38,4 +38,10 @@ internal static partial class Log
     // hides it, and a wait nobody can see is indistinguishable from a hang.
     [LoggerMessage(Level = LogLevel.Information, Message = "No groups under '{ParentPath}' yet; the realm may still be importing. Re-asking ({ElapsedSeconds:F0}s of {BudgetSeconds:F0}s).")]
     public static partial void WaitingForFabGroups(this ILogger logger, string parentPath, double elapsedSeconds, double budgetSeconds);
+
+    // Issue #2062, deliverable A. Critical because every service in the stack
+    // is gated on this run: when it fails, this line is the only account of
+    // why any of them failed to start.
+    [LoggerMessage(Level = LogLevel.Critical, Message = "Migrations failed at {Context}. MigrationRunner is exiting non-zero; nothing after this point was migrated.")]
+    public static partial void MigrationRunFailed(this ILogger logger, string context, Exception exception);
 }
