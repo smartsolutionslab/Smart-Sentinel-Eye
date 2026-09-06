@@ -30,11 +30,18 @@ public static class DevicesEndpoints
             .RequireAuthorization(Scope.Sse.Identity.DeviceClients.Write)
             .WithTags("IdentityDevices");
 
+        // 403 is declared on all three because the scope itself produces it:
+        // AddScopePolicies builds each sse.* policy as RequireAuthenticatedUser()
+        // plus a claim assertion, so a caller who authenticates without the scope
+        // is forbidden rather than challenged. On DELETE /devices/{clientId} that is
+        // the only producer, because it runs no fab guard; the other two can reach
+        // 403 through IFabAuthorizationGuard as well.
         group.MapPost("/register", Register)
             .WithName("RegisterDevice")
             .WithSummary("Register a new PLC or inference device. Required scope: sse.identity.devices.write")
             .Produces<DeviceCredentialsDto>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status409Conflict);
 
         // 409 because DisableDeviceCommandHandler loads a client that already
@@ -44,6 +51,7 @@ public static class DevicesEndpoints
             .WithName("DisableDevice")
             .WithSummary("Disable a registered device. Required scope: sse.identity.devices.write")
             .Produces<Guid>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict);
 
@@ -55,7 +63,8 @@ public static class DevicesEndpoints
             .WithName("ListDevices")
             .WithSummary("List registered devices, optionally filtered by fab. Required scope: sse.identity.devices.read")
             .Produces<IReadOnlyList<RegisteredClientSummaryDto>>(StatusCodes.Status200OK)
-            .ProducesProblem(StatusCodes.Status400BadRequest);
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
 
         return app;
     }

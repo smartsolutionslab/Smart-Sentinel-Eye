@@ -47,6 +47,7 @@ public static class AuditEndpoints
             .WithName("GetAuditEvent")
             .WithSummary("Single audit row + full payload. Required scope: sse.audit.read")
             .Produces<AuditRowDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
         return app;

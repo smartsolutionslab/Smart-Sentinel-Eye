@@ -30,11 +30,18 @@ public static class KiosksEndpoints
             .RequireAuthorization(Scope.Sse.Identity.KioskClients.Write)
             .WithTags("IdentityKiosks");
 
+        // 403 is declared on all three because the scope itself produces it:
+        // AddScopePolicies builds each sse.* policy as RequireAuthenticatedUser()
+        // plus a claim assertion, so a caller who authenticates without the scope
+        // is forbidden rather than challenged. On DELETE /kiosks/{clientId} that is
+        // the only producer, because it runs no fab guard; the other two can reach
+        // 403 through IFabAuthorizationGuard as well.
         group.MapPost("/enroll", Enroll)
             .WithName("EnrollKiosk")
             .WithSummary("Enroll a new kiosk in the fab. Required scope: sse.identity.kiosks.write")
             .Produces<KioskCredentialsDto>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status409Conflict);
 
         // 409 because DisableKioskCommandHandler loads a client that already
@@ -44,6 +51,7 @@ public static class KiosksEndpoints
             .WithName("DisableKiosk")
             .WithSummary("Disable an enrolled kiosk. Required scope: sse.identity.kiosks.write")
             .Produces<Guid>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict);
 
@@ -55,7 +63,8 @@ public static class KiosksEndpoints
             .WithName("ListKiosks")
             .WithSummary("List enrolled kiosks, optionally filtered by fab. Required scope: sse.identity.kiosks.read")
             .Produces<IReadOnlyList<RegisteredClientSummaryDto>>(StatusCodes.Status200OK)
-            .ProducesProblem(StatusCodes.Status400BadRequest);
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
 
         return app;
     }
