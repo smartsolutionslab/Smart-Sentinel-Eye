@@ -77,11 +77,13 @@ public class NFR001_AuditIngestLatencyTests(AspireFixture aspire, ITestOutputHel
     /// <c>Microsoft.EntityFrameworkCore.Database.Command</c> at <c>Warning</c>,
     /// and that pairing has no measured throughput figure (#2133) — which is why
     /// the level travels with its provenance rather than being read for its
-    /// spelling.
+    /// spelling. The fallback names the level only; provenance is
+    /// <see cref="ServiceLogLevelWasChosen"/>'s to carry, and a string that
+    /// tries to carry both is the shape spec 081 exists to unwind.
     /// </para>
     /// </summary>
     private static string ServiceLogLevel =>
-        ChosenServiceLogLevel ?? "Information (from appsettings)";
+        string.IsNullOrWhiteSpace(ChosenServiceLogLevel) ? "Information" : ChosenServiceLogLevel;
 
     /// <summary>
     /// The level somebody set for this run, or absent if nobody did.
@@ -96,8 +98,19 @@ public class NFR001_AuditIngestLatencyTests(AspireFixture aspire, ITestOutputHel
     private static string? ChosenServiceLogLevel =>
         Environment.GetEnvironmentVariable("Logging__LogLevel__Default");
 
-    /// <summary>Whether the level above was chosen for this run rather than inherited.</summary>
-    private static bool ServiceLogLevelWasChosen => ChosenServiceLogLevel is not null;
+    /// <summary>
+    /// Whether the level above was chosen for this run rather than inherited.
+    ///
+    /// <para>
+    /// <b>Blank is not a choice.</b> <c>Logging__LogLevel__Default=</c> yields
+    /// <c>""</c>, not <c>null</c>, and an empty or whitespace value binds to no
+    /// level — the services stay on whatever the appsettings pin. Read for
+    /// nullness alone this would have reported a choice, and certified a run
+    /// under the very configuration the guard refuses.
+    /// </para>
+    /// </summary>
+    private static bool ServiceLogLevelWasChosen =>
+        !string.IsNullOrWhiteSpace(ChosenServiceLogLevel);
 
     /// <summary>How long to wait for the last measured row to reach the store.</summary>
 
