@@ -31,10 +31,12 @@ public class RunModeIngestAttributionTests(ITestOutputHelper output)
     /// environment because that is what propagates into the AppHost's children.
     /// Absent means nothing overrode the appsettings, so the level was inherited
     /// rather than chosen for this run — <c>Information</c> as of spec 081
-    /// (2026-09-06), a pairing with no measured throughput figure (#2133).
+    /// (2026-09-06), a pairing with no measured throughput figure (#2133). The
+    /// fallback names the level only; provenance is
+    /// <see cref="ServiceLogLevelWasChosen"/>'s to carry.
     /// </summary>
     private static string ServiceLogLevel =>
-        ChosenServiceLogLevel ?? "Information (from appsettings)";
+        string.IsNullOrWhiteSpace(ChosenServiceLogLevel) ? "Information" : ChosenServiceLogLevel;
 
     /// <summary>
     /// The level somebody set for this run, or absent if nobody did — the value
@@ -43,8 +45,17 @@ public class RunModeIngestAttributionTests(ITestOutputHelper output)
     private static string? ChosenServiceLogLevel =>
         Environment.GetEnvironmentVariable("Logging__LogLevel__Default");
 
-    /// <summary>Whether the level above was chosen for this run rather than inherited.</summary>
-    private static bool ServiceLogLevelWasChosen => ChosenServiceLogLevel is not null;
+    /// <summary>
+    /// Whether the level above was chosen for this run rather than inherited.
+    ///
+    /// <para>
+    /// <b>Blank is not a choice.</b> <c>Logging__LogLevel__Default=</c> yields
+    /// <c>""</c>, not <c>null</c>, and an empty or whitespace value binds to no
+    /// level — the services stay on whatever the appsettings pin.
+    /// </para>
+    /// </summary>
+    private static bool ServiceLogLevelWasChosen =>
+        !string.IsNullOrWhiteSpace(ChosenServiceLogLevel);
 
     [Trait("Category", "Measurement")]
     [Fact]
