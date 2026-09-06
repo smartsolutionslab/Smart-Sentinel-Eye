@@ -54,9 +54,12 @@ public class MqttConnectionLoopTests
 
     /// <summary>
     /// A hold that clears <see cref="LoopUnderTest.Patient"/>'s 100 ms floor and
-    /// nothing more. The margin is the whole point: <c>ResetIfHeld</c> compares
-    /// against that floor, so any hold at all above it counts as a connection
-    /// that held.
+    /// nothing more. The margin is the whole point, and it is what this test
+    /// pins: a hold anywhere above the floor used to count as a connection that
+    /// held, so a peer flapping at <c>first + ε</c> reset the backoff on every
+    /// cycle and reconnected at full speed — the takeover the guard was written
+    /// to stop. <c>ResetIfHeld</c> now measures against twice the wait actually
+    /// served, so this hold no longer clears it.
     /// </summary>
     private static readonly TimeSpan JustPastTheFloor = TimeSpan.FromMilliseconds(110);
 
