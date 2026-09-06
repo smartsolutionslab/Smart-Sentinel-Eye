@@ -86,6 +86,12 @@ walk and an independent flat sweep. 56 also equals the figure
 `EndpointScopeDeclarationTests` has pinned since spec 070, which is a third
 witness written by someone else.
 
+**This census is the state before the change, and stays that way** — it is what
+motivated the work, pinned to the commit named above. After phase 4b the last
+three rows read **55**, **0** and **0**: the seventeen declarations were added,
+by both witnesses again. The rows above them do not move, because this change
+adds no mapping and no file — `56` and `12` are still asserted exactly.
+
 ### The seventeen
 
 | File | Line | Route | Scope, and where it comes from |
@@ -266,7 +272,9 @@ register-only half of the declaration family (#2142 / spec 075's 409).
   assertion keeps FR-001 sound rather than merely true.
 - **FR-004.** The mapping walk's count of 403 declarations agrees with an
   **independent flat sweep** of `.ProducesProblem(StatusCodes.Status403Forbidden)`
-  over the same directories. Both read 38 today. This is what keeps the walk
+  over the same directories. Both read 38 before the `src/` edits and 55 after
+  — the assertion is the agreement, not either number. This is what keeps the
+  walk
   honest — a declaration hoisted somewhere the walk cannot see makes the two
   disagree and fails the build, rather than quietly reading as "declares
   nothing". Property established by `PaginatedConsumerTests`, borrowed by

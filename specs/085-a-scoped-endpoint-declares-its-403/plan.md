@@ -102,12 +102,18 @@ one failure reports every offender in a file at once.
   leaves an unresolvable constant to A3 so one cause does not fail twice.
 - Claim: the mapping's chain span contains
   `.ProducesProblem(StatusCodes.Status403Forbidden)`.
-- Requires one new field on `EndpointMapping`: the declared statuses, or simply
-  a `bool DeclaresForbidden`, filled in `ReadMapping` from the same
-  `[start..end]` span the summary and authorization are already read from.
-  **Comments are already blanked and literals already masked** before that span
-  is taken, so a commented-out declaration is not credited and the word
-  appearing inside a `WithSummary` string is not either.
+- Requires one new field on `EndpointMapping`: `int ForbiddenDeclarations`,
+  filled in `ReadMapping` from the same `[start..end]` span the summary and
+  authorization are already read from. **Comments are already blanked and
+  literals already masked** before that span is taken, so a commented-out
+  declaration is not credited and the word appearing inside a `WithSummary`
+  string is not either.
+
+  **Corrected at phase 4a: this read `bool DeclaresForbidden`, which would have
+  made G3 wrong.** G3 compares this walk against a flat sweep. A chain
+  declaring the same 403 twice is legal; a flag reads one where the sweep reads
+  two, and G3 then fails over correct source. A count keeps the two sides
+  commensurable.
 - Message names file, line, verb, full route and the scope literal, and says
   what the document currently asserts — that a wrong-scope caller gets something
   other than 403.
@@ -121,17 +127,27 @@ Failing on the group is the honest answer — it says *this shape is refused*, n
 *this endpoint is wrong*.
 
 The group span is already computed (`declaration.Index..end`) but currently only
-its first literal and its authorization are kept. G2 needs the span retained on
-`RouteGroup`, or a small `DeclaresForbidden` flag alongside `Prefix` and
-`Authorization`.
+its first literal and its authorization are kept. G2 needs the count retained
+per declaration site.
+
+**Corrected at phase 4a: this said to hang a `DeclaresForbidden` flag on
+`RouteGroup` alongside `Prefix` and `Authorization`, and that would have
+undercounted.** `Read` stores groups in a dictionary keyed by receiver name and
+**overwrites** `groups[name]` when a name is declared twice — the case it
+already refuses as unreadable. A count living on the stored `RouteGroup` is
+overwritten with it, so the walk loses the first group's declarations while the
+flat sweep still finds them, and G3 fails over correct source. Group
+declarations are collected instead in their own list, one entry per declaration
+site, independent of the name binding.
 
 ### G3 — `The_refusal_declarations_the_walk_finds_are_all_the_ones_there_are`
 
-`[Fact]`. The mapping walk's count of `DeclaresForbidden` mappings, plus the
-group walk's count from G2, must equal an independent flat sweep of
+`[Fact]`. The mapping walk's sum of `ForbiddenDeclarations`, plus the group
+walk's sum from G2, must equal an independent flat sweep of
 `.ProducesProblem(StatusCodes.Status403Forbidden)` over `ApiSourceFiles()`.
 
-Both sides read **38** today (37 scoped + 1 anonymous, 0 groups). This is the
+Both sides read **38** before the `src/` edits (37 scoped + 1 anonymous, 0
+groups) and **55** after. This is the
 `PaginatedConsumerTests` property `PreconditionDeclarationTests` borrowed: it is
 what stops a declaration moved somewhere the walk cannot see from reading as
 "declares nothing". Without it, G1's sharpest edge would be silent.

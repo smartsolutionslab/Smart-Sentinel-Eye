@@ -46,12 +46,25 @@ carries no figure that was not measured on this branch.
 
 `ReadMapping` already takes the mapping's `[start..end]` span with comments
 blanked and literals masked, and reads the summary and the authorization from
-it. Add `DeclaresForbidden` to `EndpointMapping`, filled from that same span by
-looking for `.ProducesProblem(StatusCodes.Status403Forbidden)`.
+it. Add `int ForbiddenDeclarations` to `EndpointMapping`, filled from that same
+span by counting `.ProducesProblem(StatusCodes.Status403Forbidden)`.
 
-Do the same for `RouteGroup`, from the group span `Read` already computes.
+**Corrected at phase 4a — this task said `bool DeclaresForbidden`, and a flag
+would have made T005 wrong.** T005 compares the walk's total against a flat
+sweep. A chain that declares the same 403 twice is odd but legal; a flag reads
+it as one where the sweep reads two, so the two sides disagree over a file that
+is *correct* and T005 fails on the wrong thing — a guard failing correct code,
+which is exactly the defect G2 exists to prevent elsewhere. A count makes the
+two sides commensurable. Carried as `int ForbiddenDeclarations` on both records.
 
-**Done when:** both records carry the flag and nothing else about the reading
+For groups, do **not** hang the count on the `RouteGroup` stored in the
+`groups` dictionary. `Read` overwrites `groups[name]` when a name is declared
+twice, so a count living there is lost with the overwritten group and the walk
+silently undercounts — again failing T005 over correct source. Collect group
+declarations in their own list, one entry per declaration site, as `Read`
+already does for `declared`.
+
+**Done when:** both records carry the count and nothing else about the reading
 changed. No new regex machinery beyond a call-site search of the shape
 `IndexOfCall` already provides.
 
@@ -210,15 +223,36 @@ once the lines are added. This is the task that does.
 1. Delete `.RequireAuthorization(Scope.Sse.Overlays.Read)` **and** the 403 from
    `GET /overlays`. Run the guard.
    - **Expect:** G1 says nothing about that mapping (it left the population),
-     while `Every_endpoint_that_enforces_no_scope_is_registered_against_an_open_issue`
-     fails it for enforcing no scope.
+     while `Every_mapping_in_an_endpoint_file_is_read_rather_than_skipped`
+     fails it.
+
+     **Corrected at phase 4a — this step named the wrong assertion.** It said
+     `Every_endpoint_that_enforces_no_scope_is_registered_against_an_open_issue`
+     would fire. It does not, and the reason is specific to this file: the
+     `/overlays` group declares only `.WithTags`, so deleting the chain's
+     `RequireAuthorization` leaves *neither* chain nor group naming an
+     authorization. `ReadMapping` resolves that to `AuthorizationKind.Unreadable`
+     and sets `Problem`, which is the "read rather than skipped" assertion's
+     input. The open-issue register fires for the *bare* `.RequireAuthorization()`
+     variant — a mapping that authenticates and names no scope — which is a
+     different edit. Deleting the call and emptying its argument list are not
+     the same counterfactual.
    - **If G1 still demands a 403** from a route that now requires none, the
      population is hard-coded somewhere and the derivation claim in the spec is
      false. That is a finding worth more than the fix (#2142 rests on it) —
      report it, do not paper over it.
 2. Revert.
 3. Move one 403 declaration out of a chain into a private helper the walk cannot
-   see. **Expect:** T005 fails on the disagreement, not T003 alone. Revert.
+   see. **Expect:** T005 fails on the disagreement — **and so does T003.**
+   Revert.
+
+   **Corrected at phase 4a — "not T003 alone" was half right.** T005 is
+   indeed the assertion that catches the *hoist*, and it is the one that would
+   otherwise be silent. But the hoisted chain now reads as declaring nothing,
+   so T003 reports that endpoint as an omission at the same time. The
+   counterfactual therefore turns two assertions red, not one, and a run that
+   shows only T005 red means the declaration did not actually leave the chain
+   span.
 
 **Done when:** both counterfactuals behaved as stated, and the outcome is
 recorded in the PR body — including if it did not.
