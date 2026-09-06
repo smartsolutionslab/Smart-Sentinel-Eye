@@ -39,4 +39,24 @@ public class LayoutRevisionArchivedDomainEventHandlerTests
         broadcaster.Archived.ShouldHaveSingleItem();
         broadcaster.Archived.Single().Layout.ShouldBe(layout);
     }
+
+    // #2071. The fab the revision belongs to reaches the audit row only if the
+    // publisher stamps it: a stored row records fab = null and nothing more, so
+    // the read side cannot tell "legitimately cross-fab" from "the publisher
+    // forgot" and hands the row to every operator of every fab (#1300).
+    [Fact]
+    public async Task Stamps_the_archiving_fab_on_the_published_V1()
+    {
+        FakeEventBus bus = new();
+        LayoutRevisionArchivedDomainEventHandler handler = new(bus, new FakeLayoutLifecycleBroadcaster());
+
+        LayoutRevisionArchivedDomainEvent domainEvent = new(
+            Munich, LayoutIdentifier.New(), LayoutRevisionNumber.One, FixedMoment,
+            OperatorIdentifier.From(Guid.CreateVersion7()));
+
+        await handler.Handle(domainEvent, CancellationToken.None);
+
+        LayoutRevisionArchivedV1 v1 = bus.Published.Single().ShouldBeOfType<LayoutRevisionArchivedV1>();
+        v1.Metadata.Fab.ShouldBe("munich");
+    }
 }
