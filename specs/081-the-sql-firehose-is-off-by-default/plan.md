@@ -199,7 +199,7 @@ pattern CLAUDE.md describes for ADRs amending each other).
 
 | Risk | Handling |
 |---|---|
-| **A developer loses a Debug line and reads it as a regression.** 23 sites go dark (`spec.md` §3.1). | FR-004: the list and the one-line recovery go in the PR body. |
+| **A developer loses a Debug line and reads it as a regression.** Twenty of twenty-two sites go dark (`spec.md` §3.1). | FR-004: the list and the one-line recovery go in the PR body. |
 | **CI stays green whether or not surface 2 is done**, because both measurement tests are excluded by `Category!=Measurement`. | `tasks.md` sequences T003 before T004 and the phase-4a red is the enforcement. The reviewer's step 3 (`git diff --stat`) is the backstop. |
 | **The new default may not clear 100 ev/s** — nobody has run it. | Landing (B) refuses it until someone does. A follow-up measurement issue is recommended in `spec.md` §4, deliberately not filed by this pass. |
 | **The `AppHost` override is inert** (no EF package). | FR-002 records the uniformity as the requirement and the inert line as its stated price, so a later reviewer meets the reasoning instead of deleting the line as dead config. |
@@ -216,7 +216,7 @@ pattern CLAUDE.md describes for ADRs amending each other).
 - **ADR-0036** — smallest change. The eleven files are the decision; the harness
   repair is its unavoidable consequence, not scope creep, and §3's "what must NOT
   be done" fences the boundary.
-- **ADR-0050** — the 23 Debug sites are `[LoggerMessage]` output; none is
+- **ADR-0050** — the 22 Debug sites are `[LoggerMessage]` output; none is
   rewritten, re-levelled, or deleted. Their *visibility* changes, not their code.
 - **ADR-0084** — S107 suppressed in tests, so neither shape in §3 is blocked.
 - **ADR-0144** — no ADR is authored and no gate is weakened. The ADR-0135

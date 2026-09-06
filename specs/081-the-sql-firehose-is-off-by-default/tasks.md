@@ -171,7 +171,7 @@ as an instruction to split.
 | **T003** | | US2 | Make T002 green by changing **`LoggingIsVerbose` only** — refuse an inherited level whatever it is — and render the inherited case in `Describe()`. Do not edit T002's datum. FR-006. | T002 |
 | **T004** | | US2 | Correct the two `ServiceLogLevel` fallbacks (`NFR001_…:80`, `RunModeIngestAttribution…:35`) to report `Information` as inherited, and the two XML doc comments that assert *"Development pins `Debug`"* (`NFR001_…:66`, `IngestRunConditions.cs:38`). FR-005. | T003 |
 | **T005** | [P] | US1 | Append a dated amendment to `docs/adr/0135-where-the-audit-span-goes.md` — the three points in `plan.md` §4. **Do not edit its existing prose.** FR-007. | T001 |
-| **T006** | | US1 | PR body: the 23-site list and the one-line recovery (`spec.md` §3.1), T002's verbatim failure, and a note that the test-file edits are factual corrections, not edits-to-pass (§2b). FR-004. | T001, T004 |
+| **T006** | | US1 | PR body: the twenty-of-twenty-two-site list and the one-line recovery (`spec.md` §3.1), T002's verbatim failure, and a note that the test-file edits are factual corrections, not edits-to-pass (§2b). FR-004. | T001, T004 |
 | **T007** | | both | **Phase 5.** Run `spec.md` §10 steps 1–4. Then either step 5 (needs a stack; disk permitting) **or** record explicitly that it was substituted and by what. A note that ran only 1–4 and says "verified" is the artefact-guard failure at phase level. | T006 |
 
 ### Dependency shape

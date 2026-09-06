@@ -5,7 +5,7 @@
 **ADRs:** ADR-0135 (where the audit span goes — the ADR that recorded this cost,
 refined the effect size, and records the measurement guard as its remedy),
 ADR-0136 (run-mode span; ran at `Warning`, so it is *not* in the position the
-issue describes), ADR-0050 (`ILogger<T>` + `[LoggerMessage]`; the 23 Debug sites
+issue describes), ADR-0050 (`ILogger<T>` + `[LoggerMessage]`; the 22 Debug sites
 below are its output), ADR-0130 (no production deployment — the dev stack is the
 only stack), ADR-0036 (smallest change; no speculative generality), ADR-0037
 (phased workflow; a spec may be declined), ADR-0139 (new behaviour starts red),
@@ -105,16 +105,24 @@ The issue frames this as SQL logging. It is that, plus two consequences neither
 the issue nor the decision note mentions. Both were found by looking; both are
 cheap to state and expensive to discover after the fact.
 
-### 3.1 Twenty-three hand-written Debug log sites go dark in Development
+### 3.1 Twenty of twenty-two hand-written Debug log sites go dark in Development
 
 `Default: Information` silences every `[LoggerMessage(Level = LogLevel.Debug)]`
-in the solution, not only EF's. There are **23** (22 declarations plus one direct
-`LogDebug(` call), across 11 files:
+in the solution, not only EF's. There are **22**, across 11 files, and **twenty
+of twenty-two** newly go dark:
 
 ```sh
 grep -rn 'Level = LogLevel.Debug' --include='*.cs' src/ | grep -v obj/ | wc -l   # 22
-grep -rn 'LogDebug('             --include='*.cs' src/ | grep -v obj/ | wc -l    #  1
 ```
+
+**Two exclusions, stated so nobody re-derives them.** *(i)* There is no direct
+`LogDebug(` call anywhere in `src/`: the single `grep -rn 'LogDebug('` hit is
+prose — `src/EventIngestion/Application/Log.cs:14`, a doc comment describing the
+call `[LoggerMessage]` replaced — so the total is 22, not 23. *(ii)*
+`ScenarioSimulator`'s 2 sites were **already** dark: it has no
+`appsettings.Development.json`, and its `appsettings.json` already sets
+`"Default": "Information"`, so it is not one of the eleven files T001 edits and
+its visibility does not change. Twenty-two sites exist; twenty change.
 
 | Context | Sites | Examples a developer plausibly follows |
 |---|---:|---|
@@ -123,7 +131,7 @@ grep -rn 'LogDebug('             --include='*.cs' src/ | grep -v obj/ | wc -l   
 | `AuditObservability/Application` | 2 | `Audited {EventKind} {EventIdentifier} …` |
 | `EventIngestion/Application` | 2 | — |
 | `Identity/Application` | 2 | `Published DeviceRegisteredV1 for {ClientId}.` |
-| `ScenarioSimulator` | 2 | `Emitted {Topic} = {Value} {Unit} …` |
+| `ScenarioSimulator` | 2 | **Already dark** (no `appsettings.Development.json`). `Emitted {Topic} = {Value} {Unit} …` |
 | `ServiceDefaults` | 2 | — |
 | `Automation/Application` | 1 | `Fanned out {Count} action(s) for {EventIdentifier} …` |
 | `EventIngestion/Infrastructure` | 1 | — |
