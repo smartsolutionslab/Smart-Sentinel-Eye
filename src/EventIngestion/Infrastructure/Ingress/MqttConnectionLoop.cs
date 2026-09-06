@@ -37,14 +37,6 @@ internal sealed class MqttConnectionLoop
     private readonly MosquittoOptions options;
     private readonly ILogger logger;
 
-    /// <summary>
-    /// Completed by the disconnect handler, so the loop waits for a real drop
-    /// instead of polling <c>IsConnected</c>. Replaced before every attempt and
-    /// <b>before</b> the CONNECT, so a connection that drops the instant it is
-    /// established still wakes the loop that is about to wait on it.
-    /// </summary>
-    private TaskCompletionSource? dropped;
-
     public MqttConnectionLoop(
         MqttConnection connection, MqttBackoff backoff, MosquittoOptions options, ILogger logger)
     {
@@ -70,7 +62,6 @@ internal sealed class MqttConnectionLoop
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         IMqttClient client = connection.Client;
-        client.DisconnectedAsync += OnDisconnectedAsync;
 
         try
         {
@@ -83,12 +74,22 @@ internal sealed class MqttConnectionLoop
         {
             // StopAsync cancelled the loop. Shutting down is not a failure.
         }
-        finally
-        {
-            client.DisconnectedAsync -= OnDisconnectedAsync;
-        }
     }
 
+    /// <summary>
+    /// One attempt owns one <see cref="DropSignal"/>, subscribed <b>before</b>
+    /// the CONNECT and unsubscribed when the attempt ends.
+    ///
+    /// <para>
+    /// <b>The handler used to be attached once for the life of the loop</b>, over
+    /// a field the attempt replaced — so a disconnect belonging to attempt N
+    /// completed attempt N+1's wait. That is not a rare interleaving: MQTTnet 5
+    /// calls <c>DisconnectInternal</c> on a non-success CONNACK and dispatches
+    /// the handler fire-and-forget (<c>Task.Run(…).RunInBackground(_logger)</c>),
+    /// so a stale disconnect is in flight after every refusal, by design. Owned
+    /// per attempt, it has nothing left to complete.
+    /// </para>
+    /// </summary>
     private async Task AttemptAsync(IMqttClient client, CancellationToken cancellationToken)
     {
         TimeSpan delay = backoff.Next();
@@ -98,9 +99,22 @@ internal sealed class MqttConnectionLoop
             await Task.Delay(delay, cancellationToken);
         }
 
-        TaskCompletionSource drop = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        dropped = drop;
+        DropSignal drop = new(client, logger);
+        client.DisconnectedAsync += drop.OnDisconnectedAsync;
 
+        try
+        {
+            await HoldConnectionAsync(client, drop, cancellationToken);
+        }
+        finally
+        {
+            client.DisconnectedAsync -= drop.OnDisconnectedAsync;
+        }
+    }
+
+    private async Task HoldConnectionAsync(
+        IMqttClient client, DropSignal drop, CancellationToken cancellationToken)
+    {
         if (!await ConnectAsync(client, cancellationToken))
         {
             return;
@@ -114,7 +128,7 @@ internal sealed class MqttConnectionLoop
             return;
         }
 
-        await drop.Task.WaitAsync(cancellationToken);
+        await drop.WaitAsync(cancellationToken);
 
         // Cleared here rather than on the CONNACK. A session takeover answers
         // CONNACK and then closes — both clients connect with a fixed client id,
@@ -235,14 +249,53 @@ internal sealed class MqttConnectionLoop
         }
     }
 
-    private Task OnDisconnectedAsync(MqttClientDisconnectedEventArgs args)
-    {
-        logger.MqttSubscriberDisconnected(args.Reason.ToString());
-        dropped?.TrySetResult();
-        return Task.CompletedTask;
-    }
-
     private string Broker() => $"{options.Host}:{options.Port}";
+
+    /// <summary>
+    /// One attempt's wait for its own connection to go.
+    ///
+    /// <para>
+    /// <b>The event is the nudge; the client's state is the authority.</b> A
+    /// disconnect event does not prove this connection ended — MQTTnet 5
+    /// dispatches the handler fire-and-forget from the
+    /// <c>DisconnectInternal</c> a refused CONNECT performs, so one can arrive
+    /// while a later connection is up and subscribed. Taken for a drop it makes
+    /// the loop reconnect a live client, which
+    /// <c>MqttClient.ThrowIfConnected</c> refuses — and nothing closes that
+    /// connection, so the refusal repeats: a permanent stream of false "could
+    /// not connect" errors on the only outage signal EventIngestion has, and an
+    /// attempt counter climbing to the cap that the next genuine outage then
+    /// waits out.
+    /// </para>
+    ///
+    /// <para>
+    /// Reading <c>IsConnected</c> here is not the polling the loop avoids — it
+    /// is asked once, on an event, and it is decisive:
+    /// <c>DisconnectIsPendingOrFinished</c> moves the connection status off
+    /// <c>Connected</c> before <c>DisconnectCore</c> runs, and
+    /// <c>DisconnectCore</c> sets it to <c>Disconnected</c> before it builds the
+    /// event args. A genuine drop therefore cannot reach this handler with the
+    /// client still reporting a connection.
+    /// </para>
+    /// </summary>
+    private sealed class DropSignal(IMqttClient client, ILogger logger)
+    {
+        private readonly TaskCompletionSource dropped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task WaitAsync(CancellationToken cancellationToken) => dropped.Task.WaitAsync(cancellationToken);
+
+        public Task OnDisconnectedAsync(MqttClientDisconnectedEventArgs args)
+        {
+            logger.MqttSubscriberDisconnected(args.Reason.ToString());
+
+            if (!client.IsConnected)
+            {
+                dropped.TrySetResult();
+            }
+
+            return Task.CompletedTask;
+        }
+    }
 }
 
 /// <summary>
