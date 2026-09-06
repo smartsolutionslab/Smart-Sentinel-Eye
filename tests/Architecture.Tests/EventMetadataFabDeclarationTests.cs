@@ -49,11 +49,22 @@ namespace SmartSentinelEye.Architecture.Tests;
 /// integration test's job.
 /// </item>
 /// <item>
+/// <b>Not every spelling of a null.</b> The fab argument is compared as a
+/// token, so only the literal <c>null</c> and <c>default</c> are seen.
+/// <c>null!</c>, <c>(string?)null</c> and a <c>const string? NoFab = null</c>
+/// passed under the argument's name all pass silently over a fab-carrying
+/// record — each was tried. Chasing casts and aliases would need a compiler,
+/// not a wider regex, so the limit is written down instead. Named arguments
+/// are the exception and are reported rather than skipped, in or out of order.
+/// </item>
+/// <item>
 /// <b>Nothing about publishers outside a handler.</b> The scan is anchored on
 /// <c>Handle</c>/<c>HandleAsync</c> methods, so
 /// <c>AuditRetentionHostedService</c> — which publishes from a private
-/// archive-and-drop method — is outside it by construction. It is correct
-/// today and it is not protected. (<c>RotateWebhookClientCommandHandler</c>
+/// archive-and-drop method, in a file that names no <c>Handle</c> at all, so
+/// not even <see cref="Unscanned"/>'s loose gate reaches it — is outside it by
+/// construction. It is correct today and it is not protected.
+/// (<c>RotateWebhookClientCommandHandler</c>
 /// publishes from a <c>HandleAsync</c> and so is in scope, despite being a
 /// command handler rather than an event handler.)
 /// </item>
@@ -84,11 +95,35 @@ public class EventMetadataFabDeclarationTests
 
     private static readonly Regex NamedArgument = new(@"^[A-Za-z_]\w*\s*:(?!:)", RegexOptions.Compiled);
 
+    /// <summary>
+    /// Any mention of a handler method at all. Deliberately far looser than
+    /// <see cref="HandlerSignature"/>, and used for one thing only: deciding
+    /// whether <see cref="Unscanned"/>'s silence about an unreached
+    /// construction is acceptable.
+    ///
+    /// <para>
+    /// Gating that on the strict signature disarmed it on exactly the shapes it
+    /// exists to catch. A handler file normally declares one handler, so a shape
+    /// the strict regex misses takes the whole file out of scope rather than
+    /// announcing itself: Wolverine's static <c>Handle</c> (ADR-0042/0057, so a
+    /// plausible next handler rather than a contrivance), an explicit interface
+    /// implementation, a private handler, and a fully-qualified return type each
+    /// passed silently with a literal null over a fab-carrying record. Beside a
+    /// recognised handler they were reported; alone in a file they vanished.
+    /// What gets <em>checked</em> stays strict; only what decides whether
+    /// silence is acceptable is loose.
+    /// </para>
+    /// </summary>
+    private static readonly Regex AnyHandlerMention = new(
+        @"\b(?:Handle|HandleAsync)\s*\(", RegexOptions.Compiled);
+
+    private static readonly Regex Whitespace = new(@"\s+", RegexOptions.Compiled);
+
     [Fact]
     public void A_handler_whose_record_carries_a_fab_never_passes_a_literal_null_fab_to_EventMetadata()
     {
         Dictionary<string, string> sources = ReadSources();
-        Dictionary<string, IReadOnlyList<string>?> records = new(StringComparer.Ordinal);
+        Dictionary<string, RecordHeader> records = new(StringComparer.Ordinal);
         MetadataShape shape = ShapeOf(sources, records);
 
         List<string> failures = [];
@@ -122,20 +157,25 @@ public class EventMetadataFabDeclarationTests
     /// repository has recorded before (spec 082 FR-005); a handler shape the
     /// signature regex does not match must announce itself rather than vanish.
     /// A file with no handler at all is out of scope by construction and is not
-    /// reported here — see the class remarks.
+    /// reported here — see the class remarks. "No handler" is decided by
+    /// <see cref="AnyHandlerMention"/> rather than by
+    /// <see cref="HandlerSignature"/>, because the strict regex cannot tell
+    /// "no handler" from "no handler I recognise" and the second is the common
+    /// case.
     /// </summary>
     private static IEnumerable<string> Unscanned(string path, string text)
     {
         int declared = Construction.Count(text);
         int reached = Handlers(text).Sum(handler => Construction.Count(handler.Body));
-        if (declared == reached || !HandlerSignature.IsMatch(text))
+        if (declared == reached || !AnyHandlerMention.IsMatch(text))
         {
             yield break;
         }
 
-        yield return $"{path}: {declared} EventMetadata construction(s) in a file that declares a handler, "
-            + $"but only {reached} sit inside a scanned handler body. The signature scan missed a handler "
-            + "shape; widen it rather than leaving the site unchecked.";
+        yield return $"{path}: {declared} EventMetadata construction(s) in a file that names a handler, "
+            + $"but only {reached} sit inside a scanned handler body. The handler scan did not reach it: "
+            + "either the signature was not matched, or the body ended early on a brace inside a string "
+            + "or comment. Fix whichever it is rather than leaving the site unchecked.";
     }
 
     private static IEnumerable<string> Inspect(
@@ -145,7 +185,7 @@ public class EventMetadataFabDeclarationTests
         Match construction,
         MetadataShape shape,
         IReadOnlyDictionary<string, string> sources,
-        Dictionary<string, IReadOnlyList<string>?> records)
+        Dictionary<string, RecordHeader> records)
     {
         string? arguments = Balanced(body, construction.Index + construction.Length - 1, '(', ')');
         if (arguments is null)
@@ -155,10 +195,17 @@ public class EventMetadataFabDeclarationTests
         }
 
         string[] passed = [.. SplitTopLevel(arguments).Select(argument => argument.Trim())];
-        if (passed.Length < shape.Minimum || passed.Length > shape.Maximum)
+        // The last clause is not implied by the first two: the day Fab or a
+        // component before it gains a default value, Minimum drops to at most
+        // FabPosition and the indexing below becomes an IndexOutOfRangeException
+        // rather than a test failure — the exact "quietly wrong" the derived
+        // shape exists to prevent.
+        if (passed.Length < shape.Minimum || passed.Length > shape.Maximum
+            || passed.Length <= shape.FabPosition)
         {
             yield return $"{where}: EventMetadata was passed {passed.Length} arguments; its header takes "
-                + $"{shape.Minimum} to {shape.Maximum}. The fab position cannot be read positionally.";
+                + $"{shape.Minimum} to {shape.Maximum}, and the fab sits at argument {shape.FabPosition}. "
+                + "The fab position cannot be read positionally.";
             yield break;
         }
 
@@ -169,7 +216,17 @@ public class EventMetadataFabDeclarationTests
             yield break;
         }
 
-        IReadOnlyList<string>? components = Components(typeName, sources, records);
+        RecordHeader header = HeaderFor(typeName, sources, records);
+        if (header.Matches > 1)
+        {
+            yield return $"{where}: '{typeName}' names {header.Matches} distinct positional record headers in "
+                + "src/, and this scan resolves a record by its simple name. Which one the handler receives "
+                + "cannot be derived, and picking one would make a verdict that is right by luck. "
+                + "Disambiguate the scan, or the records.";
+            yield break;
+        }
+
+        IReadOnlyList<string>? components = header.Components;
         if (components is null)
         {
             yield return $"{where}: the record '{typeName}' this handler receives could not be found, so "
@@ -179,15 +236,16 @@ public class EventMetadataFabDeclarationTests
 
         // The derivation: no Fab component on the source record means the event
         // genuinely has no fab, and a null here is correct. No exemption list.
-        if (passed[shape.FabPosition] != "null" || !components.Contains("Fab", StringComparer.Ordinal))
+        string fab = passed[shape.FabPosition];
+        if (fab is not ("null" or "default") || !components.Contains("Fab", StringComparer.Ordinal))
         {
             yield break;
         }
 
-        yield return $"{where}: '{typeName}' declares a Fab component, but this handler passes a literal null "
-            + $"in EventMetadata's fab position (argument {shape.FabPosition}). The audit row it produces "
-            + "records no fab, and a null-fab row is readable by every operator of every fab (#1300). "
-            + "Pass the fab the record carries.";
+        yield return $"{where}: '{typeName}' declares a Fab component, but this handler passes a literal "
+            + $"'{fab}' in EventMetadata's fab position (argument {shape.FabPosition}). The audit row it "
+            + "produces records no fab, and a null-fab row is readable by every operator of every fab "
+            + "(#1300). Pass the fab the record carries.";
     }
 
     /// <summary>
@@ -285,14 +343,16 @@ public class EventMetadataFabDeclarationTests
     /// the day a component is inserted before <c>Fab</c>.
     /// </summary>
     private static MetadataShape ShapeOf(
-        IReadOnlyDictionary<string, string> sources, Dictionary<string, IReadOnlyList<string>?> records)
+        IReadOnlyDictionary<string, string> sources, Dictionary<string, RecordHeader> records)
     {
-        string? header = HeaderOf("EventMetadata", sources);
-        header.ShouldNotBeNull("EventMetadata's record header could not be found — the scan is broken.");
+        List<string> headers = HeadersOf("EventMetadata", sources);
+        headers.Count.ShouldBe(
+            1, "EventMetadata's record header could not be found exactly once — the scan is broken.");
 
+        string header = headers[0];
         string[] parameters = [.. SplitTopLevel(header).Select(p => p.Trim()).Where(p => p.Length > 0)];
         List<string> names = Names(header);
-        records["EventMetadata"] = names;
+        records["EventMetadata"] = new RecordHeader(names, 1);
 
         int fab = -1;
         for (int i = 0; i < names.Count; i++)
@@ -308,36 +368,67 @@ public class EventMetadataFabDeclarationTests
             fab, parameters.Count(p => !p.Contains('=', StringComparison.Ordinal)), parameters.Length);
     }
 
-    /// <summary>The positional component names of <paramref name="typeName"/>, or null.</summary>
-    private static IReadOnlyList<string>? Components(
+    /// <summary>
+    /// The positional component names of <paramref name="typeName"/>, together
+    /// with how many distinct headers that simple name resolved to.
+    /// </summary>
+    private static RecordHeader HeaderFor(
         string typeName,
         IReadOnlyDictionary<string, string> sources,
-        Dictionary<string, IReadOnlyList<string>?> cache)
+        Dictionary<string, RecordHeader> cache)
     {
-        if (cache.TryGetValue(typeName, out IReadOnlyList<string>? cached))
+        if (cache.TryGetValue(typeName, out RecordHeader cached))
         {
             return cached;
         }
 
-        string? header = HeaderOf(typeName, sources);
-        IReadOnlyList<string>? components = header is null ? null : Names(header);
-        cache[typeName] = components;
-        return components;
+        List<string> headers = HeadersOf(typeName, sources);
+        RecordHeader header = new(headers.Count == 1 ? Names(headers[0]) : null, headers.Count);
+        cache[typeName] = header;
+        return header;
     }
 
-    private static string? HeaderOf(string typeName, IReadOnlyDictionary<string, string> sources)
+    /// <summary>
+    /// Every <em>distinct</em> positional record header declared under
+    /// <paramref name="typeName"/>'s simple name, anywhere in <c>src/</c>.
+    ///
+    /// <para>
+    /// A list rather than the first match, because record names are not unique
+    /// here: 55 positional record names are duplicated across contexts today
+    /// (<c>PublishRevisionCommand</c>, <c>ArchiveRevisionCommand</c> and
+    /// <c>RevertRevisionCommand</c> each exist in both LayoutComposition and
+    /// OverlayDesigner). None of the 55 currently differ in whether they declare
+    /// a <c>Fab</c>, so no verdict is wrong today — but that is a fact about the
+    /// repository, not one this guard establishes, and a collision could yield
+    /// either a false negative or a false positive. So a name that resolves two
+    /// ways is reported, the same fail-loud posture FR-005 already takes for a
+    /// handler shape the scan cannot read. Headers are compared with whitespace
+    /// collapsed, so two identical records formatted differently stay one.
+    /// </para>
+    /// </summary>
+    private static List<string> HeadersOf(string typeName, IReadOnlyDictionary<string, string> sources)
     {
         Regex declaration = new(@"\brecord\s+(?:class\s+|struct\s+)?" + Regex.Escape(typeName) + @"\s*\(");
+        List<string> headers = [];
         foreach (string text in sources.Values)
         {
-            Match match = declaration.Match(text);
-            if (match.Success)
+            foreach (Match match in declaration.Matches(text))
             {
-                return Balanced(text, match.Index + match.Length - 1, '(', ')');
+                string? header = Balanced(text, match.Index + match.Length - 1, '(', ')');
+                if (header is null)
+                {
+                    continue;
+                }
+
+                string collapsed = Whitespace.Replace(header, " ").Trim();
+                if (!headers.Contains(collapsed, StringComparer.Ordinal))
+                {
+                    headers.Add(collapsed);
+                }
             }
         }
 
-        return null;
+        return headers;
     }
 
     /// <summary>Parameter names, dropping type, modifiers and any default value.</summary>
@@ -420,4 +511,12 @@ public class EventMetadataFabDeclarationTests
     }
 
     private readonly record struct MetadataShape(int FabPosition, int Minimum, int Maximum);
+
+    /// <summary>
+    /// A record's positional component names, and the number of distinct
+    /// headers its simple name resolved to. <c>Components</c> is null when the
+    /// name resolved to none — or to more than one, which
+    /// <see cref="Inspect"/> reports rather than guessing at.
+    /// </summary>
+    private readonly record struct RecordHeader(IReadOnlyList<string>? Components, int Matches);
 }

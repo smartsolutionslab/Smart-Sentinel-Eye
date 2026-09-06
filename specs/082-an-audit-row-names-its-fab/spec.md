@@ -43,7 +43,7 @@ repository has had to correct a summary that outran its evidence before.
 | `OverlayDesigner/…/OverlayRevisionArchivedDomainEventHandler.cs:31` | `OverlayRevisionArchivedDomainEvent` | **no** | `null` | correct (ADR-0115) |
 | `OverlayDesigner/…/OverlayRevisionPublishedDomainEventHandler.cs:44` | `OverlayRevisionPublishedDomainEvent` | **no** | `null` | correct (ADR-0115) |
 | `AuditObservability/…/AuditRetentionHostedService.cs:145` | `AuditChunk` | **no** | `null` | correct — a Timescale chunk spans fabs |
-| `StreamDistribution/…/StreamHealthChangedDomainEventHandler.cs:56` | `StreamHealthChangedDomainEvent` | yes, but `FabIdentifier?` | `Fab?.Value` | not a literal null — **#2076** |
+| `StreamDistribution/…/StreamHealthChangedDomainEventHandler.cs:53` | `StreamHealthChangedDomainEvent` | yes, but `FabIdentifier?` | `Fab?.Value` | not a literal null — **#2076** |
 | `Automation/…/FabEventIngestedV1Handler.cs:91, :101` | `FabEventIngestedV1` | yes | `fab` | correct |
 | `CameraCatalog/…` × 4 (Registered, Renamed, Retired, AddressChanged) | each domain event | yes | `.Fab.Value` | correct |
 | `EventIngestion/…/EventIngestedDomainEventHandler.cs:58` | `EventIngestedDomainEvent` | yes | `fab.Value` | correct |

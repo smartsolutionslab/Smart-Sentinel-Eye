@@ -42,11 +42,11 @@ public class CrossFabReadGuardIntegrationTests(AspireFixture aspire)
     ///
     /// <para>
     /// The class is smaller than the enumeration this comment used to carry.
-    /// Camera, layout and variable events all stamp the fab now (#2068). What
-    /// legitimately publishes without one is overlay events, whose domain
-    /// events carry no fab at all (ADR-0115), and retention, which spans fabs.
-    /// A stream-health event's fab is nullable and may still arrive null
-    /// (#2076).
+    /// Camera events already stamped the fab before this; variable events do
+    /// now (#2068), and layout events (#2071). What legitimately publishes
+    /// without one is overlay events, whose domain events carry no fab at all
+    /// (ADR-0115), and retention, which spans fabs. A stream-health event's
+    /// fab is nullable and may still arrive null (#2076).
     /// </para>
     ///
     /// <para>
