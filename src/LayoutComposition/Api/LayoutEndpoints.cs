@@ -35,7 +35,12 @@ public static partial class LayoutEndpoints
         //
         // 404 stays the answer for a layout in another fab (FR-006) — the
         // caller addressed a layout, so "forbidden" would confirm it exists.
-        // 403 is only ever about a *fab* the caller named.
+        // A 403 here is never about *which* layout was addressed. It is about
+        // the fab the caller named, or about the scope: the policy each
+        // mapping selects is RequireAuthenticatedUser() plus a claim
+        // assertion, so a caller who authenticates without sse.layouts.read or
+        // .write is forbidden rather than challenged (spec 085). That second
+        // producer has been reachable since spec 008 and went unnamed here.
         group.MapPost("/", CreateDraft)
             .RequireAuthorization(Scope.Sse.Layouts.Write)
             .WithName("CreateLayoutDraft")
