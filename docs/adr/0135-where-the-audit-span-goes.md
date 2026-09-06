@@ -257,6 +257,40 @@ carries it.
 > level and **refuses to run at Debug**, which is the guard this warning was
 > asking for.
 
+> **Amended 2026-09-06 (spec 081, issue #1999).** The warning above is
+> discharged, and two of its sentences no longer describe the repository. The
+> text above is left as written; this note supersedes it on three points.
+>
+> **Development no longer pins `Debug`.** All eleven `appsettings.Development.json`
+> now set `"Default": "Information"` and add
+> `"Microsoft.EntityFrameworkCore.Database.Command": "Warning"`. **Both edits are
+> load-bearing and neither substitutes for the other.** Lowering `Default` alone
+> would leave every SQL statement in the log, because EF emits `CommandExecuted`
+> at `Information`; the category override is what removes that cost, and it is
+> the one line a developer flips back locally when debugging a query. Moving
+> `Default` is what silences the other Debug categories — the share this ADR
+> measured as the larger one when it found that pinning EF alone reached only
+> ~103 ev/s.
+>
+> **The guard now refuses an *inherited* level, not the literal `"Debug"`.** The
+> sentence above — "refuses to run at Debug" — described a predicate that read
+> `StartsWith("Debug")` against a fallback string holding the appsettings value
+> of the day. It refused the default stack by spelling rather than by fact, so
+> the eleven edits would have silently switched it off. `IngestRunConditions`
+> now carries whether anyone chose the level *for this run* and refuses when
+> nobody did, whatever it is spelled. The refusal this ADR asked for therefore
+> survives the change that removed its original trigger.
+>
+> **The shipped pair has never been measured, and nothing here re-measures it.**
+> The figures above stand exactly as written — Debug 60.0 / 79.1 / 82.5, Warning
+> 169.8 / 173.7 / 244.4, roughly 2–3× — and none of them is a measurement of
+> `Information` + `Database.Command: Warning`, which nobody has run. Between the
+> ~103 ev/s of the EF-only remedy and the 169.8–244.4 of `Warning` is where the
+> shipped configuration sits, against a 100 ev/s target — which is to say it is
+> not known to clear it. **#2133** is filed to measure it, and until it reports,
+> the inherited-level refusal above is what keeps an uncharacterised
+> configuration from being certified by a run taken under it.
+
 ## Alternatives Considered
 
 **OpenTelemetry spans read off the Aspire dashboard.** Idiomatic, and the
