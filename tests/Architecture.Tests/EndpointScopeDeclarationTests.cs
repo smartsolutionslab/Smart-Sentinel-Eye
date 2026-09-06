@@ -34,6 +34,81 @@ namespace SmartSentinelEye.Architecture.Tests;
 /// </para>
 ///
 /// <para>
+/// <b>The second rule, spec 085 (issue 2113): an endpoint that needs a scope
+/// declares the refusal that scope produces.</b> Every mapping whose effective
+/// authorization is a scope must also carry
+/// <c>.ProducesProblem(StatusCodes.Status403Forbidden)</c> in its own chain, so
+/// the generated document has a branch for the answer a wrong-scope token
+/// actually gets instead of an assertion that it cannot happen. The two rules
+/// share this file because they share one antecedent — the effective
+/// authorization of a mapping, resolved chain-then-group — and that resolution
+/// exists here and nowhere else. <c>PreconditionDeclarationTests</c> holds its
+/// 428 and its 400 together for the same reason: the organising principle is the
+/// antecedent, not the status.
+/// </para>
+///
+/// <para>
+/// <b>Measured on this branch, 2026-09-07.</b> 56 mappings in 12 files: 54
+/// resolve to a scope, 2 are anonymous. <b>28 of the 54 declare no authorization
+/// in their own chain at all</b> and are in the population only through their
+/// <c>MapGroup</c> — which is why a rule written as a per-chain grep finds 26 and
+/// calls the other 28 unscoped. 38 chains declared a 403 before spec 085 (37
+/// scoped, 1 anonymous), leaving <b>17 undeclared across 5 files in 3
+/// contexts</b>: Identity 8, OverlayDesigner 8, AuditObservability 1. Zero of the
+/// 17 groups declared one.
+/// </para>
+///
+/// <para>
+/// <b>Three things produce a 403 in this system, and only the first is this
+/// rule's antecedent.</b> (1) The scope policy — <c>AddScopePolicies</c> builds
+/// every <c>sse.*</c> policy as <c>RequireAuthenticatedUser()</c> plus a claim
+/// assertion, so an authenticated caller who fails the assertion is forbidden
+/// rather than challenged; this reaches all 54. (2) The fab guard —
+/// <c>IFabAuthorizationGuard</c> throws and
+/// <c>FabAuthorizationExceptionHandler</c> writes
+/// <c>403 RESOURCE_FAB_NOT_AUTHORIZED</c>. (3) A handler result whose
+/// <c>ApiError</c> carries <c>HttpStatusCode.Forbidden</c> (ADR-0089) — one route
+/// today, <c>POST /streams/authorize</c>.
+/// </para>
+///
+/// <para>
+/// <b>So the refusal rule runs one way, and has no mirror.</b> Nothing here says
+/// an unscoped mapping must <em>not</em> declare a 403.
+/// <c>POST /streams/authorize</c> is <c>AllowAnonymous</c> and declares one
+/// correctly, from producer 3; a mirror would fail on correct code, and a mirror
+/// carved around that one route would be a register where none is needed. The
+/// same call <c>PreconditionDeclarationTests</c> records for its 400.
+/// </para>
+///
+/// <para>
+/// <b>A rule written to <c>RequireScope</c>'s name would have passed
+/// vacuously.</b> The extension exists —
+/// <c>src/ServiceDefaults/Authorization/RequireScopeExtensions.cs</c> — and
+/// forwards to <c>RequireAuthorization</c>, and <em>no endpoint under
+/// <c>src/</c> calls it</em>: all 56 mappings spell it
+/// <c>.RequireAuthorization(Scope.…)</c>. A guard matching that name would match
+/// nothing and stay green for ever. <see cref="FirstAuthorizationCall"/> reads
+/// both spellings, which is why the population read here is the real one.
+/// </para>
+///
+/// <para>
+/// <b>What the refusal rule provably cannot do</b>, stated so a green run is not
+/// read as more than it is. <i>It never observes a 403</i> — it compares source
+/// against source. The only observation in this repository is
+/// <c>tests/Integration.Tests/SystemVariables/VariableReadScopeIntegrationTests.cs</c>,
+/// on three <c>/system-variables</c> reads; the other 51 are derived from the one
+/// <c>AddScopePolicies(Scope.All)</c> registration all nine APIs share.
+/// <i>It never reads the emitted OpenAPI document</i> — and neither does
+/// <c>PreconditionDeclarationTests</c> nor
+/// <c>ConcurrencyConflictDeclarationTests</c>, so if ASP.NET stopped honouring
+/// <c>ProducesProblem</c> all three would stay green. <i>It sees only the
+/// population it can parse</i> — the 56 chain mappings plus the one registered
+/// hub. <i>And it is single-producer</i>: a future anonymous route that refuses
+/// through producer 3 and declares nothing is invisible to it, which is the
+/// shape of #91 one producer along.
+/// </para>
+///
+/// <para>
 /// <b>Both registers are derived, neither is typed in.</b> The scope literals
 /// come from reflection over <see cref="Scope"/>'s nested constants, not from
 /// <c>Scope.All</c> — <c>All</c> is a hand-maintained list in the same file, and
@@ -261,6 +336,18 @@ public class EndpointScopeDeclarationTests
     /// that the route, its handler and its scope are now asserted rather than
     /// unmentioned.
     /// </para>
+    ///
+    /// <para>
+    /// <b>It is outside the refusal rule as well, and for a reason rather than
+    /// by accident of the glob.</b> A SignalR hub has no OpenAPI operation, so
+    /// there is nothing for <c>ProducesProblem</c> to write into — the same
+    /// reason it cannot carry a <c>.WithSummary</c>. It is named here rather
+    /// than left to fall outside a pattern, because a route walked past because
+    /// nobody parsed its shape is the failure this register was created to stop.
+    /// The two directional checks above are unchanged, so a <em>second</em>
+    /// route mapped outside the chain fails the build instead of inheriting this
+    /// row's reasoning.
+    /// </para>
     /// </summary>
     private static readonly RouteOutsideTheChain[] MappedOutsideTheChain =
     [
@@ -330,6 +417,24 @@ public class EndpointScopeDeclarationTests
 
     private static readonly Regex GroupSite = new(
         @"\.MapGroup\s*\(",
+        RegexOptions.None,
+        TimeSpan.FromSeconds(5));
+
+    /// <summary>
+    /// The declaration a scoped endpoint owes its callers. Matched on the masked
+    /// text, so a commented-out line is not credited and the words appearing
+    /// inside a summary are not either.
+    ///
+    /// <para>
+    /// The closing parenthesis is required, so an overload carrying a content
+    /// type would not match. That is deliberate and safe in one direction only:
+    /// the mapping walk and the flat sweep run the same pattern, so an
+    /// unrecognised spelling is invisible to <em>both</em> and the endpoint reads
+    /// as undeclared — red, and never a silent pass.
+    /// </para>
+    /// </summary>
+    private static readonly Regex ForbiddenDeclaration = new(
+        @"\.ProducesProblem\s*\(\s*StatusCodes\s*\.\s*Status403Forbidden\s*\)",
         RegexOptions.None,
         TimeSpan.FromSeconds(5));
 
@@ -838,6 +943,133 @@ public class EndpointScopeDeclarationTests
     }
 
     /// <summary>
+    /// <b>A13 — a scoped endpoint declares the refusal its scope produces.</b>
+    ///
+    /// <para>
+    /// The antecedent is not typed in and neither is the population: it is
+    /// <see cref="ScopedWithLiteral"/>, the same resolution
+    /// <see cref="Every_scoped_endpoint_names_the_scope_it_enforces_in_its_summary"/>
+    /// uses — the chain if it declares authorization, otherwise the
+    /// <c>MapGroup</c> it was written on, bound by receiver name. Twenty-eight of
+    /// the fifty-four are in this population only through that inheritance, so a
+    /// rule that read the chain alone would check twenty-six routes and call the
+    /// rest unscoped. Delete a route's <c>RequireAuthorization</c> and it leaves
+    /// this population in the same edit — which is what makes this a derivation
+    /// rather than a list of routes wearing a build failure's clothes.
+    /// </para>
+    ///
+    /// <para>
+    /// A constant that resolves to nothing is A3's to report and is left out
+    /// here, so one cause does not fail twice.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(EndpointFiles))]
+    public void Every_scoped_endpoint_declares_the_refusal_its_scope_produces(string file)
+    {
+        string[] undeclared = ScopedWithLiteral(file)
+            .Where(pair => pair.Mapping.ForbiddenDeclarations == 0)
+            .Select(pair => Undeclared(pair.Mapping, pair.Literal))
+            .ToArray();
+
+        undeclared.ShouldBeEmpty(
+            "these endpoints sit behind a scope and never declare the refusal that scope produces: "
+            + $"{Environment.NewLine}{string.Join(Environment.NewLine, undeclared)}{Environment.NewLine}"
+            + "AddScopePolicies builds every sse.* policy as RequireAuthenticatedUser() plus a claim "
+            + "assertion, so a caller who authenticates and does not hold the scope is forbidden, not "
+            + "challenged. The document currently tells a client author that answer cannot happen, and a "
+            + "generated client has no branch for it. Add the declaration to the mapping's own chain; "
+            + "change no route, scope, summary or handler.");
+    }
+
+    /// <summary>
+    /// <b>A14 — no route group declares the refusal its members must declare.</b>
+    ///
+    /// <para>
+    /// This is not a style rule, it is what keeps A13 sound. OpenAPI
+    /// <em>inherits</em> group metadata, so a 403 on a <c>MapGroup</c> would make
+    /// every operation under it correct while A13 still demanded a per-chain line
+    /// from each — a guard failing correct code. Failing on the group instead
+    /// says the shape is refused and why, rather than accusing eight endpoints of
+    /// an omission they do not have.
+    /// </para>
+    ///
+    /// <para>
+    /// Zero of the seventeen groups declare one today, so this begins green and
+    /// stays green unless someone reaches for the eight lines it would save.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void No_route_group_declares_the_refusal_its_members_must_declare()
+    {
+        string[] declaring = EndpointSourceFiles()
+            .SelectMany(file => Read(file).Groups)
+            .Where(group => group.ForbiddenDeclarations > 0)
+            .Select(group => $"{group.File}:{group.Line}  MapGroup(\"{group.Prefix}\") on '{group.Name}'")
+            .ToArray();
+
+        declaring.ShouldBeEmpty(
+            "these route groups declare the 403 their members are required to declare: "
+            + $"{Environment.NewLine}{string.Join(Environment.NewLine, declaring)}{Environment.NewLine}"
+            + "The resulting document would be correct — OpenAPI inherits group metadata — and that is "
+            + "the problem: the rule above reads each mapping's own chain, so every endpoint under this "
+            + "group is then reported as omitting a declaration it effectively has, and every endpoint "
+            + "added under it later inherits a declaration nobody wrote for it. One shape or the other, "
+            + "not both. Move the declaration back into each chain, or change both assertions together "
+            + "and say why.");
+    }
+
+    /// <summary>
+    /// <b>A15 — every refusal declaration under these directories is one the
+    /// walk can see.</b>
+    ///
+    /// <para>
+    /// The mapping walk plus the group walk must account for every
+    /// <c>Status403Forbidden</c> declaration a flat sweep of <c>src/*/Api</c>
+    /// finds. Both read 38 before spec 085 and 55 after, and the assertion is the
+    /// agreement rather than either number — both move legitimately with any
+    /// endpoint.
+    /// </para>
+    ///
+    /// <para>
+    /// Without it A13's sharpest edge is silent: a declaration hoisted into a
+    /// shared convention, an endpoint filter or a metadata helper reads to the
+    /// walk as no declaration at all, and A13 would then be reporting an
+    /// omission that is not there. The property is <c>PaginatedConsumerTests</c>',
+    /// borrowed by <c>PreconditionDeclarationTests</c>, borrowed again here. The
+    /// sweep runs over the wider <c>src/*/Api/**/*.cs</c> glob deliberately: a
+    /// declaration in an Api file that is not an endpoint file should make the
+    /// two disagree.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void The_refusal_declarations_the_walk_finds_are_all_the_ones_there_are()
+    {
+        int swept = ApiSourceFiles()
+            .Sum(file => ForbiddenDeclaration.Count(Masked(ReadRepositoryFile(file))));
+        EndpointFileReading[] readings = EndpointSourceFiles().Select(Read).ToArray();
+        int walked = readings.Sum(reading =>
+            reading.Mappings.Sum(mapping => mapping.ForbiddenDeclarations)
+            + reading.Groups.Sum(group => group.ForbiddenDeclarations));
+
+        swept.ShouldBeGreaterThan(
+            0,
+            $"no Status403Forbidden declaration was found anywhere under {ApiGlob}. Thirty-eight chains "
+            + "declared one before spec 085 and fifty-five after, so zero means the sweep is reading "
+            + "nothing — most likely the declaration is now spelled some way this pattern does not "
+            + "match, in which case the rule above is green because it checked no text at all.");
+
+        walked.ShouldBe(
+            swept,
+            $"the walk found {walked} Status403Forbidden declarations inside mapping and group chains; a "
+            + $"flat sweep of {ApiGlob} found {swept}. A declaration the walk cannot see is a declaration "
+            + "this guard does not credit: it sits outside the fluent chain the reader captures — in a "
+            + "shared convention, an endpoint filter, a metadata helper — and the rule above would report "
+            + "its endpoint as declaring nothing while the document is in fact correct. Put it in the "
+            + "mapping's own chain, or teach the reader the shape.");
+    }
+
+    /// <summary>
     /// <b>A9 — the gate has no soft edge.</b>
     ///
     /// <para>
@@ -913,6 +1145,7 @@ public class EndpointScopeDeclarationTests
         string masked = MaskLiterals(text);
 
         Dictionary<string, RouteGroup> groups = new(StringComparer.Ordinal);
+        List<GroupDeclaration> declared = [];
         List<(int From, int To)> declarations = [];
         List<string> unread = [];
 
@@ -927,6 +1160,14 @@ public class EndpointScopeDeclarationTests
 
             string name = declaration.Groups["name"].Value;
             declarations.Add((declaration.Index, end));
+            int forbidden = ForbiddenDeclarationsIn(masked, declaration.Index, end);
+            string prefix = FirstLiteral(text, masked, declaration.Index, end);
+            declared.Add(new GroupDeclaration(
+                file,
+                LineAt(text, declaration.Index),
+                name,
+                prefix,
+                forbidden));
 
             // Binding is by name across the whole file, so a name declared a
             // second time — in a second method, which is legal C# — would rebind
@@ -952,7 +1193,7 @@ public class EndpointScopeDeclarationTests
 
             groups[name] = new RouteGroup(
                 name,
-                FirstLiteral(text, masked, declaration.Index, end),
+                prefix,
                 DeclaredAuthorization(text, masked, declaration.Index, end));
         }
 
@@ -977,7 +1218,7 @@ public class EndpointScopeDeclarationTests
             }
         }
 
-        return new EndpointFileReading(file, [.. mappings], [.. unread]);
+        return new EndpointFileReading(file, [.. mappings], [.. declared], [.. unread]);
     }
 
     private static EndpointMapping ReadMapping(
@@ -1021,6 +1262,7 @@ public class EndpointScopeDeclarationTests
             effective.Kind,
             effective.Kind == AuthorizationKind.Scoped ? effective.Detail : string.Empty,
             summary,
+            ForbiddenDeclarationsIn(masked, start, end),
             problem);
     }
 
@@ -1155,6 +1397,16 @@ public class EndpointScopeDeclarationTests
         int close = EndOfLiteral(masked, quote, verbatim: false);
         return Unescape(text[(quote + 1)..(close - 1)]);
     }
+
+    /// <summary>
+    /// How many refusal declarations a span carries. A count rather than a flag,
+    /// so <see cref="The_refusal_declarations_the_walk_finds_are_all_the_ones_there_are"/>
+    /// compares like with like: a chain that declares the same thing twice is
+    /// odd but legal, and a flag would make the walk read one where the sweep
+    /// reads two and fail on the wrong thing.
+    /// </summary>
+    private static int ForbiddenDeclarationsIn(string masked, int start, int end) =>
+        ForbiddenDeclaration.Count(masked[start..end]);
 
     private static string[] ClaimedScopes(string? summary) =>
         summary is null
@@ -1328,6 +1580,13 @@ public class EndpointScopeDeclarationTests
         + $"{Environment.NewLine}    claims   : {claimed}"
         + $"{Environment.NewLine}    summary  : {Quoted(mapping.Summary)}"
         + $"{Environment.NewLine}    expected : the summary to name {literal}, the scope the chain enforces";
+
+    private static string Undeclared(EndpointMapping mapping, string literal) =>
+        Where(mapping)
+        + $"{Environment.NewLine}    enforces : {literal}  (via {mapping.ScopeConstant})"
+        + $"{Environment.NewLine}    declares : no .ProducesProblem(StatusCodes.Status403Forbidden)"
+        + $"{Environment.NewLine}    expected : the chain to declare it — a caller who authenticates "
+        + $"without {literal} is refused 403 by the policy this mapping selects";
 
     private static string Anonymity(EndpointMapping mapping) =>
         Where(mapping)
@@ -1806,6 +2065,20 @@ public class EndpointScopeDeclarationTests
     private sealed record RouteGroup(string Name, string Prefix, EnforcedAuthorization? Authorization);
 
     /// <summary>
+    /// One <c>MapGroup</c> declaration as it stands in the file, kept in file
+    /// order rather than in the by-name dictionary. A name declared twice
+    /// overwrites its dictionary entry — deliberately, see <see cref="Read"/> —
+    /// and the overwritten group's declarations would then vanish from the count
+    /// that is compared against the flat sweep.
+    /// </summary>
+    private sealed record GroupDeclaration(
+        string File,
+        int Line,
+        string Name,
+        string Prefix,
+        int ForbiddenDeclarations);
+
+    /// <summary>
     /// One route-handler registration. <see cref="Problem"/> is the reason the
     /// reader could not resolve it, and is <c>null</c> when it could.
     /// </summary>
@@ -1817,9 +2090,14 @@ public class EndpointScopeDeclarationTests
         AuthorizationKind Kind,
         string ScopeConstant,
         string? Summary,
+        int ForbiddenDeclarations,
         string? Problem);
 
-    private sealed record EndpointFileReading(string File, EndpointMapping[] Mappings, string[] Unread);
+    private sealed record EndpointFileReading(
+        string File,
+        EndpointMapping[] Mappings,
+        GroupDeclaration[] Groups,
+        string[] Unread);
 
     private sealed record ScopedEndpoint(EndpointMapping Mapping, string Literal);
 }
