@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MQTTnet;
 using MQTTnet.Exceptions;
+using MQTTnet.Formatter;
 using MQTTnet.Protocol;
 using SmartSentinelEye.ScenarioSimulator.Configuration;
 using SmartSentinelEye.ScenarioSimulator.Keycloak;
@@ -97,7 +98,13 @@ public sealed class MqttPublisher : IAsyncDisposable
             return Task.CompletedTask;
         }
 
+        // Pinned for the same reason MosquittoConnectionFactory pins it: MQTTnet 5
+        // defaults to MQTT 5.0 where MQTTnet 4 defaulted to 3.1.1, and both our
+        // clients are talking to a broker whose ACL and auth behaviour (ADR-0100)
+        // were proven on 3.1.1. Nothing here needs MQTT 5, and a silent
+        // protocol change is what cost the subscriber its persistent session.
         clientOptions = new MqttClientOptionsBuilder()
+            .WithProtocolVersion(MqttProtocolVersion.V311)
             .WithClientId(Username)
             .WithTcpServer(host, port)
             .WithCredentials(new TokenCredentials(token))

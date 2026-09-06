@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MQTTnet;
+using MQTTnet.Formatter;
 
 namespace SmartSentinelEye.EventIngestion.Infrastructure.Ingress;
 
@@ -52,7 +53,21 @@ public sealed class MosquittoConnectionFactory(
             logger.InitialMqttTokenFailed(exception.Message);
         }
 
+        // **The protocol version is pinned, and it is load-bearing.** MQTTnet 4
+        // defaulted to MQTT 3.1.1; MQTTnet 5 defaults to MQTT 5.0, where
+        // cleanSession=false is only half of a persistent session — the other
+        // half is SessionExpiryInterval, which defaults to 0 and means "discard
+        // the session the moment the connection closes". Left on the v5 default
+        // a restart came back to a broker that had thrown the subscription away
+        // along with every unacknowledged QoS 1 message:
+        // RestartLosesNothingIntegrationTests published 500 events and stored 0.
+        //
+        // 3.1.1 is the wire spec 006's NFR-005 and FR-022 were built and
+        // measured against, so pinning it restores the protocol rather than
+        // changing it. Moving to MQTT 5 semantics is a protocol decision, not
+        // part of a library port.
         MqttClientOptionsBuilder clientOptions = new MqttClientOptionsBuilder()
+            .WithProtocolVersion(MqttProtocolVersion.V311)
             .WithClientId(opts.ClientId)
             .WithTcpServer(opts.Host, opts.Port)
             .WithCredentials(new TokenCredentials(opts.Username, token))
