@@ -20,7 +20,11 @@ public sealed class StreamFabAttributionOptions
 
     /// <summary>
     /// How many cameras to ask for per page. CameraCatalog caps a listing at
-    /// 200; the product targets 250 cameras, so this is one or two requests.
+    /// 200; the product targets 250 cameras <em>on the wall</em>, so this is
+    /// roughly one or two requests. Only roughly: the lookup asks for retired
+    /// cameras too (spec 083), and a decommissioned camera keeps its row, so
+    /// the count grows with a fab's history rather than with the hardware
+    /// currently installed in it.
     /// </summary>
     public int PageSize { get; set; } = 200;
 }
