@@ -35,8 +35,6 @@ internal sealed class MqttConnectionLoop
     /// </summary>
     private TaskCompletionSource? dropped;
 
-    private bool subscribed;
-
     public MqttConnectionLoop(
         MqttConnection connection, MqttBackoff backoff, MosquittoOptions options, ILogger logger)
     {
@@ -144,25 +142,31 @@ internal sealed class MqttConnectionLoop
     }
 
     /// <summary>
-    /// Subscribes once, at the first connect. <b>A reconnect leaves the
-    /// subscription behind</b>: the broker comes back holding no session, so the
-    /// client is connected, healthy and receiving nothing. That is the defect
-    /// spec 079 exists to close, and this shape is here only long enough for
-    /// <c>MqttResubscribeAfterBrokerOutageIntegrationTests</c> to be observed
-    /// failing against it (spec 079 T016).
+    /// Subscribes after <b>every</b> successful connect, unconditionally.
+    ///
+    /// <para>
+    /// The previous commit subscribed once per process, and
+    /// <c>MqttResubscribeAfterBrokerOutageIntegrationTests</c> was observed
+    /// failing against exactly that: two connects, one SUBSCRIBE, and an event
+    /// published after the broker returned that never arrived in 90 s across 18
+    /// publish attempts. The client was connected, <c>IsConnected</c> was true,
+    /// the log carried a connect line, and the broker discarded every publish
+    /// because it held no filter for this client.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Not conditional on <c>MqttClientConnectResult.IsSessionPresent</c>.</b>
+    /// A SUBSCRIBE on a session that already holds the filter is idempotent at
+    /// the broker, so unconditional costs one packet and cannot be wrong;
+    /// a condition can, and its failure mode is silence.
+    /// </para>
     /// </summary>
     private async Task<bool> SubscribeAsync(IMqttClient client, CancellationToken cancellationToken)
     {
-        if (subscribed)
-        {
-            return true;
-        }
-
         string topic = options.SubscribeTopic;
         try
         {
             await client.SubscribeAsync(topic, MqttQualityOfServiceLevel.AtLeastOnce, cancellationToken);
-            subscribed = true;
             logger.MqttSubscriberResubscribed(topic);
             return true;
         }
