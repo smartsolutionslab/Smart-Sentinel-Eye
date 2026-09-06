@@ -307,9 +307,11 @@ public class NFR001_AuditIngestLatencyTests(AspireFixture aspire, ITestOutputHel
             + "so it cannot be reported as measured");
 
         result.Conditions.LoggingIsVerbose.ShouldBeFalse(
-            $"the services are logging at '{result.Conditions.LogLevel}', where this stack sustains "
-            + "~80 ev/s against a target of 100; set Logging__LogLevel__Default=Warning for a "
-            + "measurement run");
+            $"the services are logging at '{result.Conditions.LogLevel}', "
+            + $"{(result.Conditions.LogLevelWasChosen ? "chosen for this run" : "inherited from the appsettings")}; "
+            + "Debug and Trace put the logging in front of the pipeline at ~80 ev/s against a target "
+            + "of 100, and an inherited level has no measured throughput figure at all (#2133) — set "
+            + "Logging__LogLevel__Default=Warning for a measurement run");
 
         result.Conditions.RateWasMet.ShouldBeTrue(
             $"the run drove {result.Conditions.AchievedRatePerSecond:F1} ev/s against a target of "
