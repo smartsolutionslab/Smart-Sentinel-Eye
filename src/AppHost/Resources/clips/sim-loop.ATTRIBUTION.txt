@@ -9,5 +9,7 @@ It is a 20-second excerpt (a hot-plate rolling pass) of:
            https://creativecommons.org/licenses/by-sa/3.0/
 
 As a derivative work, this excerpt is likewise licensed under CC BY-SA 3.0.
-Regenerate it with scripts/generate-sim-loop.sh. Used only by the dev-only
-camera-sim (gated off in CI/E2E/prod by the AppHost).
+Regenerate it with scripts/generate-sim-clips.sh. Served both by the dev-only
+camera-sim and by fixture-video, which the AppHost composes in every run-mode
+stack — so this clip is the picture CI's end-to-end job sees (spec 056) and,
+since #198, the integration lane's too (spec 076).
