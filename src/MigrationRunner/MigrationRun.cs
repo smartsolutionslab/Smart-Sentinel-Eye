@@ -55,11 +55,22 @@ internal static class MigrationRun
             logger.AllMigrationsApplied();
             return Succeeded;
         }
+        catch (OperationCanceledException cancelled) when (cancellationToken.IsCancellationRequested)
+        {
+            // A SIGTERM to the container is not a fault, and the exit code is the
+            // same either way: nothing after this point was migrated. What differs
+            // is what the reader should do about it, so it gets its own line.
+            // Filtered on our own token — an OperationCanceledException raised by
+            // an inner timeout inside a migrator is a genuine failure and falls
+            // through to the clause below.
+            logger.MigrationRunStopped(reached, cancelled);
+            return Failed;
+        }
         catch (Exception exception)
         {
-            // Unfiltered on purpose, and that includes cancellation: a run that
-            // stopped early did not apply its migrations either. Every filter
-            // here is a way back out to stderr, which is the hole this closes.
+            // Unfiltered on purpose. Every filter here is a way back out to
+            // stderr, which is the hole this closes; the clause above narrows
+            // what is *said*, not what is caught.
             logger.MigrationRunFailed(reached, exception);
             return Failed;
         }

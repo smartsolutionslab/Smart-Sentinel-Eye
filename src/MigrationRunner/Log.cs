@@ -44,4 +44,12 @@ internal static partial class Log
     // why any of them failed to start.
     [LoggerMessage(Level = LogLevel.Critical, Message = "Migrations failed at {Context}. MigrationRunner is exiting non-zero; nothing after this point was migrated.")]
     public static partial void MigrationRunFailed(this ILogger logger, string context, Exception exception);
+
+    // Issue #2062, deliverable A. Warning rather than Critical: the run stopped
+    // because it was told to, and nothing after this point was migrated either —
+    // but a stack that is shutting down does not need the same alarm as one whose
+    // migrations broke. Sharing MigrationRunFailed's line would report a fault
+    // that did not happen.
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Migrations were stopped at {Context} before finishing. MigrationRunner is exiting non-zero; nothing after this point was migrated.")]
+    public static partial void MigrationRunStopped(this ILogger logger, string context, Exception cancelled);
 }
