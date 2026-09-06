@@ -51,26 +51,33 @@ import { FIXTURE_VIDEO_RTSP_URL } from './support/live-video-wall';
  * The rAF loop also survives two things an `addEventListener('loadeddata')`
  * would not: the SPA route change (a `react-router` `<Link>`, so `window` and
  * the running loop persist), and a `<video>` that does not exist at `t0` —
- * `CameraDetailPage` mounts the viewer only after its RTK Query resolves. If
- * the route change ever becomes a document load, the execution context dies and
- * the evaluate below rejects loudly rather than silently falling back to a
- * coarser clock.
+ * `CameraDetailPage` mounts the viewer only after `useGetCameraQuery` resolves,
+ * which after the warm-up open is a warm-cache read rather than a round trip
+ * (the exclusion is named in full at `measureOneOpen`). If the route change ever
+ * becomes a document load, the execution context dies and the evaluate below
+ * rejects loudly rather than silently falling back to a coarser clock.
  * </para>
  *
  * <h3>Why asserting is defensible, and why 3000 ms is not a number to raise</h3>
  *
  * <para>
- * <b>`playwright.config.ts:15` sets `retries: isCI ? 2 : 0`, and that is part of
- * this measurement's design, not incidental config.</b> A red therefore means
- * three independent 20-open runs — 60 samples across three browser sessions —
- * each measured a p95 above the budget. That is this repository's
- * repeat-before-believing rule, wired in already and costing a green run
- * nothing. Do not remove the retries as tidy-up.
+ * <b>`playwright.config.ts:15` sets `retries: isCI ? 2 : 0`, and what that buys
+ * is not repeat-before-believing.</b> A <i>red</i> does mean three independent
+ * 20-open runs — 60 samples across three browser sessions — each measured a p95
+ * above the budget. But retries fire only on failure, so the <i>pass</i>
+ * criterion is `min(p95 over up to 3 runs) < 3000`: a p95 that breaches on two
+ * runs out of three is reported flaky and the job exits 0. The retry count
+ * hardens the red and biases the green, which is the opposite of the rule.
+ * Locally `retries: 0`, so a local run is a single sample and the framing does
+ * not apply to it at all. <b>The repeat obligation is discharged by running the
+ * measurement a second time by hand and recording both figures</b> (spec 077
+ * T006), not by the retry count. Do not remove the retries as tidy-up, and do
+ * not read them as repetition either.
  * </para>
  *
  * <para>
- * <b>The fixture's keyframe interval belongs beside the figure, and what it is
- * observed to cost is not what it was predicted to cost.</b> `sim-loop.mp4` is
+ * <b>The fixture's keyframe interval belongs beside the figure, and until this
+ * revision the sampling could not say what it cost.</b> `sim-loop.mp4` is
  * H.264 Constrained Baseline 1280×720, 25 fps, GOP 25 — a 1.000 s keyframe
  * interval, confirmed with `ffprobe` (IDRs at 0.000 / 1.000 / 2.000 s) — served
  * `-c copy`, so the SFU passes it through unchanged. A WebRTC receiver cannot
@@ -80,16 +87,66 @@ import { FIXTURE_VIDEO_RTSP_URL } from './support/live-video-wall';
  * </para>
  *
  * <para>
- * <b>The first measurement refutes that, and the refutation is the reason the
- * samples are all printed rather than only the percentiles.</b> Twenty opens
- * landed inside a 107 ms band (737–844 ms). Twenty draws from a uniform
- * 0–1000 ms distribution do not do that, so no per-open random-phase IDR wait is
- * present in this path — the SFU is evidently not making each joining reader
- * wait for the source's next keyframe. The mechanism was not measured and is not
- * asserted here; what is asserted is the observation. <b>If a future run's
- * samples spread across ~1 s instead of clustering, that term has appeared and
- * the figure must be read with it</b>, which is what this paragraph exists to
- * make checkable rather than assumed.
+ * <b>The first measurement did not refute that prediction. It could not test
+ * it, because the samples were not independent.</b> `measureOneOpen` is a closed
+ * loop — click, wait for the frame, navigate back, click again — and the frame it
+ * waits for is by construction an exact IDR instant. So each click landed at a
+ * <i>fixed</i> offset from an IDR. Writing `P` for the 1.000 s GOP, `S` for the
+ * setup cost and `N` for the un-timed overhead between the frame and the next
+ * click (back-click, the two `expect`s, the arming round-trip, Playwright
+ * actionability), every sample from the second on was
+ * `elapsed = S + ((P − (N + S) mod P) mod P)`, which collapses to `P − N`
+ * whenever `N + S < P`: constant, and <i>independent of S</i>. Twenty such
+ * samples land in a tight band whether or not the IDR term is paid, so the
+ * 107 ms band (737–844 ms) was that term's prediction rather than its
+ * refutation. The decisive evidence is in the figures themselves — p95 =
+ * 843 / 843 / 856 ms across three runs, three sessions, three cameras. An
+ * independently-sampled product cost does not reproduce to the millisecond;
+ * `P − N` does, because `N` is Playwright's own back-navigation overhead and
+ * `1000 − 843 = 157 ms` is an ordinary value for it.
+ * </para>
+ *
+ * <para>
+ * <b>The second consequence was worse than a wrong number: the harness was blind
+ * to product regression inside a whole GOP.</b> `elapsed = P − N` holds for any
+ * `S` below ~800 ms and then steps to `2P − N`, so `S` growing from 200 ms to
+ * 700 ms would not have moved the printed figure at all. Nor was the reported
+ * p95 FR-013's population: an operator clicks at a random phase, and the harness
+ * always clicked at the same one.
+ * </para>
+ *
+ * <para>
+ * <b>`DECORRELATION_WINDOW_MS` is the fix, and it is also the experiment that
+ * settles the question.</b> Each open now waits a uniformly random 0–1000 ms
+ * before the click, so the click phase is uniform over the source's GOP and the
+ * samples are independent draws. The predictions were written down before the
+ * re-run: if the IDR term is paid, the spread reopens toward ~1000 ms and p95
+ * rises to roughly `S + 950`; if it genuinely is not, the spread stays ~150 ms
+ * and p95 stays near 843.
+ * </para>
+ *
+ * <para>
+ * <b>The re-run settled it: the IDR term is paid, in full.</b> Two 20-open runs
+ * on a warm stack (2026-09-06). `elapsed + delay` came out constant modulo
+ * <i>exactly</i> 1000 ms — two branches about a GOP apart, which is the source
+ * quantising the join and nothing else. The spread reopened to 893 ms and
+ * 1177 ms, and p95 rose from the phase-locked 843 ms to <b>1158 ms and
+ * 1420 ms</b>, close to the `S + 950` the model predicts. Spec 077's original
+ * prediction was right; the "refutation" was the artifact. The old figure is
+ * explained too: `1000 − 843 = 157 ms` was `N` before this file added a
+ * `waitForTimeout` hop to the loop, and `N` now measures 226–344 ms.
+ * </para>
+ *
+ * <para>
+ * <b>`S` — the setup cost the product actually owns, and the only term product
+ * work can move — is ≈ 290 ms, and nothing had ever measured it.</b> Two
+ * estimators agree: the smallest of the 40 samples is 282 ms, a direct upper
+ * bound since `elapsed = S + IDR wait` and the wait is non-negative; and the
+ * pooled mean of 789 ms sits ~500 ms above `S` when the phase is uniform over a
+ * 1 s GOP, giving ≈ 289 ms. So of a 1158–1420 ms p95, roughly a quarter is the
+ * product and the rest is the fixture's keyframe interval. <b>Read a future
+ * regression off the minimum sample, not off p95</b>: p95 moves with the source,
+ * the minimum moves with `S`.
  * </para>
  *
  * <para>
@@ -125,6 +182,31 @@ const CAMERA_RTSP_URL = FIXTURE_VIDEO_RTSP_URL;
 
 /** Mirrors `WhepHandshakeLatencyTests`: 20 sequential opens in the warm regime. */
 const SAMPLE_COUNT = 20;
+
+/**
+ * The width of the per-open wait that decorrelates the click from the source's
+ * GOP — one full keyframe interval of `sim-loop.mp4`.
+ *
+ * <para>
+ * <b>Not a workaround, and not a settle-down sleep.</b> The frame each open
+ * waits for is an exact IDR instant, so without a random wait before the next
+ * click every click lands at the same offset from an IDR and every sample after
+ * the first is `1000 ms − (Playwright's own navigation overhead)` — a constant
+ * that does not move when the product gets slower. Drawing the wait uniformly
+ * from one whole keyframe interval makes the click phase uniform, which is both
+ * FR-013's actual population (an operator clicks whenever they click) and the
+ * only condition under which the observed spread says anything about the IDR
+ * term. See the phase-lock paragraphs in this file's header.
+ * </para>
+ */
+const DECORRELATION_WINDOW_MS = 1000;
+
+/**
+ * The seed for those waits. Printed with the figure, and pinnable with
+ * `E2E_CLICK_TO_FRAME_SEED`, so a surprising run can be replayed exactly rather
+ * than argued about.
+ */
+const DECORRELATION_SEED = readSeed(process.env.E2E_CLICK_TO_FRAME_SEED);
 
 /** Spec 002 FR-013. Not a number this lane may raise. */
 const P95_BUDGET_MS = 3000;
@@ -285,13 +367,36 @@ async function awaitFirstFrame(page: Page, budgetMilliseconds: number): Promise<
  * <b>In-app navigation back, never `page.reload()`.</b> A reload re-runs the
  * OIDC restore, a term FR-013 does not budget. Leaving the detail page unmounts
  * `CameraViewer` and closes the peer connection, so the next open is a fresh
- * WHEP negotiation against an already-pulled MediaMTX path — which is exactly
- * the quantity FR-013 names.
+ * WHEP negotiation against an already-pulled MediaMTX path.
+ * </para>
+ *
+ * <para>
+ * <b>One term of FR-013 is excluded, and the exclusion is named here rather than
+ * left to be discovered.</b> Nineteen of the twenty samples run against warm RTK
+ * Query caches: neither `useGetCameraQuery` (`cameras.api.ts:185`) nor
+ * `useGetStreamQuery` (`streams.api.ts:22`) sets `keepUnusedDataFor` or
+ * `refetchOnMountOrArgChange`, so RTK's default 60 s cache is still warm from the
+ * previous open and `whepUrl` resolves without a round trip. Spec 002 budgets
+ * ≤ 200 ms of <i>lookup</i> inside the 3 s; the samples below therefore measure
+ * the rest of the journey, not all of it. The discarded warm-up is the only open
+ * that pays the lookup, and its time is printed.
  * </para>
  */
-async function measureOneOpen(page: Page, link: Locator, budgetMilliseconds: number): Promise<number | null> {
+async function measureOneOpen(
+  page: Page,
+  link: Locator,
+  budgetMilliseconds: number,
+  decorrelationDelayMilliseconds: number,
+): Promise<number | null> {
   // Actionability is paid here, before the clock is armed.
   await expect(link).toBeVisible();
+
+  // Breaks the phase lock between the click and the source's keyframe interval.
+  // The frame that ended the previous open was an IDR instant, so without this
+  // wait every click lands at the same offset from the next one and the samples
+  // are serially dependent — see DECORRELATION_WINDOW_MS. Untimed on purpose: it
+  // is paid before the clock is armed.
+  await page.waitForTimeout(decorrelationDelayMilliseconds);
 
   await armClickToFrameClock(page);
   await link.click();
@@ -309,8 +414,9 @@ test('an operator clicking a camera sees a decoded frame inside the click-to-fir
   // costs a passing run nothing: sign-in (~15 s) + the camera registration,
   // which is the run's first write of its kind (FIRST_WRITE_TIMEOUT_MS, 90 s)
   // + the discarded warm-up open (90 s) + 20 samples each bounded by
-  // SAMPLE_BUDGET_MS plus a navigation (~12 s) ≈ 435 s.
-  test.setTimeout(450_000);
+  // SAMPLE_BUDGET_MS plus a navigation (~12 s) plus a decorrelation wait of up
+  // to DECORRELATION_WINDOW_MS each (~10 s over the run) ≈ 450 s.
+  test.setTimeout(480_000);
 
   // The `E2E ` prefix is what `retire-e2e-cameras.teardown.ts` sweeps on; a
   // name without it survives the run. `Date.now()` because the e2e database is
@@ -332,7 +438,9 @@ test('an operator clicking a camera sees a decoded frame inside the click-to-fir
   const cameraLink = page.getByRole('link', { name: cameraName, exact: true });
   await expect(cameraLink).toBeVisible({ timeout: FIRST_WRITE_TIMEOUT_MS });
 
-  const warmUpMilliseconds = await measureOneOpen(page, cameraLink, WARM_UP_BUDGET_MS);
+  // No decorrelation wait on the warm-up: it is discarded, and it is the one
+  // open that pays the cold terms this figure deliberately excludes.
+  const warmUpMilliseconds = await measureOneOpen(page, cameraLink, WARM_UP_BUDGET_MS, 0);
 
   report(`camera "${cameraName}" at ${CAMERA_RTSP_URL}`);
   report(
@@ -349,13 +457,20 @@ test('an operator clicking a camera sees a decoded frame inside the click-to-fir
       'the SFU could not pull it.',
   ).not.toBeNull();
 
+  const drawPhase = createRandom(DECORRELATION_SEED);
   const samples: Array<number | null> = [];
+  const delays: number[] = [];
   for (let sample = 0; sample < SAMPLE_COUNT; sample++) {
-    samples.push(await measureOneOpen(page, cameraLink, SAMPLE_BUDGET_MS));
+    const delay = Math.floor(drawPhase() * DECORRELATION_WINDOW_MS);
+    delays.push(delay);
+    samples.push(await measureOneOpen(page, cameraLink, SAMPLE_BUDGET_MS, delay));
   }
 
   // Printed before any assertion, so the numbers survive a red.
   report(`samples (ms): ${samples.map((value) => (value === null ? 'none' : value.toFixed(0))).join(', ')}`);
+  // Printed beside them, because a sample is only interpretable together with
+  // the phase it was drawn at, and the seed is what makes the run replayable.
+  report(`decorrelation seed = ${DECORRELATION_SEED}; pre-click delays (ms): ${delays.join(', ')}`);
 
   const missing = samples.findIndex((value) => value === null);
   expect(
@@ -377,17 +492,24 @@ test('an operator clicking a camera sees a decoded frame inside the click-to-fir
     `p50 = ${p50.toFixed(0)} ms, p95 = ${p95.toFixed(0)} ms, max = ${at(sorted, sorted.length - 1).toFixed(0)} ms, ` +
       `budget = ${P95_BUDGET_MS} ms (spec 002 FR-013)`,
   );
-  // The keyframe term, stated wherever the figure is — and stated as the
-  // measurement rather than as the prediction, because the prediction was wrong
-  // the first time it was checked. Printed from the samples so it cannot drift
-  // away from them.
+  // The keyframe term, stated wherever the figure is, and printed from the
+  // samples so it cannot drift away from them. The inference below is only
+  // available because the click phase is randomised: under a phase-locked loop a
+  // tight band is what the term predicts, not evidence against it.
   report(
-    `spread = ${(at(sorted, sorted.length - 1) - at(sorted, 0)).toFixed(0)} ms across ${SAMPLE_COUNT} samples. ` +
-      'The source (sim-loop.mp4) has a 1.000 s keyframe interval and a receiver cannot decode ' +
-      'before an IDR, so a per-open random-phase wait for one would show up here as a spread ' +
-      'approaching 1000 ms. A spread far below that means no such term is being paid; a spread ' +
-      'near it means about a third of this figure is a property of the source rather than of ' +
-      'the product, and spec 002 budgets that as "≤ 1 s decoder warmup".',
+    `spread = ${(at(sorted, sorted.length - 1) - at(sorted, 0)).toFixed(0)} ms across ${SAMPLE_COUNT} samples, ` +
+      "each clicked at a phase drawn uniformly from the source's 1.000 s keyframe interval " +
+      `(seed ${DECORRELATION_SEED}). A receiver cannot decode before an IDR, so if that wait is ` +
+      'being paid the samples spread across ~1000 ms and p95 sits about 950 ms above the minimum ' +
+      'sample; if it is not, the spread stays small and p95 sits near the minimum. Spec 002 budgets ' +
+      'the term as "≤ 1 s decoder warmup". Read nothing from the spread if the pre-click delay is ' +
+      'ever removed.',
+  );
+  report(
+    `minimum sample = ${at(sorted, 0).toFixed(0)} ms. With the phase uniform over the GOP, the smallest ` +
+      `of ${SAMPLE_COUNT} draws is the closest this harness gets to S alone — the SPA route change, the ` +
+      'WHEP POST, ICE, DTLS and first RTP, with the IDR wait near zero. S is the term product work can ' +
+      'move; the rest of the figure belongs to the source.',
   );
 
   expect(
@@ -399,6 +521,36 @@ test('an operator clicking a camera sees a decoded frame inside the click-to-fir
 
 function report(line: string): void {
   console.log(`[click-to-first-frame] ${line}`);
+}
+
+/**
+ * Reads the decorrelation seed, defaulting to the wall clock so successive runs
+ * draw different phases. Nothing type-checks `e2e/` (#2121), so an unparseable
+ * override is refused here rather than becoming a silent `NaN` seed and, through
+ * it, a run whose delays are every one of them zero.
+ */
+function readSeed(configured: string | undefined): number {
+  if (configured === undefined) return Date.now() >>> 0;
+  const parsed = Number(configured);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`E2E_CLICK_TO_FRAME_SEED=${JSON.stringify(configured)} is not a non-negative integer`);
+  }
+  return parsed >>> 0;
+}
+
+/**
+ * A seeded PRNG (mulberry32). `Math.random()` would decorrelate the phase just
+ * as well and would leave a surprising figure unreproducible; the seed is
+ * printed beside the samples so the exact run can be replayed.
+ */
+function createRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let drawn = Math.imul(state ^ (state >>> 15), 1 | state);
+    drawn = (drawn + Math.imul(drawn ^ (drawn >>> 7), 61 | drawn)) ^ drawn;
+    return ((drawn ^ (drawn >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 /**

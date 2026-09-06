@@ -198,6 +198,30 @@ one-file spec; it fans out to nothing.
   - the spread is roughly uniform across ~1 s, which is the fixture's 1.000 s
     GOP behaving as `spec.md` predicts.
 
+  **The third check failed, and it was reinterpreted instead of reported.
+  Recorded here because that is the defect, not the wrong number it produced.**
+  T005's green measured a spread of **107 ms**, not the ~1 s this criterion
+  requires. The check was doing exactly the job it was written for — flagging
+  that the samples were not independent draws — and it was overridden: the
+  criterion was rewritten as an *observation* ("what it is observed to cost is
+  not what it was predicted to cost"), and `spec.md`, `plan.md` and the harness's
+  doc-comment were all edited to say the keyframe term is not paid. A done-when
+  that fails is a stop, not a sentence to reword.
+
+  Why the failure was misread: `measureOneOpen` is a closed loop and the frame it
+  waits for is by construction an exact IDR instant, so every click landed at a
+  fixed offset from an IDR and every sample was `1000 ms − N` — constant, and
+  independent of the product's cost. A tight band is what the keyframe term
+  **predicts** under such a loop. p95 reproducing as 843 / 843 / 856 ms across
+  three separate runs was the tell. Phase 6 caught it (issue #199 review).
+
+  **What replaced it: nothing — the criterion stands, and T008 makes it
+  meaningful.** With a uniformly random 0–1000 ms wait before each click the
+  samples are independent, and the re-measurement satisfies the check as written:
+  spread 893 ms and 1177 ms, p95 1158 ms and 1420 ms. The one addition is the
+  converse warning, now in `spec.md` step 4 and in the harness: a run that
+  clusters inside ~150 ms means the decorrelation wait has been removed.
+
   **If p95 ≥ 3000 ms: stop.** Do not raise the threshold, do not drop samples,
   do not re-point at a shorter-GOP clip to make the number fit. Park with
   `agent:blocked`, quote the figure and the spread, and report it as a finding
@@ -211,6 +235,29 @@ one-file spec; it fans out to nothing.
   **Done when:** two independent p95 figures exist and both are below 3000 ms.
   If they disagree materially, both go in the PR body and the disagreement is
   the finding.
+
+- **[T008] [US-1] — PHASE-6 REWORK: BREAK THE PHASE LOCK, THEN RE-MEASURE.**
+  The samples T005 and T006 produced were serially dependent, so the figure they
+  agreed on was the loop's own overhead rather than the product's cost. Add a
+  uniformly random `0–DECORRELATION_WINDOW_MS` wait before each click, seeded and
+  printed so a run is replayable, and re-run at least twice. Correct every place
+  that recorded the tight band as a refutation of `spec.md`'s keyframe term — the
+  harness doc-comment, its printed spread line, `spec.md` §*keyframe interval*,
+  assumption 2 and manual step 4, `plan.md` flakiness points 1 and 3 and its
+  headroom paragraph, and T005's third done-when above.
+  *Depends on: T006. Blocks: nothing.* Docker.
+
+  **Done when:** two re-runs on independent samples are recorded with every
+  sample and every drawn delay; the phase-lock model is confirmed or refuted
+  against the stated predictions; and **S**, the setup cost alone, is reported.
+  **Commit `8744f03b`'s body keeps its refutation paragraph** — the branch is
+  unmerged, but rewriting history to hide a wrong claim is worse than a later
+  commit that corrects it, and the correcting commit says so.
+
+  **Observed (2026-09-06, warm stack).** The model held: `elapsed + delay` is
+  constant modulo exactly 1000 ms, in two branches a GOP apart. p95 = **1158 ms**
+  and **1420 ms** (was 843 / 843 / 856 phase-locked); spread 893 ms and 1177 ms;
+  **S ≈ 290 ms**. The SLO passes.
 
 ---
 
