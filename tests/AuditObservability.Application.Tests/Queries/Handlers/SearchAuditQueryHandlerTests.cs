@@ -63,9 +63,17 @@ public class SearchAuditQueryHandlerTests
     /// A cross-fab row carries no fab, so it is not another fab's business to
     /// withhold — but the filter required <c>Fab != null</c>, which made those
     /// rows readable only by a caller belonging to no fab. Since every real
-    /// operator belongs to one, and camera, stream, layout, overlay and
-    /// variable events all publish without a fab, that whole class of row was
-    /// invisible to everybody (#1300).
+    /// operator belongs to one, that whole class of row was invisible to
+    /// everybody (#1300).
+    /// </para>
+    ///
+    /// <para>
+    /// The class is smaller than the enumeration this comment used to carry.
+    /// Camera, layout and variable events all stamp the fab now (#2068). What
+    /// legitimately publishes without one is overlay events, whose domain
+    /// events carry no fab at all (ADR-0115), and retention, which spans fabs.
+    /// A stream-health event's fab is nullable and may still arrive null
+    /// (#2076).
     /// </para>
     /// </summary>
     [Fact]
