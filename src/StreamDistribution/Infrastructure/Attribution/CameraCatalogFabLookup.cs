@@ -15,6 +15,24 @@ namespace SmartSentinelEye.StreamDistribution.Infrastructure.Attribution;
 /// what is unknown, so the query cannot be narrowed in advance. That is why
 /// the client holds <c>sse.cameras.read</c> and nothing else.
 /// </para>
+///
+/// <para>
+/// <c>includeRetired=true</c> is load-bearing, not tidiness — do not remove
+/// it. A decommissioned camera still <em>had</em> a fab: the stream's history
+/// belongs to the plant the hardware stood in, and the catalogue keeps the row
+/// precisely because retirement records that the hardware <em>was</em> there.
+/// Without the parameter the listing omits those rows, and a stream whose
+/// camera was later decommissioned can never be attributed — silently, because
+/// the pass only logs a count (spec 083).
+/// </para>
+///
+/// <para>
+/// It widens no authorization. <c>GET /cameras/{camera}</c> already returns a
+/// retired camera, with its status, under this same <c>sse.cameras.read</c>
+/// scope, so this principal could already read every retired row one at a
+/// time. The listing's exclusion is a usefulness default, not a trust
+/// boundary.
+/// </para>
 /// </summary>
 public sealed class CameraCatalogFabLookup(
     HttpClient httpClient,
@@ -42,7 +60,7 @@ public sealed class CameraCatalogFabLookup(
         Dictionary<Guid, string> fabs, int offset, int pageSize, CancellationToken cancellationToken)
     {
         using HttpResponseMessage response = await httpClient.GetAsync(
-            $"/cameras?offset={offset}&limit={pageSize}", cancellationToken);
+            $"/cameras?offset={offset}&limit={pageSize}&includeRetired=true", cancellationToken);
         response.EnsureSuccessStatusCode();
 
         JsonElement page = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
