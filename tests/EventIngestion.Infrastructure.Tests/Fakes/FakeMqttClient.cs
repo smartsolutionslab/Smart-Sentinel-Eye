@@ -29,6 +29,7 @@ internal sealed class FakeMqttClient : IMqttClient
     private readonly TaskCompletionSource firstSubscribeSeen = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private int refusals;
+    private TimeSpan? holdFor;
 
     public event Func<MqttApplicationMessageReceivedEventArgs, Task>? ApplicationMessageReceivedAsync;
 
@@ -76,6 +77,53 @@ internal sealed class FakeMqttClient : IMqttClient
     /// </summary>
     public void RefuseEveryConnect() => refusals = int.MaxValue;
 
+    /// <summary>
+    /// Makes every connection last <paramref name="duration"/> and then drop —
+    /// a peer that keeps taking the session back at roughly its own reconnect
+    /// period. With a fixed client id two pods do exactly this to each other,
+    /// and the period they converge on is a little above the shorter of their
+    /// two floors, because whichever reconnects first wins the session.
+    ///
+    /// <para>
+    /// Distinct from <see cref="DropEveryConnectionImmediately"/>, and the
+    /// distance between them is the point: a connection that dies on arrival is
+    /// already covered, and a connection that outlives the backoff floor by a
+    /// hair is the case <c>ResetIfHeld</c>'s fixed yardstick cannot tell from a
+    /// connection that held.
+    /// </para>
+    /// </summary>
+    public void HoldEveryConnectionFor(TimeSpan duration) => holdFor = duration;
+
+    /// <summary>
+    /// Raises a disconnect for a connection that is <b>still up</b>, leaving
+    /// <see cref="IsConnected"/> alone.
+    ///
+    /// <para>
+    /// Not a contrivance: MQTTnet 5 dispatches the disconnect handler
+    /// fire-and-forget — <c>DisconnectCore</c> does
+    /// <c>Task.Run(...).RunInBackground(_logger)</c> and does not await it — and
+    /// <c>ConnectAsync</c> calls <c>DisconnectInternal</c> on a non-success
+    /// CONNACK. So a stale disconnect is in flight after <em>every</em> refusal,
+    /// by design, and it can be delivered after a later CONNECT has succeeded.
+    /// Raising it directly is what makes the arrival order a fact of the test
+    /// rather than a race it would have to win.
+    /// </para>
+    /// </summary>
+    public async Task RaiseStaleDisconnectAsync()
+    {
+        Func<MqttClientDisconnectedEventArgs, Task>? handler = DisconnectedAsync;
+        if (handler is not null)
+        {
+            await handler(new MqttClientDisconnectedEventArgs(
+                clientWasConnected: false,
+                connectResult: null!,
+                reason: MqttClientDisconnectReason.UnspecifiedError,
+                reasonString: "a refused CONNECT's disconnect, delivered after a later one succeeded",
+                userProperties: [],
+                exception: null!));
+        }
+    }
+
     /// <summary>Drops an established connection, as a broker restart does.</summary>
     public async Task DropAsync()
     {
@@ -113,11 +161,25 @@ internal sealed class FakeMqttClient : IMqttClient
     /// merely mis-measure the spin, it hangs the test host inside the
     /// constructor that started the loop.
     /// </para>
+    ///
+    /// <para>
+    /// <b>Connecting a client that is already connected throws</b>, as
+    /// <c>MqttClient.ThrowIfConnected</c> does. No CONNECT leaves the machine in
+    /// that case, so nothing is recorded and
+    /// <see cref="ConnectAttempts"/> does not move — the failure is visible in
+    /// the log, not in the count.
+    /// </para>
     /// </summary>
     public async Task<MqttClientConnectResult> ConnectAsync(
         MqttClientOptions options, CancellationToken cancellationToken = default)
     {
         await Task.Yield();
+
+        if (IsConnected)
+        {
+            throw new InvalidOperationException(
+                "It is not allowed to connect with a server after the connection is established.");
+        }
 
         Options = options;
         PresentedCredentials.Add(System.Text.Encoding.UTF8.GetString(
@@ -165,7 +227,19 @@ internal sealed class FakeMqttClient : IMqttClient
             reasonString: string.Empty,
             userProperties: []);
 
-        return DropEveryConnectionImmediately ? DropThenAsync(granted) : Task.FromResult(granted);
+        if (DropEveryConnectionImmediately)
+        {
+            return DropThenAsync(granted);
+        }
+
+        if (holdFor is TimeSpan hold)
+        {
+            // Scheduled rather than awaited: a SUBSCRIBE that took the whole
+            // hold to answer would move the delay into the wrong packet.
+            _ = HoldThenDropAsync(hold);
+        }
+
+        return Task.FromResult(granted);
     }
 
     public Task DisconnectAsync(MqttClientDisconnectOptions options, CancellationToken cancellationToken = default)
@@ -207,5 +281,11 @@ internal sealed class FakeMqttClient : IMqttClient
     {
         await DropAsync();
         return granted;
+    }
+
+    private async Task HoldThenDropAsync(TimeSpan hold)
+    {
+        await Task.Delay(hold);
+        await DropAsync();
     }
 }
