@@ -10,9 +10,10 @@ ADR-0109 (parallel markers), ADR-0113 (no retry-on-conflict — unchanged here)
 
 ## Problem
 
-`src/StreamDistribution/Infrastructure/Attribution/CameraCatalogFabLookup.cs:47`
+`src/StreamDistribution/Infrastructure/Attribution/CameraCatalogFabLookup.cs:44-45`
 requests `/cameras?offset={offset}&limit={pageSize}` and never passes
-`includeRetired=true`. `ListCamerasQueryHandler:55` filters
+`includeRetired=true`. `ListCamerasQueryHandler:55-57` guards on
+`if (!includeRetired)` and filters
 `camera.Status != CameraStatus.Decommissioned` unless asked otherwise
 (spec 028 FR-007).
 
@@ -215,8 +216,14 @@ That is what makes this observable rather than asserted.
   one attribution pass carrying that camera's fab. Observed, not inferred.
 - **SC-002**: The stream is a 404 to every operator before the pass and a 200 to its
   own fab's operator after it.
-- **SC-003**: `StreamFabAttributionIntegrationTests`' three existing tests pass
-  **unmodified**. FR-009 and FR-010 are untouched by this change and must be seen to be.
+- **SC-003**: `StreamFabAttributionIntegrationTests`' **four** existing tests pass
+  **unmodified** — `A_stream_with_no_fab_is_returned_to_nobody`,
+  `The_same_stream_is_visible_while_it_still_has_its_fab`,
+  `Blanked_streams_reacquire_the_fab_of_their_own_camera` and
+  `A_stream_whose_camera_the_catalogue_does_not_know_stays_unattributed`. FR-009 and
+  FR-010 are untouched by this change and must be seen to be. The two-fab test is the
+  load-bearing one: it is the only one that rules out a "fix" that fills every stream
+  with a single fab.
 
 ## Latency-budget impact
 
@@ -226,10 +233,14 @@ steady state. It is on no leg of `event arrival → overlay rendered` (constitut
 It does not touch `StreamHealthWatcher`, the SFU, or any render path.
 
 The one cost is at startup: the catalogue read now returns retired rows too, so the
-population grows monotonically over a deployment's life. At `PageSize = 200` and a
-250-camera target this moves the pass from one or two requests to a few more, once,
-at a start where unattributed streams exist. ADR-0116's "one or two requests" comment
-becomes approximate; §Risk records the one way that matters.
+population grows monotonically over a deployment's life. The retired rows are the
+smaller of the two factors, and saying so matters. This listing spans **every** fab the
+service account holds, and the constitution's target is 250 concurrent cameras *per
+fab* (§Scale) — so at `PageSize = 200` the pass is already several requests at target
+scale with zero retired rows, and this change adds each fab's history on top of that.
+It happens once, at a start where unattributed streams exist.
+`ICameraFabLookup`'s "one or two requests" comment was already an under-count at target
+scale and this change widens the gap; §Risk records the one way that matters.
 
 ## Risk — the fix's own second-order edge, and why it is not folded in
 
@@ -249,16 +260,30 @@ through the fix's own door.
 Three things bound it, and none of them is "it cannot happen":
 
 - It needs the catalogue to exceed one page (> 200 rows) **and** a tie to straddle a
-  boundary. Measured today: 19 rows, 0 ties, one request. It does not arise.
-- It is not created by this change — it is already reachable by any caller passing
-  `includeRetired=true`, including the management console.
+  boundary. **Only the tie is genuinely contingent.** More than 200 rows is not a
+  coincidence to wait for: it is the documented production target — 250 concurrent
+  cameras *per fab*, constitution §Scale — reached by **one** fab, and this listing
+  spans every fab the service account holds, so it arrives sooner still. Measured
+  today: 19 rows, 0 ties, one request. It does not arise **yet**.
+- It is not created by this change **for the endpoint** — any caller passing
+  `includeRetired=true`, the management console included, could already meet it. It
+  **is** created by this change **for this lookup**. Before this commit this lookup's
+  page could not contain a tie at all: live rows are unique on `(fab,
+  name_normalized)` by the partial index (`CameraConfiguration.cs:132-136`). The gate
+  moved from *impossible for this caller* to *one name reuse away, past 200 rows*.
 - The fix for it is a stable tie-break on `camera_id` in `SortBy`, in **CameraCatalog**,
   not in this lookup. Nothing StreamDistribution can do reaches it.
 
 **Not folded in** (ADR-0036): a different context, a different defect, and a change to
-a shared read path used by the UI. It should be filed as its own issue. Recorded here
-so that the next person to page a catalogue over 200 rows meets it rather than
-discovers it.
+a shared read path used by the UI. It is filed as **#2144**. Recorded here so that the
+next person to page a catalogue over 200 rows meets it rather than discovers it.
+
+**#2144 should be re-read in light of the two corrections above**, because both make it
+closer than a first reading of this section suggested: the row count is a target the
+product is designed to reach rather than an unlikely coincidence, and the tie became
+reachable *in this lookup's own page* only with this change. It is still latent rather
+than live — §Measurement earns that: 19 rows, one request, **0** sharing
+`(fab, name_normalized)` — but the distance is one name reuse, not two coincidences.
 
 ## The audit row — #2068/#2071's guard, and why it does not cover this
 

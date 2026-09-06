@@ -19,19 +19,23 @@ namespace SmartSentinelEye.StreamDistribution.Infrastructure.Attribution;
 /// <para>
 /// <c>includeRetired=true</c> is load-bearing, not tidiness — do not remove
 /// it. A decommissioned camera still <em>had</em> a fab: the stream's history
-/// belongs to the plant the hardware stood in, and the catalogue keeps the row
-/// precisely because retirement records that the hardware <em>was</em> there.
+/// belongs to the plant the hardware stood in, and the catalogue still holds
+/// the row. CameraCatalog's own reason for keeping it is not history but
+/// mechanics — <c>Decommissioned</c> is terminal rather than a delete, and the
+/// unique index on <c>(fab, name_normalized)</c> is partial on
+/// <c>status &lt;&gt; 'Decommissioned'</c> precisely so a retired camera
+/// releases its name while its row stays.
 /// Without the parameter the listing omits those rows, and a stream whose
 /// camera was later decommissioned can never be attributed — silently, because
 /// the pass only logs a count (spec 083).
 /// </para>
 ///
 /// <para>
-/// It widens no authorization. <c>GET /cameras/{camera}</c> already returns a
-/// retired camera, with its status, under this same <c>sse.cameras.read</c>
-/// scope, so this principal could already read every retired row one at a
-/// time. The listing's exclusion is a usefulness default, not a trust
-/// boundary.
+/// It widens no authorization. <c>includeRetired</c> is a public, documented
+/// query parameter of <c>GET /cameras</c>, and the endpoint's own summary says
+/// retired cameras are returned when it is set — so any holder of
+/// <c>sse.cameras.read</c> can already make exactly this request. The listing's
+/// exclusion is a usefulness default, not a trust boundary.
 /// </para>
 /// </summary>
 public sealed class CameraCatalogFabLookup(
