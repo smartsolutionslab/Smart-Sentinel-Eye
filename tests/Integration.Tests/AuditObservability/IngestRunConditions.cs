@@ -20,6 +20,15 @@ namespace SmartSentinelEye.Integration.Tests.AuditObservability;
 /// so the line has to be there, and has to say what was actually reached rather
 /// than what was configured.
 /// </para>
+///
+/// <para>
+/// <b><see cref="LogLevel"/> and <see cref="LogLevelWasChosen"/> are two facts,
+/// not one.</b> The level says what the services were at; the flag says whether
+/// anybody picked it <i>for this run</i>. A run that inherits whatever the
+/// Development appsettings happen to pin is a different kind of run from one
+/// launched with the level named in its shell, and the level's spelling alone
+/// cannot tell the two apart.
+/// </para>
 /// </summary>
 public sealed record IngestRunConditions(
     string Environment,
@@ -27,6 +36,7 @@ public sealed record IngestRunConditions(
     double IntendedRatePerSecond,
     double AchievedRatePerSecond,
     string LogLevel,
+    bool LogLevelWasChosen,
     bool MeasurementSwitchOn,
     int RowsMeasured,
     int RowsMissingStamps)
@@ -35,9 +45,13 @@ public sealed record IngestRunConditions(
     /// Whether the services were logging verbosely enough to be the bottleneck.
     ///
     /// <para>
-    /// Development pins Debug, where this stack sustains 60–83 ev/s — below the
-    /// rate the requirement names. A breakdown taken there measures the logging
-    /// as much as the pipeline.
+    /// At Debug this stack sustains 60–83 ev/s — below the rate the requirement
+    /// names — so a breakdown taken there measures the logging as much as the
+    /// pipeline. <b>What the Development appsettings pin is deliberately not
+    /// named here.</b> A sentence naming it goes silently false the moment those
+    /// files move, and one here did; the run carries its level beside
+    /// <see cref="LogLevelWasChosen"/> so provenance is a fact rather than
+    /// something inferred from a string.
     /// </para>
     /// </summary>
     public bool LoggingIsVerbose =>

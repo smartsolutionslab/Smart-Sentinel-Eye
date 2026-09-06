@@ -191,6 +191,7 @@ public class RunModeDriverTests
             IntendedRatePerSecond: 100,
             AchievedRatePerSecond: 99,
             LogLevel: "Warning",
+            LogLevelWasChosen: true,
             MeasurementSwitchOn: true,
             RowsMeasured: 1_000,
             RowsMissingStamps: 0);
@@ -221,6 +222,7 @@ public class RunModeDriverTests
             IntendedRatePerSecond: IngestRunShape.TargetRatePerSecond,
             AchievedRatePerSecond: achieved,
             LogLevel: "Warning",
+            LogLevelWasChosen: true,
             MeasurementSwitchOn: true,
             RowsMeasured: 1_000,
             RowsMissingStamps: 0);
@@ -231,12 +233,14 @@ public class RunModeDriverTests
     /// <summary>
     /// Verbose logging is a condition of the run, and both directions matter: at
     /// Debug this stack sustains ~80 ev/s, below the rate the requirement names.
+    /// Every level here was chosen for the run; whether an inherited one is fit
+    /// to measure through is
+    /// <see cref="A_level_nobody_chose_for_this_run_is_not_fit_to_measure"/>.
     /// </summary>
     [Theory]
     [InlineData("Warning", false)]
     [InlineData("Information", false)]
     [InlineData("Debug", true)]
-    [InlineData("Debug (from appsettings)", true)]
     [InlineData("Trace", true)]
     public void Verbose_logging_is_recognised_whatever_it_is_called(string level, bool verbose)
     {
@@ -246,10 +250,54 @@ public class RunModeDriverTests
             IntendedRatePerSecond: 100,
             AchievedRatePerSecond: 99,
             LogLevel: level,
+            LogLevelWasChosen: true,
             MeasurementSwitchOn: true,
             RowsMeasured: 1_000,
             RowsMissingStamps: 0);
 
         conditions.LoggingIsVerbose.ShouldBe(verbose);
+    }
+
+    /// <summary>
+    /// A level nobody picked for this run is refused whatever it is.
+    ///
+    /// <para>
+    /// <b>This is what the theory above used to say by accident.</b> Its
+    /// <c>"Debug (from appsettings)"</c> datum passed because the string began
+    /// with "Debug" — the appsettings' level of the day compiled into a literal,
+    /// so the refusal of an inherited level rode on a spelling rather than on the
+    /// fact. An inherited level is whatever the eleven Development files pin at
+    /// the time, and no throughput figure exists for a pairing nobody has
+    /// measured, so it is not fit to measure through however it is spelled.
+    /// </para>
+    ///
+    /// <para>
+    /// The chosen row is the control: the same level, picked deliberately for the
+    /// run, is not refused. Without it this would pass for the wrong reason — a
+    /// guard that refuses everything is not a guard.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("Information", false, true)]
+    [InlineData("Information", true, false)]
+    public void A_level_nobody_chose_for_this_run_is_not_fit_to_measure(
+        string level,
+        bool chosen,
+        bool notFitToMeasure)
+    {
+        IngestRunConditions conditions = new(
+            Environment: "run mode (AppHost)",
+            Endpoint: "somewhere",
+            IntendedRatePerSecond: 100,
+            AchievedRatePerSecond: 99,
+            LogLevel: level,
+            LogLevelWasChosen: chosen,
+            MeasurementSwitchOn: true,
+            RowsMeasured: 1_000,
+            RowsMissingStamps: 0);
+
+        conditions.LoggingIsVerbose.ShouldBe(
+            notFitToMeasure,
+            $"the run was at '{level}', {(chosen ? "chosen for this run" : "inherited from the appsettings")}");
     }
 }

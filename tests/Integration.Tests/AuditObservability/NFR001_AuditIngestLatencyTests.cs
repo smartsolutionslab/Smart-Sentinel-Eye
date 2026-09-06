@@ -63,21 +63,41 @@ public class NFR001_AuditIngestLatencyTests(AspireFixture aspire, ITestOutputHel
     ///
     /// <para>
     /// <b>This is a condition of the measurement, not a detail of the harness.</b>
-    /// Development pins <c>"Default": "Debug"</c> in every service's
-    /// appsettings, which logs every SQL statement on both sides of every
-    /// message. Measured on this stack: at Debug the run sustains ~80 ev/s, at
-    /// Warning ~174–244. The logging is the bottleneck at Debug — which is why
-    /// that figure is the stable one and the quiet figure is not.
+    /// Measured on this stack: at Debug the run sustains ~80 ev/s, at Warning
+    /// ~174–244. The logging is the bottleneck at Debug — which is why that
+    /// figure is the stable one and the quiet figure is not.
     /// </para>
     ///
     /// <para>
     /// Read from the environment because that is what the fixture propagates to
     /// the services it boots. Absent means nothing overrode the appsettings, so
-    /// the services are at Debug.
+    /// the level was inherited rather than chosen for this run. What the
+    /// appsettings pin is not this file's to know: as of spec 081 (2026-09-06)
+    /// the eleven Development files sit at <c>Information</c> with
+    /// <c>Microsoft.EntityFrameworkCore.Database.Command</c> at <c>Warning</c>,
+    /// and that pairing has no measured throughput figure (#2133) — which is why
+    /// the level travels with its provenance rather than being read for its
+    /// spelling.
     /// </para>
     /// </summary>
     private static string ServiceLogLevel =>
-        Environment.GetEnvironmentVariable("Logging__LogLevel__Default") ?? "Debug (from appsettings)";
+        ChosenServiceLogLevel ?? "Information (from appsettings)";
+
+    /// <summary>
+    /// The level somebody set for this run, or absent if nobody did.
+    ///
+    /// <para>
+    /// Read once and asked two questions, because the value and its provenance
+    /// are different facts: <see cref="ServiceLogLevel"/> reports what the
+    /// services are at, and <see cref="ServiceLogLevelWasChosen"/> reports
+    /// whether that was a decision or an inheritance.
+    /// </para>
+    /// </summary>
+    private static string? ChosenServiceLogLevel =>
+        Environment.GetEnvironmentVariable("Logging__LogLevel__Default");
+
+    /// <summary>Whether the level above was chosen for this run rather than inherited.</summary>
+    private static bool ServiceLogLevelWasChosen => ChosenServiceLogLevel is not null;
 
     /// <summary>How long to wait for the last measured row to reach the store.</summary>
 
@@ -243,6 +263,7 @@ public class NFR001_AuditIngestLatencyTests(AspireFixture aspire, ITestOutputHel
             environment: "Aspire test fixture",
             endpoint: variables.BaseAddress?.ToString() ?? "unknown",
             logLevel: ServiceLogLevel,
+            logLevelWasChosen: ServiceLogLevelWasChosen,
             CancellationToken.None);
 
         // **The conditions first, before anything that can fail.** A refused run
