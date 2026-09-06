@@ -137,12 +137,22 @@ public sealed class MqttPublisher : IAsyncDisposable
     /// Publishes one sample, or counts it as dropped.
     ///
     /// <para>
-    /// <c>EnqueueAsync</c> used to buffer this; a plain client throws
-    /// <see cref="MqttClientNotConnectedException"/> instead. The exception is
-    /// caught <b>by its own type</b> rather than by the previous
-    /// <c>Exception ex when (ex is not OperationCanceledException)</c> — a strict
-    /// tightening, so every other publish failure now surfaces instead of being
-    /// logged and forgotten.
+    /// <c>EnqueueAsync</c> used to buffer this; a plain client throws instead.
+    /// The catch is <see cref="MqttCommunicationException"/> — the base of
+    /// <see cref="MqttClientNotConnectedException"/> and of
+    /// <c>MqttCommunicationTimedOutException</c>, which is what a QoS 1 publish
+    /// raises when the PUBACK never arrives. Both say the broker did not take
+    /// the sample, which is a drop.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Still a tightening on the <c>Exception ex when (ex is not
+    /// OperationCanceledException)</c> it replaced</b> — but "every other
+    /// failure now surfaces" was too glib about where it surfaces. The caller is
+    /// a <c>BackgroundService</c> catching only cancellation, and .NET's default
+    /// <c>BackgroundServiceExceptionBehavior.StopHost</c> stops the host on a
+    /// faulted one. A flaky broker is this spec's own scenario, so a timed-out
+    /// PUBACK must not be the thing that ends the simulator run.
     /// </para>
     /// </summary>
     public async Task PublishAsync(string topic, string payloadJson, CancellationToken cancellationToken)
@@ -163,9 +173,12 @@ public sealed class MqttPublisher : IAsyncDisposable
         {
             await client.PublishAsync(message, cancellationToken);
         }
-        catch (MqttClientNotConnectedException)
+        catch (MqttCommunicationException)
         {
-            // The connection dropped between the check above and the publish.
+            // The connection dropped between the check above and the publish, or
+            // the broker never acknowledged what it was sent. Either way the
+            // sample is gone, and the counter is what makes that a choice rather
+            // than a swallow.
             Drop();
         }
     }
