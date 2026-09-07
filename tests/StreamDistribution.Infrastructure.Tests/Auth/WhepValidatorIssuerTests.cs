@@ -244,7 +244,7 @@ public sealed class WhepValidatorIssuerTests : IDisposable
         JwtSecurityToken token = new(
             issuer: issuer,
             audience: AuthenticationDefaults.ApiAudience,
-            claims: [new Claim("sub", "kiosk-operator"), new Claim("scope", "sse.streams.view")],
+            claims: [new Claim("sub", "kiosk-operator"), new Claim("scope", "sse.streams.read")],
             notBefore: DateTime.UtcNow.AddMinutes(-1),
             expires: DateTime.UtcNow.AddMinutes(5),
             signingCredentials: credentials);
