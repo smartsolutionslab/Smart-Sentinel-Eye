@@ -107,6 +107,18 @@ public class MqttAudienceIntegrationTests(AspireFixture aspire, ITestOutputHelpe
     /// The behaviour spec 090 adds. Before the change this connects, because the
     /// plugin reads <c>azp</c> and never reads <c>aud</c>.
     /// </summary>
+    /// <remarks>
+    /// This throwaway client's token carries no <c>aud</c> claim at all (measured —
+    /// see spec 090's FR-005 note), so this exercises golang-jwt's
+    /// <c>errorIfRequired</c> branch of <c>jwt.WithAudience</c>, never
+    /// <c>ErrTokenInvalidAudience</c> (the wrong-value branch, where <c>aud</c> is
+    /// present but names something else). That branch was covered manually — a
+    /// build with the plugin's audience const drifted to <c>"account"</c> was
+    /// probed and refused correctly (see FR-005's note) — not in this suite.
+    /// Covering it here would need the throwaway client to carry its own audience
+    /// mapper naming something other than the API, which is not worth the realm
+    /// churn for one more branch of a third-party library.
+    /// </remarks>
     [Fact]
     public async Task A_token_minted_without_the_api_audience_is_refused_by_the_broker()
     {
@@ -114,11 +126,11 @@ public class MqttAudienceIntegrationTests(AspireFixture aspire, ITestOutputHelpe
         string token = await MintClientCredentialsTokenAsync(
             audienceless.ClientId, audienceless.ClientSecret);
 
-        AudiencesOf(token).ShouldNotContain(ApiAudience,
+        AudiencesOf(token).ShouldBeEmpty(
             customMessage: $"the throwaway client '{audienceless.ClientId}' was created without the "
-            + $"'sse-audience' default scope, so its token must not name '{ApiAudience}'. It does — "
-            + "so Keycloak granted the audience anyway and this test would refuse for a reason that "
-            + "has nothing to do with the broker.");
+            + $"'sse-audience' default scope, so its token must carry no 'aud' claim at all — measured, "
+            + $"not merely one without '{ApiAudience}'. Keycloak granted some audience anyway, so this "
+            + "test would refuse for a reason that has nothing to do with the broker.");
         AuthorizedPartyOf(token).ShouldBe(audienceless.ClientId,
             customMessage: "the plugin binds the credential to the connecting identity by requiring "
             + "azp == MQTT username. If they differ the CONNECT is refused for that reason and the "
