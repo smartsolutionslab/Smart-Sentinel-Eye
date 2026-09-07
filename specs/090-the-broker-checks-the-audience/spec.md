@@ -267,6 +267,37 @@ procedure*).
 - **FR-005** — A test MUST fail if the plugin's audience literal and
   `AuthenticationDefaults.ApiAudience` disagree, by reading the Go source.
   Without it the fourth spelling is the one nobody notices.
+
+  *(Corrected in phase 4b: this was built as
+  `tests/Architecture.Tests/PluginAudienceLiteralTests.cs` and kept because
+  the case for it — that the runtime pair only pins the literal if the two
+  tokens' `aud` sets differ by exactly `smart-sentinel-eye-api` — had not
+  been measured. It has now been measured, against this branch's realm
+  file, reproducing both creation paths:*
+
+  | Token | `aud` as Keycloak issued it |
+  |---|---|
+  | throwaway, no `sse-audience` | claim absent entirely |
+  | device via `RegisterDeviceCommandHandler` | `"smart-sentinel-eye-api"` |
+  | `event-ingestion` realm client | `"smart-sentinel-eye-api"` |
+
+  *`B.aud \ A.aud = {smart-sentinel-eye-api}` exactly — `account` never
+  appears, because neither client carries the built-in `roles` scope
+  (both are created with an explicit `defaultClientScopes` list). And it
+  was checked by counterfactual, not inferred: a third image with the
+  const drifted to `"account"` — the exact candidate this note used to
+  flag — makes the positive control go red:*
+
+  ```
+  ===== plugin const drifted to "account" =====
+    [B plc-…]  Connection Refused: not authorised / CONNACK (5)
+  ```
+
+  *So the runtime pair (`MqttAudienceIntegrationTests`) does pin the
+  literal on its own. `PluginAudienceLiteralTests` was deleted — its
+  remaining value was diagnostic only: reading source and asserting a
+  string is present, the shape issue #2141's census exists to catalogue.
+  FR-005 is satisfied by the runtime pair, not by a dedicated test.)*
 - **FR-006** — Spec 069's inventory row for `event-ingestion` MUST be
   corrected: its audience stops being inert. The `identity-admin` and
   `migration-runner` rows stay inert and MUST NOT be touched.
@@ -367,6 +398,12 @@ Given AuthenticationDefaults.ApiAudience
  When the audience literal in jwt_auth.go is changed to any other string
  Then the test required by FR-005 fails
 ```
+
+*(Corrected in phase 4b: "the test required by FR-005" is
+`MqttAudienceIntegrationTests.A_token_minted_with_the_api_audience_still_connects`,
+not a dedicated source-reading test — see FR-005's note. A drifted literal
+makes that positive control's CONNACK fail instead, which is what the
+counterfactual there measured.)*
 
 ---
 
