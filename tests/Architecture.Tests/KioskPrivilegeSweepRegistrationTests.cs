@@ -63,6 +63,55 @@ public class KioskPrivilegeSweepRegistrationTests
         return builder.Services;
     }
 
+    /// <summary>
+    /// The other caller of <c>AddKeycloakAdminClient</c> —
+    /// <c>MigrationRunner/Program.cs</c> composes it on its own, for the realm's
+    /// group tree, and nothing else of Identity's.
+    /// </summary>
+    private static IServiceCollection KeycloakAdminClientAlone()
+    {
+        HostApplicationBuilder builder = Host.CreateApplicationBuilder();
+
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:keycloak"] = "http://127.0.0.1:8080",
+        });
+
+        builder.AddKeycloakAdminClient();
+
+        return builder.Services;
+    }
+
+    /// <summary>
+    /// <b>Arrives green, and that is correct here.</b> It is not a red-first
+    /// assertion for new behaviour — it is a fence around the one line of this
+    /// change that nothing else catches. The sweep's registration belongs to
+    /// <c>AddIdentityInfrastructure</c>; putting it one method down, in
+    /// <c>AddKeycloakAdminClient</c>, is the natural mistake, because that is
+    /// where every other Keycloak thing already is. It also compiles, passes
+    /// every other test in this file, and gives <c>MigrationRunner</c> a sweep —
+    /// in a process that runs to completion and exits, racing the migration it
+    /// exists to perform.
+    ///
+    /// <para>
+    /// Spec 092's own risk table records this as the single easiest thing to get
+    /// wrong and says "nothing automated catches this". Now something does.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void The_shared_keycloak_registration_starts_nothing_of_identitys()
+    {
+        KeycloakAdminClientAlone()
+            .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                && descriptor.ImplementationType is not null
+                && descriptor.ImplementationType.Assembly == typeof(IdentityInfrastructureModule).Assembly)
+            .ShouldBeEmpty(
+            "MigrationRunner/Program.cs calls AddKeycloakAdminClient on its own and must get a "
+            + "Keycloak client and nothing else. A startup service registered there rather than "
+            + "in AddIdentityInfrastructure would sweep from a process that runs to completion "
+            + "and exits, racing the migration it was started to perform.");
+    }
+
     [Fact]
     public void The_identity_api_registers_a_startup_service_of_its_own()
     {
