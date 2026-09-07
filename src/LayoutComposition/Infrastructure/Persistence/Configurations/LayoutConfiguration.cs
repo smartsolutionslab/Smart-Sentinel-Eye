@@ -73,6 +73,16 @@ public sealed class LayoutConfiguration : IEntityTypeConfiguration<Layout>
             .IsConcurrencyToken()
             .IsRequired();
 
+        // The chain's own archival, materialised onto the parent row. The
+        // predicate it summarises - every revision Archived - lives on
+        // layout_revisions, and a Postgres index predicate may not read another
+        // table, so the only way the database can enforce the name rule is to
+        // have the answer on the row the name is on (spec 086 §1.1).
+        builder.Property(layout => layout.ArchivedAt)
+            .HasColumnName("archived_at")
+            .HasConversion(at => at!.Value, value => ArchivedAt.From(value))
+            .IsRequired(false);
+
         // Replaces ix_layouts_name. The name-uniqueness check is enforced in
         // CreateLayoutDraftCommandHandler and became fab-scoped with spec 017
         // (FR-019), so the lookup it backs is now (fab, name).
