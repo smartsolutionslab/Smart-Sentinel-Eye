@@ -138,22 +138,34 @@ public class ResilienceRegistrationTests
 
     /// <summary>
     /// The tree ADR-0143's own fix did not reach, and which this guard could not
-    /// see. The narrowing lives inside <c>AddServiceDefaults</c>, no test project
+    /// see.
+    ///
+    /// <para>
+    /// The narrowing lives inside <c>AddServiceDefaults</c>, no test project
     /// calls it, and the fixture registered the bare handler — so its clients
     /// retried <c>POST</c> exactly as if they had opted back in, with no
     /// <c>RetryEveryMethod()</c> anywhere to grep for. The registration was in
     /// neither the population the fix changed nor the population this file
     /// defended, because the reader below was hard-coded to <c>src</c> (#2129).
+    /// </para>
+    ///
+    /// <para>
+    /// Checked one registration at a time rather than one file at a time. Asking
+    /// whether the file mentions the predicate anywhere passes a file that
+    /// registers twice and narrows once — and now that
+    /// <c>FixtureHttpClients</c> is the named home for the fixture's client
+    /// defaults, it is the most likely place a second registration lands.
+    /// </para>
     /// </summary>
     [Fact]
     public void Every_resilience_registration_under_the_integration_tests_declares_the_predicate()
     {
         Dictionary<string, string> sources = ReadSources(IntegrationTestTree);
 
-        string[] registrations = [.. sources
-            .Where(file => Registers(file.Value))
-            .Select(file => file.Key)
-            .OrderBy(path => path, StringComparer.Ordinal)];
+        (string Path, string Line)[] registrations = [.. sources
+            .SelectMany(file => Lines(file.Value).Select(line => (Path: file.Key, Line: line)))
+            .Where(entry => Registers(entry.Line))
+            .OrderBy(entry => entry.Path, StringComparer.Ordinal)];
 
         registrations.ShouldNotBeEmpty(
             $"no resilience registration was found under {IntegrationTestTree} at all, which this guard "
@@ -161,7 +173,9 @@ public class ResilienceRegistrationTests
             + "population passes while checking nothing. If the fixture's client configuration moved, "
             + "point this scan at wherever it went rather than letting it match nothing.");
 
-        string[] unnarrowed = [.. registrations.Where(path => !Narrows(sources[path]))];
+        string[] unnarrowed = [.. registrations
+            .Where(entry => !Narrows(entry.Line))
+            .Select(entry => $"{entry.Path}: {entry.Line.Trim()}")];
 
         unnarrowed.ShouldBeEmpty(
             $"the integration fixture does not call AddServiceDefaults, so nothing else applies ADR-0143's "
@@ -195,11 +209,20 @@ public class ResilienceRegistrationTests
             + "the file that explains it.");
     }
 
-    private static bool Registers(string source) =>
-        CodeLines(source).Any(line => line.Contains(Registration, StringComparison.Ordinal));
+    /// <summary>
+    /// Both predicates read a <b>single line</b>, not a whole file. A file-scoped
+    /// answer is the wrong unit: it reports what the file mentions somewhere
+    /// rather than what each registration says, so a bare call appended to a file
+    /// that already narrows elsewhere is invisible to it.
+    /// </summary>
+    private static bool Registers(string line) => Mentions(line, Registration);
 
-    private static bool Narrows(string source) =>
-        CodeLines(source).Any(line => line.Contains(Narrowing, StringComparison.Ordinal));
+    private static bool Narrows(string line) => Mentions(line, Narrowing);
+
+    private static bool Mentions(string line, string token) =>
+        !IsComment(line) && line.Contains(token, StringComparison.Ordinal);
+
+    private static string[] Lines(string source) => source.Split('\n');
 
     /// <summary>
     /// Lines with the comment prefix stripped out. The registration is named in
@@ -208,7 +231,10 @@ public class ResilienceRegistrationTests
     /// itself.
     /// </summary>
     private static IEnumerable<string> CodeLines(string source) =>
-        source.Split('\n').Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal));
+        Lines(source).Where(line => !IsComment(line));
+
+    private static bool IsComment(string line) =>
+        line.TrimStart().StartsWith("//", StringComparison.Ordinal);
 
     private static Dictionary<string, string> ReadSources(string tree)
     {
