@@ -58,9 +58,9 @@ assert no 409 — is **rejected as the gate**:
   that the machine was slow enough that day. This session already found a
   concurrency test that never reproduced its race on this hardware, and the
   deterministic assertion is what actually proved the defect.
-- CI can never run it: `ci.yml:179` excludes `Category=Measurement`, so the
-  burst never precedes NFR002 in the job NFR002 runs in. A gate CI cannot
-  evaluate is not a gate.
+- CI can never run it: `ci.yml`'s "Run integration tests" step excludes
+  `Category=Measurement`, so the burst never precedes NFR002 in the job NFR002
+  runs in. A gate CI cannot evaluate is not a gate.
 
 The burst run survives as **T006**, a merge-blocking observation rather than the
 red — and phase 5 must say which of the two it is citing.
@@ -159,7 +159,7 @@ Planned sequence, one commit per task:
   `[Collection(AspireCollection.Name)]` — it builds a bare `ServiceCollection`
   and must never touch the booted fixture. (`IntegrationTestSelectionTests`
   requires one declaration or the other; this is the one that puts the verdict
-  in `ci.yml:72`'s Docker-free step.)
+  in `ci.yml`'s "Docker-free fixture logic tests" step.)
 
   Shape it on `tests/ServiceDefaults.Tests/Resilience/IdempotentRetryTests.cs` —
   a hand-written `CountingHandler : HttpMessageHandler` plugged in with
@@ -304,8 +304,8 @@ Planned sequence, one commit per task:
   symptom reproduction and so could answer neither: the contention was
   self-inflicted. Recorded because the two failures it did surface — a socket
   failure on `TokenAudience`'s POST and a 1 437 ms layout publish against a 500 ms
-  budget — are facts about the burst, which `ci.yml:179` excludes deliberately,
-  and not about this change.
+  budget — are facts about the burst, which `ci.yml`'s "Run integration tests"
+  step excludes deliberately, and not about this change.
 
 - [ ] **T007** [P] **File the orphan, do not fix it here.**
 
@@ -337,8 +337,8 @@ Planned sequence, one commit per task:
   `NFR002_MqttConnectAuthTests`, which carries no `Category` trait, so as
   written the command runs the burst and not the test. Give the working filter
   (`spec.md` §"Independent end-to-end test procedure"), and record that
-  `ci.yml:179` excludes the burst from the job NFR002 runs in — so CI has never
-  seen this and cannot.
+  `ci.yml`'s "Run integration tests" step excludes the burst from the job
+  NFR002 runs in — so CI has never seen this and cannot.
 
   Costs nothing and saves the next reader from concluding the defect is
   unreproducible.
