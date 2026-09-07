@@ -78,9 +78,25 @@ function canObserveFrames(videoEl: HTMLVideoElement): boolean {
  * Frames this element's decoder has produced, or 0 where it cannot be asked.
  * The instrument spec 077 §3 decided, read the same way by
  * `e2e/click-to-first-frame.spec.ts`.
+ *
+ * <p>
+ * <b>Counted per element, not per session.</b> `totalVideoFrames` is reset only
+ * by the media element load algorithm — a write to `srcObject`, which only
+ * `WhepClient`'s `ontrack` performs — so callers compare it against a baseline
+ * rather than against zero (FR-002).
+ * </p>
  */
 function framesProduced(videoEl: HTMLVideoElement): number {
-  return canObserveFrames(videoEl) ? videoEl.getVideoPlaybackQuality().totalVideoFrames : 0;
+  if (!canObserveFrames(videoEl)) return 0;
+  try {
+    return videoEl.getVideoPlaybackQuality().totalVideoFrames;
+  } catch {
+    // Swallowed deliberately: Safari has thrown InvalidStateError for an element
+    // carrying no video, and this runs inside a timer callback, where an
+    // uncaught throw stops the poll while the watchdog still fires. "Cannot be
+    // read" is already what the watchdog path is for.
+    return 0;
+  }
 }
 
 /**
@@ -152,6 +168,9 @@ export function useWhepSession(options: WhepSessionOptions): WhepSessionResult {
     // Per session, and only ever set to true: a local of this effect's closure,
     // created fresh for each WhepClient and unable to outlive one (FR-006).
     let mediaConfirmed = false;
+    // The element's frame count when this session armed its watch. The frames
+    // this session decoded are the ones above it (FR-002).
+    let mediaBaseline = 0;
 
     const clearMediaTimers = () => {
       if (mediaTimer !== null) clearTimeout(mediaTimer);
@@ -162,6 +181,11 @@ export function useWhepSession(options: WhepSessionOptions): WhepSessionResult {
 
     const scheduleRetry = (message: string | null) => {
       if (disposed || retryTimer !== null) return;
+      // FR-010: nothing promotes to Live once a retry is scheduled. A receiver's
+      // tracks can still tick a frame between `failed` and teardown, and a poll
+      // left running would confirm media for a session already being replaced —
+      // going `live` behind the retry and resetting the ladder as it went.
+      clearMediaTimers();
       transitionTo('reconnecting', message);
       const delay = jitteredRetryDelay(attemptRef.current);
       attemptRef.current += 1;
@@ -180,10 +204,17 @@ export function useWhepSession(options: WhepSessionOptions): WhepSessionResult {
 
     const pollForMedia = () => {
       if (disposed) return;
-      if (framesProduced(videoEl) > 0) {
+      const produced = framesProduced(videoEl);
+      if (produced > mediaBaseline) {
         confirmMedia();
         return;
       }
+      // A decrease is the load algorithm resetting the counter — `ontrack`
+      // writing `srcObject` — not a frame. That write normally lands before
+      // `connected`, but nothing orders the two, and a baseline left above a
+      // post-reset count would hold a tile that is showing video on
+      // `Reconnecting…` for thousands of frames.
+      if (produced < mediaBaseline) mediaBaseline = produced;
       mediaTimer = setTimeout(pollForMedia, MEDIA_POLL_MS);
     };
 
@@ -191,6 +222,13 @@ export function useWhepSession(options: WhepSessionOptions): WhepSessionResult {
       // FR-006: confirmation is sticky, so nothing re-arms the watch once a
       // picture arrived; a blip before one keeps the window already open.
       if (mediaConfirmed || mediaTimer !== null || watchdogTimer !== null) return;
+      // FR-002: this session must add a frame. The counter belongs to the
+      // element and survives teardown — `WhepClient.teardownLocally` stops the
+      // receiver tracks and closes the connection, and never clears
+      // `srcObject` — so a tile that has ever shown a picture would otherwise
+      // read the previous session's frames as this one's and go Live over
+      // black, which is #2111 again in the case a fab wall meets most often.
+      mediaBaseline = framesProduced(videoEl);
       mediaTimer = setTimeout(pollForMedia, MEDIA_POLL_MS);
       watchdogTimer = setTimeout(() => {
         // FR-003: no path out of `connected` leaves the tile on Connecting… with

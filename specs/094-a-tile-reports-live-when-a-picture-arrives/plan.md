@@ -47,10 +47,12 @@ side effect moves.**
                    attemptRef = 0                 if confirmed: → live      (blip)
                    → live                         else if no instrument:
                                                      attemptRef = 0; → live (FR-005)
-                                                  else: arm the watch, stay connecting
+                                                  else: baseline the counter,
+                                                        arm the watch,
+                                                        stay connecting
 
-  frames > 0    →  (unobservable)                 confirmed = true
-                                                  clear both timers
+  frames >      →  (unobservable)                 confirmed = true
+  baseline                                        clear both timers
                                                   attemptRef = 0            (FR-004)
                                                   → live
 
@@ -58,8 +60,12 @@ side effect moves.**
   no frames                                       scheduleRetry(…)          (FR-003)
                                                   → reconnecting → ladder
 
-  failed        →  scheduleRetry                  unchanged
-  disconnected  →  grace 5 s → scheduleRetry      unchanged
+  frames <      →  (unobservable)                 re-baseline, keep polling
+  baseline                                        (the load algorithm ran)
+
+  failed        →  scheduleRetry                  scheduleRetry, clearing the
+                                                  media timers first    (FR-010)
+  disconnected  →  grace 5 s → scheduleRetry      same, + the same clear
   offline       →  → offline                      unchanged
   Degraded      →  → reconnecting                 unchanged
 ```
@@ -83,6 +89,17 @@ side effect moves.**
   *is* the strongest available evidence. Without this, backoff never grows in
   the mediumless case: `connected` fires on every retry, resets the counter, and
   the tile hammers the SFU at a fixed `N + 1 s` forever (AS-1.4).
+- **I-6.** **A frame belongs to the session that produced it.**
+  `totalVideoFrames` is reset only by the media element load algorithm — a write
+  to `srcObject`, which only `ontrack` performs — so the count survives teardown
+  on the same element. Confirmation therefore compares against the count read
+  when the watch was armed, never against zero, or a mediumless second session
+  reads the first session's frames as its own (FR-002, AS-1.8).
+- **I-7.** **Nothing promotes to `live` once a retry is scheduled.**
+  `scheduleRetry` clears the media timers, so a frame ticked between `failed`
+  and teardown cannot confirm a session that is already being replaced —
+  `Reconnecting… → Live → Connecting…`, with the ladder handed back a rung
+  (FR-010).
 - **I-5.** No new lint suppression. Every new `transitionTo` fires from a timer
   callback inside the effect — the same shape as the existing `scheduleRetry`
   and `onConnectionStateChange` calls, which `react-hooks/set-state-in-effect`

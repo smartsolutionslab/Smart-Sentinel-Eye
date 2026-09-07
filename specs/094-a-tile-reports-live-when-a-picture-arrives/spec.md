@@ -99,6 +99,49 @@ impossible.
 So the design needs a rule the issue does not have: **absence of a measurement
 is not evidence of absence of media.** FR-005 below.
 
+### Also found, at phase 6 — the counter is per element, not per session
+
+**`totalVideoFrames` is not reset between sessions on the same tile, so a bare
+`> 0` test closes only the case of a tile that has never shown a picture.**
+Three links, each checkable:
+
+1. W3C: the counter *"is reset to 0 when the media element load algorithm is
+   invoked"* — that is, on a write to `srcObject`.
+2. `srcObject` is written **only by `ontrack`** (`WhepClient.ts:70`, `:82`), as
+   §"the necessity argument does not transfer" above already asserts. A session
+   that delivers no video track never fires `ontrack`, by definition — so no
+   write, so no reset.
+3. `WhepClient.teardownLocally()` (`:233-238`) stops the receiver tracks and
+   closes the peer connection. It **never clears `videoEl.srcObject`**.
+
+So a tile that has *ever* shown a picture carries its frame count into every
+later session on the same element:
+
+> Session one goes Live at 5000 frames → the transport reports `failed` → the
+> ladder opens session two → session two negotiates cleanly with **no track** →
+> a `> 0` poll reads 5000 → **Live over a black tile, watchdog disarmed,
+> `attemptRef` reset.**
+
+That is #2111 exactly, in the case a fab wall meets **more often than a cold
+boot**: a camera stops publishing video while its MediaMTX path stays alive. (A
+cold path answers the WHEP POST with 404 and takes the `connect().catch` route,
+which was already handled.) It is not a regression — `develop` says Live here
+too — but the fix must not be described as closing the class while this stands.
+
+**FR-002 therefore baselines the counter when the watch is armed, and requires
+strictly greater.** Monotonicity is not assumed in either direction: a
+*decrease* is the load algorithm having run, and re-baselines rather than
+counting as a frame, because nothing orders `ontrack` against `connected` and a
+baseline left above a post-reset count would hold a tile that is showing video
+on `Reconnecting…` for thousands of frames.
+
+**One guard changed with it, deliberately: G3.** It pinned
+`producedFrames = 1` statically before render, so no frame was ever *added* — it
+was modelling a decoder producing a frame before its own session began, which
+real hardware does not do. Its stub now advances the counter during the session.
+That is behaviour genuinely moving, recorded here; it is not an assertion
+adjusted to accommodate a fix, which stays forbidden.
+
 ### Also found — the existing suite currently asserts the defect
 
 `ontrack` appears exactly **once** in
@@ -211,6 +254,15 @@ counter-evidence to look for.
    stopwatch — **stops entirely** in a background tab, which would let the
    watchdog demote a healthy backgrounded tile. Deliberately not that.
 
+6. It is a **self-rescheduling `setTimeout`, not `setInterval`** — because a
+   self-rescheduling timeout cannot overlap or pile up under a slow tick, and
+   for no other reason. `setInterval`/`clearInterval` are **available**:
+   `CameraViewer.tsx` already calls `window.setInterval` twice (`:118`, `:164`),
+   `useWallAlignment.ts:137` once more, and `window` is an allowed global, so
+   `no-undef` never fires and no lint config would have needed changing. An
+   earlier draft of this record justified the choice by a constraint that does
+   not exist; the choice stands, the reason is this one.
+
 The interval runs only between `connected` and the first frame, and never again
 for that session.
 
@@ -318,7 +370,7 @@ Given a camera whose stream health is Healthy
 When the peer connection reaches "connected"
   And the element has produced no frames yet
 Then the tile shows "Connecting…" and does not show "Live"
-When the element's totalVideoFrames becomes greater than zero
+When the element's totalVideoFrames rises above the count it held when the watch was armed
 Then the tile shows "Live" within 250 ms
   And a "connecting→live" resilience transition is logged
 ```
@@ -367,6 +419,20 @@ Then the tile stays Live
   And no watchdog can demote it
 ```
 
+#### AS-1.8 — A frame from an earlier session is not this session's picture
+
+```gherkin
+Given a tile that has been Live and has produced 5000 frames
+When the transport fails and the ladder opens a second session on the same element
+  And that session negotiates cleanly but delivers no video track
+Then the tile does not show "Live", although totalVideoFrames still reads 5000
+  And it shows "Reconnecting…" 3000 ms after that session reached "connected"
+```
+
+*The counter is reset only by the media element load algorithm, and the only
+write to `srcObject` is `ontrack`, which this session never fires. See
+§"the counter is per element, not per session".*
+
 #### AS-1.6 — Auth: an unauthorized session is unchanged
 
 ```gherkin
@@ -396,8 +462,12 @@ Then the tile shows "Live" immediately, exactly as it does today
   `connectionState === 'connected'` alone when the tile's `<video>` element
   offers `getVideoPlaybackQuality`.
 - **FR-002** — It MUST transition to `live` once that element's
-  `totalVideoFrames` is greater than zero, observed by polling every **250 ms**
-  while `connected` and unconfirmed.
+  `totalVideoFrames` is **strictly greater than the count read when this
+  session armed its watch**, observed by polling every **250 ms** while
+  `connected` and unconfirmed. Not greater than zero: the counter belongs to the
+  element and survives teardown, so a previous session's frames would otherwise
+  be read as this one's (AS-1.8). A reading **below** the baseline is the media
+  element load algorithm having run, and MUST re-baseline rather than confirm.
 - **FR-003** — If `totalVideoFrames` is still zero **3000 ms** after
   `connected`, it MUST call the existing `scheduleRetry`, entering `reconnecting`
   and the existing jittered ladder. **A tile MUST NOT be left on `Connecting…`
@@ -419,6 +489,15 @@ Then the tile shows "Live" immediately, exactly as it does today
 - **FR-008** — The change MUST add **no new `eslint-disable`**. The existing
   `react-hooks/set-state-in-effect` suppression at `:115` MUST remain, untouched
   and unweakened.
+- **FR-009** — Reading the instrument MUST NOT throw out of a timer callback.
+  Safari has thrown `InvalidStateError` from `getVideoPlaybackQuality()` on an
+  element carrying no video; an unreadable instrument MUST be treated as "no
+  frames", which is what the watchdog path already handles.
+- **FR-010** — Nothing may promote to `live` once a retry is scheduled.
+  `scheduleRetry` MUST clear the media timers, so a frame ticked by a receiver
+  between `failed` and teardown cannot confirm media for a session that is
+  already being replaced — which would show `Reconnecting… → Live → Connecting…`
+  and give the ladder back a rung it had climbed.
 
 ### Non-functional
 
@@ -433,6 +512,19 @@ Then the tile shows "Live" immediately, exactly as it does today
 
 ## Out of scope, and why each is a separate thing
 
+- **A media window that grows with the ladder** — the fix for the
+  deterministically-slow source of Assumption 1, e.g.
+  `min(N · 2^attempt, cap)` in place of the fixed `N`. Not taken here, and the
+  reason is specific rather than a preference: **it cannot be made without
+  editing R3**, the only test pinning FR-004. R3's second cycle advances exactly
+  `N` and then the 2 s ladder delay; under a growing window that session's
+  watchdog is at `2N`, so the cycle-two retry never fires. Measured, not
+  reasoned: with `Math.min(MEDIA_WATCHDOG_MS * 2 ** attemptRef.current, 24_000)`
+  the suite fails R3 at *"expected … to have a length of 3 but got 2"* and AS-1.8
+  at *"Unable to find an element with the text: Reconnecting…"*. Editing a
+  red-first test to accommodate a later fix is the thing ADR-0144 forbids, so
+  this belongs to a separate issue with its own phase 4a, not to a widening
+  applied here.
 - **A frozen-tile watchdog** — a session that goes `live` and then stops
   producing frames while the transport stays `connected`. A different defect,
   needing a frame-rate delta rather than a threshold crossing, and able to
@@ -524,6 +616,20 @@ for the first three steps.
    is one extra WHEP negotiation per open, visible as a
    `connecting→reconnecting→connecting→live` sequence in the resilience log.
    That is a finding to report against `N`, not a threshold to raise silently.*
+
+   **"Recovers on the retry" is probabilistic and phase-dependent, not
+   guaranteed** (recorded at phase 6). The argument holds for a *fixed IDR
+   cadence*, where each attempt lands at a different phase against the keyframe
+   clock and one of them lands early. It does **not** hold for a source whose
+   first frame is **deterministically** later than `N` — an SFU-side pull
+   starting on first subscriber (`runOnDemand` is in use: `camera-sim.yml`,
+   `CameraSimProvisioner.cs:118-120`), a transcode fallback spinning up (ADR-0012),
+   sixteen tiles negotiating at once. There every attempt is killed at exactly
+   `N`, each retry restarts the wait, and the tile shows `Reconnecting…`
+   forever — where `develop` shows Live and the picture eventually appears.
+   **This is the one case where this change is strictly worse than what it
+   replaces**, and it is accepted in writing rather than fixed here; see
+   §Out of scope.
 2. **`getVideoPlaybackQuality` is present on every browser the kiosk runs on.**
    Chromium and Safari 15.4+ have it; jsdom and Firefox do not (verified for
    jsdom directly). FR-005 makes absence safe rather than fatal.

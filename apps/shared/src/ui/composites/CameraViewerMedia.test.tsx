@@ -7,11 +7,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * not when a socket came up.
  *
  * <p>
- * <b>Three reds and three guards, and they are not the same thing.</b> R1–R3
+ * <b>Four reds and three guards, and they are not the same thing.</b> R1–R4
  * fail on the code as it stands; they are the ADR-0139 evidence. G1–G3 pass
  * today and are expected to keep passing — they pin the behaviour the change
  * must not break, and counting them as red would be the shortcut ADR-0139
  * exists to prevent.
+ * </p>
+ *
+ * <p>
+ * <b>R4 arrived at phase 6</b>, with the review finding that `totalVideoFrames`
+ * is per element and not per session: it is red on the code as it stands
+ * <i>and</i> on the first cut of the fix, which tested the counter against zero.
  * </p>
  *
  * <p>
@@ -322,6 +328,60 @@ describe('CameraViewer media confirmation', () => {
     expect(FakePeerConnection.instances).toHaveLength(4);
   });
 
+  /**
+   * R4 — FR-002 / AS-1.8. **Red on `develop`, and red on a `> 0` gate too.**
+   *
+   * <p>
+   * <b>`totalVideoFrames` is not per session.</b> W3C resets it only when the
+   * media element load algorithm runs — a write to `srcObject` — and the only
+   * write is `WhepClient`'s `ontrack` (`WhepClient.ts:70`, `:82`), which a
+   * mediumless session never fires. `teardownLocally` (`:233-238`) stops the
+   * receiver tracks and closes the peer connection, and never clears
+   * `srcObject`. So the count survives the session that produced it.
+   * </p>
+   *
+   * <p>
+   * This is #2111 in the case a fab wall meets more often than a cold boot: a
+   * camera stops publishing video while its MediaMTX path stays alive, so the
+   * next session negotiates cleanly and delivers no track. A cold path answers
+   * the WHEP POST with 404 and takes the `connect().catch` route instead, which
+   * was always handled.
+   * </p>
+   */
+  it('Does not claim Live on a session that has produced no frame of its own', async () => {
+    installFrameCounter();
+    setHealth('Healthy');
+    renderViewer();
+
+    // Session one shows a picture and banks 5000 frames on the element.
+    await reachConnected();
+    producedFrames = 5_000;
+    await advance(MEDIA_POLL_MS);
+    expectLive();
+
+    // The transport fails and the ladder opens a second session on the same
+    // element, whose counter nothing has reset.
+    act(() => {
+      FakePeerConnection.lastInstance().setConnectionState('failed');
+    });
+    await advance(1_000); // base delay; jitter factor pinned to 1.0
+    await flushConnect();
+    expect(FakePeerConnection.instances).toHaveLength(2);
+
+    // Session two negotiates cleanly and delivers no track: the counter stays.
+    await reachConnected();
+    await advance(MEDIA_WATCHDOG_MS - 1);
+
+    expect(
+      screen.getByText('Connecting…'),
+      "session one's frames must not stand in for session two's media",
+    ).toBeDefined();
+    expect(FakePeerConnection.instances).toHaveLength(2);
+
+    await advance(1);
+    expect(screen.getByText('Reconnecting…')).toBeDefined();
+  });
+
   // ── G1–G3: GUARDS. These pass today and must keep passing. ────────────────
 
   /** G1 — FR-002 / FR-006 / AS-1.1. **Green today**: the tile is Live from `connected`. */
@@ -373,14 +433,26 @@ describe('CameraViewer media confirmation', () => {
     expect(FakePeerConnection.instances, 'no watchdog may run where nothing can be measured').toHaveLength(1);
   });
 
-  /** G3 — FR-006 / AS-1.5. **Green today**: a blip inside the grace window is absorbed. */
+  /**
+   * G3 — FR-006 / AS-1.5. **Green today**: a blip inside the grace window is absorbed.
+   *
+   * <p>
+   * <b>The counter advances during the session</b> rather than standing at 1
+   * before the element exists. Changed at phase 6, deliberately, because the
+   * behaviour genuinely moved: FR-002 now requires a frame this session
+   * produced, and a count that predates the session is precisely the stale
+   * reading R4 refuses. A decoder cannot produce a frame before its own session
+   * began, so the stub as written was modelling something real hardware does
+   * not do — this is a more faithful double, not an accommodated assertion.
+   * </p>
+   */
   it('Keeps a tile that is showing a picture Live across a transport blip', async () => {
     installFrameCounter();
-    producedFrames = 1;
     setHealth('Healthy');
     renderViewer();
 
     await reachConnected();
+    producedFrames += 1;
     await advance(MEDIA_POLL_MS);
     expectLive();
 
@@ -390,6 +462,8 @@ describe('CameraViewer media confirmation', () => {
     act(() => {
       FakePeerConnection.lastInstance().setConnectionState('connected');
     });
+    // The decoder keeps producing across the blip, as a real one would.
+    producedFrames += 1;
     await advance(30_000);
 
     expectLive();
