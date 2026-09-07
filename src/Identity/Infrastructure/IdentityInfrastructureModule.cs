@@ -45,6 +45,17 @@ public static class IdentityInfrastructureModule
 
         builder.AddKeycloakAdminClient();
 
+        // Spec 092 / ADR-0134 Decision 1, which names a startup sweep and had
+        // nothing behind it. Scoped, because the pass takes the scoped
+        // IKeycloakAdminClient; the startup service is a singleton and resolves
+        // it through a scope rather than taking it.
+        //
+        // Here and deliberately not in AddKeycloakAdminClient, which
+        // MigrationRunner also calls: MigrationRunner runs to completion and
+        // exits, and a sweep there would race the migration it exists to run.
+        builder.Services.AddScoped<KioskPrivilegeSweep>();
+        builder.Services.AddHostedService<KioskPrivilegeSweepHostedService>();
+
         // Domain event handler — fans out DeviceRegisteredV1 /
         // KioskEnrolledV1.
         builder.Services.AddScoped<
