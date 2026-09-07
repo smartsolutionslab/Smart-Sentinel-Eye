@@ -54,11 +54,15 @@ to redo.
   over the tree, five discriminators beside it").
   - Match an attribute **at the start of a line**, so a doc-comment naming
     `[Collection(AspireCollection.Name)]` — `RunModeDriverTests` does — is
-    refused. That anchor, not the stripping below, is what refuses this one:
-    with `StripComments` neutered the guard still reports 4 / 34, because the
-    `[` sits behind `/// <c>`. The claim that the guard goes *green* without
-    stripping is true of the census's unanchored `grep` and **false** of the
-    anchored match.
+    refused **twice over, independently**: with `StripComments` neutered the
+    guard still reports 4 / 34, because the `[` sits behind `/// <c>` and the
+    anchor alone refuses it; with the anchor removed instead, `StripComments`
+    deletes the whole `///` line before either match runs, so stripping alone
+    also refuses it. Neither mechanism is individually necessary for this
+    shape — that is what makes it different from the block-comment case below,
+    where stripping is the only thing that catches it. The claim that the
+    guard goes *green* without stripping is true of the census's unanchored
+    `grep` and **false** of the guard as built.
   - Strip `/* … */` blocks and `//` to end of line **before** matching
     (FR-003). The shape this is for is an attribute commented out inside a
     block comment: it *does* begin its own line, so only the stripping tells it

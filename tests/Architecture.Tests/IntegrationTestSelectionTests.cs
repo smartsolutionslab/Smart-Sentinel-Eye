@@ -103,11 +103,15 @@ public class IntegrationTestSelectionTests
     /// which the census did.
     ///
     /// <para>
-    /// Here the line anchor is what refuses it, not <see cref="StripComments"/>:
-    /// the <c>[</c> sits behind <c>/// &lt;c&gt;</c> and never begins its line.
-    /// Verified by counterfactual — this case still passes with stripping removed.
-    /// <see cref="A_commented_out_declaration_is_not_a_declaration"/> is the case
-    /// that needs the stripping, and is why FR-003 is a requirement rather than a
+    /// This shape is refused twice over, independently. With <see cref="StripComments"/>
+    /// neutered, the line anchor alone still refuses it — verified by counterfactual —
+    /// because the <c>[</c> sits behind <c>/// &lt;c&gt;</c> and never begins its line.
+    /// But the anchor is not what does the work in the guard as built either: stripping
+    /// deletes the whole <c>///</c> line, anchor or no, before either match runs. Neither
+    /// mechanism is individually necessary here — the counterfactual shows stripping is
+    /// not <i>sufficient credit</i> for this case, not that the anchor is the sole cause.
+    /// <see cref="A_commented_out_declaration_is_not_a_declaration"/> is the shape where
+    /// stripping is load-bearing alone, and is why FR-003 is a requirement rather than a
     /// second opinion on this one.
     /// </para>
     /// </summary>

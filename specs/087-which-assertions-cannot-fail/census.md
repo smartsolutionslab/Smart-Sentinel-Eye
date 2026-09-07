@@ -410,16 +410,21 @@ TOTAL: 4 classes, 34 test methods
    missed it too** — the literal string appears inside its `<c>…</c>`
    doc-comment at `RunModeDriverTests.cs:22`. Count would again have been 23.
 
-Both traps produce the same wrong number, 23, by different routes — which is
-why FR-003 makes comment-stripping a requirement of the guard and not an
-implementation detail.
+Both traps produce the same wrong number, 23, by different routes — though, as
+the correction below shows, it is a third shape, not either trap, that makes
+comment-stripping a requirement of the guard rather than an implementation
+detail.
 
-**Trap 2 is a property of this shell command, not of the guard.** The guard
-anchors its attribute match at the start of a line, and phase 4a confirmed by
-counterfactual that it reports 4 / 34 with stripping removed: the `[` in
-`/// <c>[Collection(…)]</c>` never begins its line. FR-003 is still a
-requirement, for the shape the anchor cannot tell apart — an attribute
-commented out inside a `/* … */` block.
+**Trap 2 is refused twice over in the guard as built, independently of each
+other.** Phase 4a confirmed by counterfactual that the guard still reports
+4 / 34 with stripping removed: the anchor alone refuses it, because the `[` in
+`/// <c>[Collection(…)]</c>` never begins its line. But stripping alone would
+also refuse it without the anchor's help, because `StripComments` deletes the
+whole `///` line before either match runs. Neither mechanism is individually
+necessary for trap 2. FR-003 is still a requirement — for the one shape neither
+of those two facts covers, where an attribute is commented out inside a
+`/* … */` block: it *does* begin its own line, so the anchor credits it exactly
+as it credits a live one, and only stripping tells the two apart.
 
 **Line numbers in this document are as at the census**, before the four
 `[Trait]` attributes were added. Each attribute was inserted immediately above
