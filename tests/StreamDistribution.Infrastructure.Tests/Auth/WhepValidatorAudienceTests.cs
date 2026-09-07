@@ -61,8 +61,11 @@ public sealed class WhepValidatorAudienceTests : IDisposable
 {
     /// <summary>
     /// Any well-formed authority. Nothing resolves this host: the metadata is
-    /// stubbed, and the same string is the token's issuer and the validator's
-    /// <c>ValidIssuer</c>, so issuer validation passes on its own merits.
+    /// stubbed, and the stubbed discovery document reports this same string as
+    /// <c>issuer</c> (see <see cref="DiscoveryDocument"/>), which
+    /// <c>ValidateAsync</c> reads into <c>ValidIssuers</c> — there is no
+    /// <c>ValidIssuer</c> any more (spec 089) — so issuer validation passes on
+    /// its own merits.
     /// </summary>
     private const string Authority = "https://keycloak.invalid/realms/smart-sentinel-eye";
 
