@@ -261,7 +261,8 @@ apps/shared/            Composites, API clients, observability. Used by both.
 tests/                  xUnit. Includes NetArchTest boundary rules.
 deploy/helm/            One hand-written Mosquitto chart. The Aspire k8s
                         publisher has never been run, and no k8s package is
-                        referenced (ADR-0130, issue 1015).
+                        referenced (specs/047-the-decisions-we-made/audit.md:373,
+                        issue 1015).
 ```
 
 ## House rules
@@ -456,7 +457,7 @@ claims a discharge nobody earned.
 | Styling | Tailwind CSS with design tokens via CSS custom properties | 0078 |
 | Frontend forms | React Hook Form + Zod | 0079 |
 | Browser auth | `react-oidc-context` + custom kiosk flow | 0080 |
-| Backend | .NET 10 + ASP.NET Core + .NET Aspire | 0024 |
+| Backend | .NET 10 + ASP.NET Core + .NET Aspire | 0000-initial-decisions.md row 024 |
 | API style | Minimal APIs only | 0070 |
 | Mediator | Hand-rolled `ICommandHandler<T,R>` / `IQueryHandler<T,R>` + Wolverine as dispatcher | 0042, 0057 |
 | Domain events | Separate domain (in-process) and integration (`Shared.Contracts`, `V<N>` suffix) | 0040, 0073 |
@@ -469,15 +470,15 @@ claims a discharge nobody earned.
 | Argument guards | **`Ensure.That(x).IsNotNull()`** — never `ArgumentNullException.ThrowIfNull` or bare `throw new ArgumentException` for argument preconditions (AppHost + generated migrations + parse/format errors excepted) | 0059, 0105 |
 | Nulls | **NRT enabled** solution-wide, no exceptions (ADR-0141); `Option<T>` for domain absences and repository lookups, nullable references for persisted state | 0048, **0141** |
 | Async | `CancellationToken` mandatory last param; no `ConfigureAwait` | 0049 |
-| Persistence | PostgreSQL. **Marten is permitted and unused** — no context has justified it (ADR-0130) | 0009, 0071, **0130** |
+| Persistence | PostgreSQL. **Marten is permitted and unused** — no context has justified it (ADR-0130) | 0000-initial-decisions.md row 009, 0071, **0130** |
 | Concurrency | Two-layer optimistic: `If-Match` expected version (cross-request) + EF token (in-transaction); no retry-on-conflict | 0043, **0113** |
 | Retry safety | `POST`/`PATCH` not retried by default; five clients opt back in with a stated reason. Caller-supplied `Idempotency-Key` replays the original answer — opt-in, on 9 of the 10 creates and rotations | **0142**, **0143** |
-| Object store | MinIO (future) | 0009 |
-| Messaging | RabbitMQ (via Wolverine) | 0010, 0042 |
+| Object store | MinIO (future) | 0000-initial-decisions.md row 009 |
+| Messaging | RabbitMQ (via Wolverine) | 0000-initial-decisions.md row 010, 0042 |
 | Sagas | Wolverine state machines + compensating actions | 0072 |
-| Identity | Keycloak (OIDC) per fab | 0007, 0008 |
-| Streaming | WebRTC SFU; passthrough + GPU transcode fallback | 0011, 0012 |
-| Time | PTP (IEEE 1588) per fab — for fab-wide correlation and inter-display sync, **not** for the presentation-buffer leg | 0014, 0021, **0128** |
+| Identity | Keycloak (OIDC) per fab | 0000-initial-decisions.md rows 007-008 |
+| Streaming | WebRTC SFU; passthrough + GPU transcode fallback | 0000-initial-decisions.md rows 011-012 |
+| Time | PTP (IEEE 1588) per fab — for fab-wide correlation and inter-display sync, **not** for the presentation-buffer leg | 0000-initial-decisions.md rows 014, 021, **0128** |
 | Logging | `ILogger<T>` + OpenTelemetry OTLP (MEL-native, **no Serilog**); `[LoggerMessage]` source-gen; structured fields | 0050 |
 | DI | Per-context `Add<Context>{Infrastructure,Api}` extension methods | 0051 |
 | Migrations | Dedicated `MigrationRunner` worker | 0067 |
@@ -489,8 +490,8 @@ claims a discharge nobody earned.
 | Wolverine defaults | Per-module queue isolation + eager transactions + Postgres outbox | 0088 |
 | Git: commits | Conventional Commits, **no `Co-Authored-By` footer** | 0030, 0086 |
 | Git: merge | **Rebase-only** (no squash, no merge commits) | 0029, 0087 |
-| Observability | OpenTelemetry → **one sink per environment**: Aspire dashboard in dev/CI; production sink deferred until there is a production deployment. The dual-sink comparison ADR-0026 planned never started and is abandoned. | 0026, 0118 |
-| Orchestration | Aspire AppHost (dev) → k3s + Helm (prod) | 0024, 0025 |
+| Observability | OpenTelemetry → **one sink per environment**: Aspire dashboard in dev/CI; production sink deferred until there is a production deployment. The dual-sink comparison decision 026 planned never started and is abandoned. | 0000-initial-decisions.md row 026, 0118 |
+| Orchestration | Aspire AppHost (dev) → k3s + Helm (prod) | 0000-initial-decisions.md rows 024-025 |
 
 **Diverges from Yumney on:** NRT (we: disabled; Yumney: enabled), `Result<T, Error>` shape, Shouldly vs FluentAssertions, Moq vs NSubstitute, sentence-style vs `Method_Scenario_Expected` test naming, initial test layout (minimal vs full per-layer), **Marten** for event-sourced contexts (Yumney: EF Core), narrower Architecture.Tests scope, no story-ref in commits. See ADRs 0056–0063, 0082, 0083, 0085 for the reasoning per divergence.
 
