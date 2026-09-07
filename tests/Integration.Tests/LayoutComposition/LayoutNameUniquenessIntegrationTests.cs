@@ -202,7 +202,7 @@ public class LayoutNameUniquenessIntegrationTests(AspireFixture aspire) : IAsync
     }
 
     /// <summary>
-    /// Spec 037 FR-009 (ADR-0121), unchanged and still the handler own
+    /// Spec 037 FR-009 (ADR-0121), unchanged and still the handler's own
     /// specific refusal rather than the generic one the index produces.
     /// </summary>
     [Fact]
