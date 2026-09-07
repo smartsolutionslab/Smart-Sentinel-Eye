@@ -271,16 +271,36 @@ Declared per part, as the brief requires, rather than collapsed into one label.
 |---|---|---|
 | The chain-archival marker on both aggregates | **behaviour-changing** — the aggregate acquires state it did not have and a new invariant | **red**: new domain tests for the marker, observed failing first |
 | `GetByNameAsync` switching predicate | **behaviour-preserving** — same set of chains, different SQL | **characterisation**: the existing create/branch/lifecycle suites captured green *before*, and passing **unmodified** after. An assertion that has to be edited is evidence the predicate moved — block, do not adjust |
-| The partial unique indexes + migrations | **behaviour-changing** — a concurrent create that previously produced two rows now produces one row and a `409` | **red**: a concurrency integration test observed failing against the current schema |
+| The partial unique indexes + migrations | **behaviour-changing** — a concurrent create that previously produced two rows now produces one row and a `409` | **red**: an integration test observed failing against the current schema. Predicted to be the concurrency one; it was the schema-level one — see below |
 
 **The slice as a whole is behaviour-changing and its phase-4a colour is red.**
 Ambiguity resolves to red (CLAUDE.md), and here there is no ambiguity: closing
 the race is the point of the work.
 
-The red test that matters most is the concurrency one. It must be observed
-failing **on the current schema** — two concurrent creates both returning `201` —
-because a test that only ever ran after the index exists proves the index is
-present, not that it changed anything.
+This section predicted that the red test that mattered most would be the
+concurrency one: two concurrent creates both returning `201` on the current
+schema, because a test that only ever ran after the index exists proves the
+index is present, not that it changed anything.
+
+**That is not what happened, and it is recorded rather than quietly dropped
+(observed phase 4b, written down phase 6).** Twelve unawaited writers were
+dispatched twice on a clean box; `CreateOverlayDraftCommandHandler`'s and
+`CreateLayoutDraftCommandHandler`'s own read-then-insert check won every time.
+The concurrency test was **green before the change and green after**. It adds
+**no** phase-4a evidence. It becomes an invariant once the index exists —
+"exactly one 201" then holds however the race resolves — which is precisely
+what `ServiceDefaults.UniquenessRaceIntegrationTests` has always been for
+CameraCatalog, and it fails if the index regresses.
+
+**The phase-4a evidence for the index is the schema-level test instead.**
+`A_second_live_chain_with_the_same_name_is_refused_by_the_database` and its
+layout twin insert a second live chain straight through a `DbContext`, so
+nothing depends on scheduling: they failed deterministically on the current
+schema and pass once the index exists. That is why they were written alongside
+the concurrency test rather than instead of it — and it is why the requirement
+above, "it **must** be observed failing", could not be met by the test the
+requirement named. The obligation is discharged; the test that discharged it is
+not the one predicted.
 
 ---
 

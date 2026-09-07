@@ -16,7 +16,35 @@ namespace SmartSentinelEye.Integration.Tests.LayoutComposition;
 /// standing between two concurrent callers and two same-named rows in one fab.
 ///
 /// <para>
-/// Two red on the current schema (ADR-0139 evidence), two characterisation.
+/// <b>One</b> of these was red on the current schema, and it is the phase-4a
+/// evidence (ADR-0139) for the index:
+/// <see cref="A_second_live_chain_with_the_same_name_in_one_fab_is_refused_by_the_database"/>,
+/// which states the guarantee against the schema and fails for exactly one
+/// reason.
+/// </para>
+///
+/// <para>
+/// The concurrency test was <b>green before the change and green after</b>.
+/// Twelve unawaited writers were dispatched twice on a clean box and the
+/// handler's own check won every time, so it never observed the race it exists
+/// to provoke; it adds <b>no</b> phase-4a evidence. What it is instead is an
+/// invariant — once the index exists, "exactly one 201" holds however the race
+/// resolves — which is what
+/// <c>ServiceDefaults.UniquenessRaceIntegrationTests</c> has always been for
+/// CameraCatalog, and it fails if the index regresses. Recorded here rather
+/// than left to the PR body: a claim that a test was seen red belongs next to
+/// the test, where the next reader can check it.
+/// </para>
+///
+/// <para>
+/// The remaining <b>three</b> are <b>characterisation</b> — they pass today,
+/// they must pass unmodified after the index lands, and each one is a way the
+/// fix could overshoot. An assertion in them that has to be edited is evidence
+/// the behaviour moved, not a test to adjust. Like the concurrency test, they
+/// fail only if the index regresses.
+/// </para>
+///
+/// <para>
 /// The cross-fab half of FR-019 is <b>not</b> repeated here: it is already
 /// asserted by <c>LayoutFabScopingIntegrationTests.The_same_name_is_usable_in_two_fabs</c>,
 /// which is on the must-not-move list for this change — an index keyed on
