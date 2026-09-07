@@ -18,9 +18,14 @@ public sealed class InMemoryOverlayRepository : IOverlayRepository
     public Task<Option<Overlay>> GetByNameAsync(OverlayName name, CancellationToken cancellationToken)
     {
         Ensure.That(name).IsNotNull();
+        // Mirrors OverlayRepository, which now reads the chain's own marker
+        // rather than its revisions (spec 086). Left on the old predicate this
+        // fake would keep the Application suite green against a rule production
+        // no longer applies — the two are equivalent today, and the fake is
+        // where that would stop being noticed.
         Overlay? found = _overlays.SingleOrDefault(candidate =>
             candidate.Name == name &&
-            candidate.Revisions.Any(r => r.State != OverlayRevisionState.Archived));
+            candidate.ArchivedAt is null);
         return Task.FromResult(found is null ? Option<Overlay>.None : Option<Overlay>.Some(found));
     }
 

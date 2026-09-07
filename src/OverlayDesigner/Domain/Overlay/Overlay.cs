@@ -80,9 +80,11 @@ public sealed class Overlay : AggregateRoot<OverlayIdentifier>
             ?? throw new InvalidOperationException(
                 $"Overlay {Id} has a Draft revision already; BranchDraft needs a Published revision or a fully-archived chain.");
 
+        DateTimeOffset now = clock.UtcNow;
         OverlayRevisionNumber next = MaxRevisionNumber().Next();
-        Revision draft = Revision.Branch(next, baseRevision.Label, clock.UtcNow, by);
+        Revision draft = Revision.Branch(next, baseRevision.Label, now, by);
         revisions.Add(draft);
+        RecomputeArchival(now);
         return draft;
     }
 
@@ -96,6 +98,7 @@ public sealed class Overlay : AggregateRoot<OverlayIdentifier>
         Ensure.That(clock).IsNotNull();
         Revision target = RequireRevision(number);
         target.EditLabel(label);
+        RecomputeArchival(clock.UtcNow);
     }
 
     /// <summary>
@@ -119,6 +122,7 @@ public sealed class Overlay : AggregateRoot<OverlayIdentifier>
         }
         Raise(new OverlayRevisionPublishedDomainEvent(
             Id, number, Name, target.Label, now, by));
+        RecomputeArchival(now);
     }
 
     /// <summary>
@@ -129,9 +133,11 @@ public sealed class Overlay : AggregateRoot<OverlayIdentifier>
     public void Revert(OverlayRevisionNumber number, OperatorIdentifier by, IClock clock)
     {
         Ensure.That(clock).IsNotNull();
+        DateTimeOffset now = clock.UtcNow;
         Revision target = RequireRevision(number);
         target.Revert();
-        Raise(new OverlayRevisionArchivedDomainEvent(Id, number, clock.UtcNow, by));
+        Raise(new OverlayRevisionArchivedDomainEvent(Id, number, now, by));
+        RecomputeArchival(now);
     }
 
     /// <summary>
@@ -151,6 +157,7 @@ public sealed class Overlay : AggregateRoot<OverlayIdentifier>
         bool wasObservable = target.State == OverlayRevisionState.Published;
         DateTimeOffset now = clock.UtcNow;
         target.Archive(now);
+        RecomputeArchival(now);
         if (wasObservable)
         {
             Raise(new OverlayRevisionArchivedDomainEvent(Id, number, now, by));
@@ -158,7 +165,10 @@ public sealed class Overlay : AggregateRoot<OverlayIdentifier>
     }
 
     /// <summary>
-    /// Restates <see cref="ArchivedAt"/> from the revisions that decide it.
+    /// Restates <see cref="ArchivedAt"/> from the revisions that decide it, and
+    /// is called at the end of every mutator rather than only the three that can
+    /// currently move the answer. The two that cannot cost one list scan; a
+    /// mutator added later without the call costs the index its meaning.
     ///
     /// <para>
     /// The instant is not preserved across a re-entry because it cannot be lost

@@ -1,0 +1,98 @@
+﻿using Microsoft.EntityFrameworkCore.Migrations;
+
+#nullable disable
+
+namespace SmartSentinelEye.OverlayDesigner.Infrastructure.Persistence.Migrations
+{
+    /// <inheritdoc />
+    public partial class OverlayNameUniquePerLiveChain : Migration
+    {
+        /// <inheritdoc />
+        protected override void Up(MigrationBuilder migrationBuilder)
+        {
+            // The column arrived empty in OverlayChainArchivalMarker; the
+            // aggregate only maintains it for chains it has touched since.
+            //
+            // A chain with no revisions cannot exist — CreateDraft always mints
+            // one — so NOT EXISTS needs no extra guard against the empty chain,
+            // which it would otherwise report as archived.
+            migrationBuilder.Sql("""
+                UPDATE overlays o
+                SET archived_at = (
+                    SELECT max(r.archived_at)
+                    FROM overlay_revisions r
+                    WHERE r.overlay_id = o.overlay_id)
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM overlay_revisions r
+                    WHERE r.overlay_id = o.overlay_id AND r.state <> 'Archived');
+                """);
+
+            // Spec 086 §6 measured zero collisions in one dev database, which
+            // says nothing about any other. CreateIndex on a table that already
+            // holds two live chains of one name reports a bare unique violation
+            // naming the index — true, and useless to whoever has to act on it.
+            //
+            // This refuses first and says which names collide. Deliberately NOT
+            // auto-reconciled: the fixes available to a migration are renaming
+            // somebody's overlay or archiving it, and both change what an
+            // operator sees on a wall of live video. That is an operator's
+            // decision, not a deploy step's.
+            //
+            // Runs after the backfill, because its predicate is the column the
+            // backfill fills.
+            migrationBuilder.Sql("""
+                DO $$
+                DECLARE collisions text;
+                BEGIN
+                    SELECT string_agg(format('%s (%s chains)', name, tally), '; ')
+                    INTO collisions
+                    FROM (
+                        SELECT name, count(*) AS tally
+                        FROM overlays
+                        WHERE archived_at IS NULL
+                        GROUP BY name
+                        HAVING count(*) > 1
+                    ) AS duplicates;
+
+                    IF collisions IS NOT NULL THEN
+                        RAISE EXCEPTION
+                            'Overlay names must be unique across live chains (spec 086), but these already collide: %',
+                            collisions
+                            USING HINT =
+                                'Archive every revision of all but one chain in each group, then re-run the migration.';
+                    END IF;
+                END $$;
+                """);
+
+            migrationBuilder.DropIndex(
+                name: "ix_overlays_name",
+                table: "overlays");
+
+            migrationBuilder.CreateIndex(
+                name: "ux_overlays_name_active",
+                table: "overlays",
+                column: "name",
+                unique: true,
+                filter: "archived_at IS NULL");
+        }
+
+        /// <inheritdoc />
+        /// <remarks>
+        /// The backfill is not undone. Its values stay correct while the column
+        /// exists, and the column is dropped by the Down of
+        /// OverlayChainArchivalMarker, which is the migration that added it.
+        /// </remarks>
+        protected override void Down(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.DropIndex(
+                name: "ux_overlays_name_active",
+                table: "overlays");
+
+            migrationBuilder.CreateIndex(
+                name: "ix_overlays_name",
+                table: "overlays",
+                column: "name");
+        }
+    }
+}
