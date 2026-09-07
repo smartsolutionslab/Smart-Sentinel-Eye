@@ -419,9 +419,23 @@ The issue asks the sharp question, and it deserves a direct answer:
 **Red A — the behavioural one. This is the claim.** An integration test against
 the Aspire fixture (ADR-0103) that plants a residue client through the Admin API
 — `sse.kind=kiosk`, holding the inherited privilege — drives one sweep pass
-resolved from the running Identity API's own container, and then **asks the
+through Identity's own registration, and then **asks the
 provider** what that account holds. Plus a control: an account without the stamp,
-asserted unchanged. It goes red today because there is no wired pass to resolve.
+asserted unchanged — **with a residue planted alongside it and asserted stripped
+in the same test**, because with the steady-state line silenced a control-only
+run over a residue-free realm is satisfied by a pass that did nothing at all. It
+goes red today because there is no wired pass to drive.
+
+> **Corrected at phase 4a.** This paragraph originally said the pass was
+> "resolved from the running Identity API's own container". **It cannot be.**
+> The Identity API is a separate process and its container is not addressable
+> from the test process. What *is* addressable is `AddIdentityInfrastructure` —
+> the one line `Identity/Api/Program.cs` calls, and the line that carries the
+> whole defect. Red A composes that extension in the test process against the
+> fixture's real Keycloak and starts only the startup services Identity's own
+> assembly registers, so removing the registration still turns it red.
+> **Phase 5 must not inherit the original belief:** nothing in this suite
+> observes a boot, and the paragraph below already says so.
 This mirrors `KioskInheritedPrivilegeIntegrationTests` exactly, which is spec
 052's T007 and the only check that could answer its question.
 
@@ -469,6 +483,16 @@ PR body. **Not a silent skip, and no test is manufactured for it.**
   reach green).
 - **Fixing `TryDeleteClientAsync`'s unchecked response.** Separate defect,
   separate issue. Fixing it here would also change this spec's own premise.
+- **Folding `RealmProbe` together with
+  `KioskInheritedPrivilegeIntegrationTests`' private helpers.** Recorded at
+  phase 4a, deliberately not repaired: Red A's `RealmProbe` duplicates that
+  file's private admin-token, effective-realm-roles and delete helpers, so the
+  same three shapes now exist twice in `tests/Integration.Tests/Identity/`.
+  That file is spec 052's and is left untouched — extracting a shared helper
+  would edit a passing test this spec has no claim on, for tidiness. It is a
+  tidy-up for whoever next has a reason to open it, and the duplication is
+  small, self-contained and named at both sites rather than left to be
+  discovered.
 - **Any other tick in `specs/052/tasks.md`.**
 - **New admin authority.** ADR-0134 measured that none is needed.
 - **The manual-console case.** ADR-0134 / spec 052 T018 declared an account
