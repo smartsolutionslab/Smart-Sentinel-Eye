@@ -1,3 +1,4 @@
+using SmartSentinelEye.ServiceDefaults.Resilience;
 using SmartSentinelEye.Shared.Kernel;
 
 namespace SmartSentinelEye.Integration.Tests.Fixtures;
@@ -20,6 +21,10 @@ internal static class FixtureHttpClients
     {
         Ensure.That(http).IsNotNull();
 
-        http.AddStandardResilienceHandler();
+        // ADR-0143's narrowing lives inside AddServiceDefaults, which no test
+        // project calls. Unless the fixture applies it here, its clients keep the
+        // library's own predicate, which reads the outcome and never the method —
+        // so a POST is retried exactly like a GET (#2129).
+        http.AddStandardResilienceHandler(IdempotentRetry.RetryIdempotentMethodsOnly);
     }
 }
