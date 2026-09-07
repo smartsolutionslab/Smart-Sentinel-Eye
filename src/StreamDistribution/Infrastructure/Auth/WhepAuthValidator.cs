@@ -20,6 +20,13 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
 {
     private readonly ConfigurationManager<OpenIdConnectConfiguration> oidc;
     private readonly TokenValidationParameters parameters;
+    // Diverges from the bearer pipeline, which uses JsonWebTokenHandler. That should
+    // eventually back both sides: Microsoft positions this one as the legacy path, and
+    // the ArgumentException catch below exists only to absorb its habit of surfacing
+    // malformed-token paths as ArgumentException — a wart that goes away with it.
+    // Deferred rather than done here because ValidateTokenAsync returns a result
+    // instead of throwing, so the migration rewrites this method's control flow and
+    // needs its own adversarial pass over malformed inputs (spec 089 D4).
     private readonly JwtSecurityTokenHandler handler = new();
 
     public WhepAuthValidator(IOptions<WhepAuthOptions> options)
@@ -54,7 +61,17 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
         // the nine APIs would refuse; WhepAudienceTests holds the pairing.
         ValidAudiences = [AuthenticationDefaults.ApiAudience],
         ValidateLifetime = true,
+        // Deliberately stricter than the bearer pipeline, which leaves this false.
+        // Against Keycloak it does run: the realm's JWKS carries x5c, so
+        // JsonWebKeySet.GetSigningKeys yields an X509SecurityKey alongside the RSA one,
+        // and ValidateIssuerSigningKeyLifeTime date-checks the realm's signing
+        // certificate. That makes it a second copy of #2095's asymmetry — on a lapsed
+        // realm certificate WHEP 401s and the nine REST APIs do not. Resolving it by
+        // making those nine stricter is the correct direction and a separate slice;
+        // relaxing this one to match would be parity bought by relaxation (spec 089 D2).
         ValidateIssuerSigningKey = true,
+        // Inert: ValidateAsync reads "sub" and "scope" through FindFirst and never
+        // touches Identity.Name, so this setting decides nothing here (spec 089 D3).
         NameClaimType = "preferred_username",
     };
 
