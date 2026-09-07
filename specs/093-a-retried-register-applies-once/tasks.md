@@ -122,7 +122,7 @@ Planned sequence, one commit per task:
 
 ### Foundation — blocks everything
 
-- [ ] **T001** [US1] **Extract the fixture's client defaults into a named,
+- [X] **T001** [US1] **Extract the fixture's client defaults into a named,
   constructible thing. Behaviour-preserving.**
 
   New file `tests/Integration.Tests/Fixtures/FixtureHttpClients.cs`:
@@ -152,7 +152,7 @@ Planned sequence, one commit per task:
 
 ### US-1 (P1) — An integration test's `POST` is sent once
 
-- [ ] **T003** [US1] **Write the red, run it, capture the verbatim failure.**
+- [X] **T003** [US1] **Write the red, run it, capture the verbatim failure.**
 
   New file `tests/Integration.Tests/Fixtures/FixtureRetryPolicyTests.cs`.
   `[Trait("Category", "FixtureLogic")]` and **no**
@@ -177,9 +177,12 @@ Planned sequence, one commit per task:
       options => { options.Retry.Delay = TimeSpan.Zero; options.Retry.UseJitter = false; });
   ```
 
-  The later `Configure` wins; `IdempotentRetryTests.Build` depends on that
-  ordering and passes today, so neither the key nor the ordering is being
-  assumed. Without this the two four-attempt facts cost ~14 s each on the real
+  The later `Configure` wins. **Corrected at phase 4b:** `IdempotentRetryTests.Build`
+  demonstrates the *ordering*, not the named-options key — it passes its delegate
+  into the `AddStandardResilienceHandler` overload rather than calling
+  `services.Configure` post-hoc. The post-hoc route is exercised only by
+  `RetryEveryMethod`, hence by `A_client_that_opts_back_in_retries_its_POSTs_again`,
+  which passes today. Neither half is assumed; the citation was one line off. Without this the two four-attempt facts cost ~14 s each on the real
   2/4/8 s backoff. If the key does not bind, **report it** — do not invent a
   second route.
 
@@ -207,7 +210,7 @@ Planned sequence, one commit per task:
   saved for the PR body. **If the red reports a number other than 4, stop** —
   T001 changed behaviour and the characterisation obligation has been broken.
 
-- [ ] **T004** [US1] **Apply ADR-0143 to the fixture. Turn the red green.**
+- [X] **T004** [US1] **Apply ADR-0143 to the fixture. Turn the red green.**
 
   In `FixtureHttpClients.Configure`, the body becomes what
   `src/ServiceDefaults/Extensions.cs:52` already does:
@@ -232,7 +235,7 @@ Planned sequence, one commit per task:
 
 ### US-2 (P2) — The fixture's registration cannot silently un-narrow
 
-- [ ] **T005** [P] [US2] **Guard the tree ADR-0143's own fix did not reach.**
+- [X] **T005** [P] [US2] **Guard the tree ADR-0143's own fix did not reach.**
 
   Extend `tests/Architecture.Tests/ResilienceRegistrationTests.cs` — it already
   owns this subject and already reads source from disk. Parameterise its
@@ -290,6 +293,10 @@ Planned sequence, one commit per task:
 
   *Done when:* the selection is green, or every failure is traced and fixed by
   waiting rather than retrying.
+
+  **Not run at phase 4b — still open.** The engineer was instructed not to boot
+  Aspire or Docker: another worktree holds the one stack. This remains the merge
+  blocker it was declared to be, and nothing in phase 4b substitutes for it.
 
 - [ ] **T007** [P] **File the orphan, do not fix it here.**
 

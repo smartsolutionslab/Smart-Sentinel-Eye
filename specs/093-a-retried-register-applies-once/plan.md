@@ -106,11 +106,15 @@ services.Configure<HttpStandardResilienceOptions>(
     options => { options.Retry.Delay = TimeSpan.Zero; options.Retry.UseJitter = false; });
 ```
 
-The later `Configure` wins — `IdempotentRetryTests.Build` relies on exactly that
-ordering, and
-`A_client_that_opts_back_in_retries_its_POSTs_again` passes today, so the key
-and the ordering are both already demonstrated in this repository rather than
-assumed. The **attempt count** is what these assertions are about, and it is the
+The later `Configure` wins. **Corrected at phase 4b:** `IdempotentRetryTests.Build`
+demonstrates the *ordering* — default first, opt-in after — but not the
+named-options key, because it passes its delegate into the
+`AddStandardResilienceHandler` overload rather than calling `services.Configure`
+post-hoc. The post-hoc route is exercised only by `RetryEveryMethod`, and so by
+`A_client_that_opts_back_in_retries_its_POSTs_again`, which passes today. The
+conclusion stands — both halves are demonstrated in this repository rather than
+assumed — and the four-attempt cases running in seconds rather than ~28 s
+confirms the key bound. The **attempt count** is what these assertions are about, and it is the
 one thing the backoff does not change. If the key turns out not to bind, report
 it — do not invent a second route.
 
