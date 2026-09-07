@@ -133,8 +133,16 @@ is the whole point.
 **FR-001 — A statistics read that fails names the field it could not read.**
 When `lagSampleFrom` or `decodeSampleFrom` answers `null` because a required
 field on the `inbound-rtp` / `kind: 'video'` stat is not a number, the caller
-emits one `logResilienceEvent('stream', 'stats-field-missing', { camera, field
-})` naming the **first** absent field in declaration order.
+emits one `logResilienceEvent('stream', 'stats-field-missing', { cameraIdentifier,
+field })` naming the **first** absent field in declaration order.
+
+**The detail key is `cameraIdentifier`, not `camera`.** `useWhepSession.ts:137`
+is the only existing `[resilience]` site that names a camera, and it spells it
+`cameraIdentifier`. `[resilience]` is a stable observable contract that
+Playwright asserts on and remote-debug sessions grep, so two spellings of "which
+camera" inside subsystem `stream` would be a wart in a contract that exists to
+be read. Corrected at phase 4b — this FR and FR-004 both said `camera` when
+written, and so did T007/T008.
 
 **FR-002 — Absent is not the same as not-yet.** A report carrying **no**
 `inbound-rtp` video stat at all emits nothing. That is a session that has not
@@ -153,7 +161,7 @@ recorded.
 **FR-004 — A playout target that did not apply says so.** When
 `setPlayoutTarget` answers `false` for a session whose status is `live`, or
 throws, `CameraViewer` emits one `logResilienceEvent('stream',
-'playout-target-unsupported', { camera })`. Once per mounted tile, on the same
+'playout-target-unsupported', { cameraIdentifier })`. Once per mounted tile, on the same
 rule as FR-003 and for the same reason.
 
 **FR-005 — The `?? false` in `useWhepSession` is left alone.**
@@ -204,7 +212,7 @@ Given a tile whose inbound-rtp video stat omits totalProcessingDelay entirely
       (the key is absent, not null)
 When  the lag sampler has run for twenty seconds — ten intervals
 Then  exactly one [resilience] line is emitted, subsystem "stream",
-      transition "stats-field-missing", detail naming camera and
+      transition "stats-field-missing", detail carrying cameraIdentifier and
       field "totalProcessingDelay"
 And   no lag is reported to the wall
 And   the tile is still showing video
@@ -225,7 +233,7 @@ Given a live tile on an engine whose video receivers carry no jitterBufferTarget
 And   the wall has decided a target of 120 ms
 When  the playout effect has run for twenty seconds
 Then  exactly one [resilience] line is emitted, subsystem "stream",
-      transition "playout-target-unsupported", detail naming the camera
+      transition "playout-target-unsupported", detail carrying cameraIdentifier
 And   the tile is still showing video
 ```
 
@@ -245,17 +253,27 @@ Runnable by a person with the repo and a browser; **no Aspire stack required.**
 
 1. `cd D:/Github/wt-2109 && pnpm install`
 2. `pnpm --filter @smart-sentinel-eye/shared test` — the two new suites pass.
-3. Open `apps/shared/src/ui/composites/CameraViewerAlignment.test.tsx` and, in
-   the `WhepClient` double, delete the whole `stats` mock so the double reports
-   a stat with every field. Re-run. The `stats-field-missing` test **fails** —
-   proving the test is driven by the absent field and not by the double
-   existing. Restore.
+3. **The counterfactual.** In
+   `apps/shared/src/ui/composites/CameraViewerAlignment.test.tsx`, in the case
+   *"Names a statistics counter its receiver does not report, once for the
+   session"*, change `videoStatWithout('totalProcessingDelay')` to
+   `videoStatWithout()` — one token — so the double reports a stat with every
+   field. Re-run: that case **fails** at `expect(named).toHaveLength(1)`,
+   proving it is driven by the absent field and not by the double existing.
+   Revert.
+
+   **As first written this step said to delete the whole `stats` mock**, which
+   does not do what it claims: with the mock gone the double's `stats` is
+   `undefined` (or, after the double was reworked to be swappable, throws), and
+   the case fails on a *missing statistics call* rather than on a *present stat
+   with an absent field* — a different failure, proving nothing about the thing
+   under test. Corrected at phase 4b, before phase 5 quoted it.
 4. **On a real wall (optional, and the only part needing the stack):** boot the
    AppHost, open the kiosk on a two-tile layout in Firefox — an engine that does
    not implement `jitterBufferTarget` — and read the console. Expect one
    `[resilience] {subsystem: 'stream', transition: 'playout-target-unsupported',
-   camera: …}` per tile and no repetition over five minutes. In Chromium expect
-   none.
+   cameraIdentifier: …}` per tile and no repetition over five minutes. In
+   Chromium expect none.
 
 Step 4 is how the change is *observed* rather than merely tested, and it is the
 verification note's material at phase 5. Steps 1-3 stand alone if no wall is
