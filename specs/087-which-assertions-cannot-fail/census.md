@@ -408,7 +408,7 @@ TOTAL: 4 classes, 34 test methods
 
 2. **Keying on `[Collection(AspireCollection.Name)]` without stripping comments
    missed it too** — the literal string appears inside its `<c>…</c>`
-   doc-comment at `RunModeDriverTests.cs:20`. Count would again have been 23.
+   doc-comment at `RunModeDriverTests.cs:22`. Count would again have been 23.
 
 Both traps produce the same wrong number, 23, by different routes — which is
 why FR-003 makes comment-stripping a requirement of the guard and not an
@@ -422,8 +422,12 @@ requirement, for the shape the anchor cannot tell apart — an attribute
 commented out inside a `/* … */` block.
 
 **Line numbers in this document are as at the census**, before the four
-`[Trait]` attributes were added; each cite in the four affected files is now one
-line later.
+`[Trait]` attributes were added. Each attribute was inserted immediately above
+its class declaration, so only a cite **below** that point shifts — by one line
+— and the four doc-comment quotes below (`:8`, `:4`, `:10-11`, `:18-21`) all sit
+**above** it and are unchanged. The one cite in this file that does sit below an
+insertion point is the one two paragraphs up: `RunModeDriverTests.cs:20` is now
+`:22`, and has been corrected there.
 
 ### Why "no `[Collection]`" does not mean "Docker-free"
 
