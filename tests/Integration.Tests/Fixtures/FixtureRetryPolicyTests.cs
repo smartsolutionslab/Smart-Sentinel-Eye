@@ -31,10 +31,10 @@ namespace SmartSentinelEye.Integration.Tests.Fixtures;
 /// No stack, no Docker, no saturating burst — a bare
 /// <see cref="ServiceCollection"/> and the same
 /// <see cref="FixtureHttpClients.Configure"/> the fixture uses. The
-/// load-dependent alternative cannot be a gate: <c>ci.yml:179</c> excludes
-/// <c>Category=Measurement</c>, so the burst never precedes the affected test in
-/// the job that runs it, and a timing-shaped red proves only that the machine
-/// was slow.
+/// load-dependent alternative cannot be a gate: <c>ci.yml</c>'s "Run
+/// integration tests" step excludes <c>Category=Measurement</c>, so the burst
+/// never precedes the affected test in the job that runs it, and a
+/// timing-shaped red proves only that the machine was slow.
 /// </para>
 /// </summary>
 [Trait("Category", "FixtureLogic")]

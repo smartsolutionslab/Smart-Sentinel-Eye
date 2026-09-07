@@ -210,9 +210,9 @@ it backwards is the most likely way this spec produces a fabricated gate.
 
 - `[Trait("Category", "FixtureLogic")]`, **no `[Collection(AspireCollection.Name)]`**.
   It must not touch the fixture instance — it builds a bare `ServiceCollection`,
-  so it needs no Docker and `ci.yml:72` reads its verdict in seconds. This is
-  also what `IntegrationTestSelectionTests` requires of any class without the
-  collection.
+  so it needs no Docker and `ci.yml`'s "Docker-free fixture logic tests" step
+  reads its verdict in seconds. This is also what
+  `IntegrationTestSelectionTests` requires of any class without the collection.
 - Shape follows `tests/ServiceDefaults.Tests/Resilience/IdempotentRetryTests.cs`
   exactly — a `CountingHandler : HttpMessageHandler` that increments and answers
   503 (or throws `HttpRequestException`), plugged in with

@@ -223,7 +223,8 @@ test.** The observation is still real — an unfiltered local run does run both,
 in one serialised collection — but the repro line must be corrected, or the next
 reader concludes the defect is unreproducible.
 
-This also means **CI has never seen this failure and cannot**: `ci.yml:179` runs
+This also means **CI has never seen this failure and cannot**: `ci.yml`'s
+"Run integration tests" step runs
 `--filter "Category!=Measurement&Category!=Disruptive&Category!=Maintenance"`,
 so the burst is excluded from the very job NFR002 runs in. The defect is
 local-run-only today, which is why it survived to be found by hand.
@@ -486,7 +487,7 @@ strong one, and phase 5 should say so rather than lean on the run.
   `IdempotentRetryTests.CountingHandler`.
 - Aspire fixture, no Testcontainers (ADR-0103).
 - The new fixture-logic test carries `[Trait("Category", "FixtureLogic")]` so
-  `ci.yml:72` reads its verdict in the Docker-free step, as
+  `ci.yml`'s "Docker-free fixture logic tests" step reads its verdict, as
   `IntegrationTestSelectionTests` requires.
 - `ServiceDefaults` is already reachable from `Integration.Tests` transitively
   (`Identity.Infrastructure` → `ServiceDefaults`), and four integration test
