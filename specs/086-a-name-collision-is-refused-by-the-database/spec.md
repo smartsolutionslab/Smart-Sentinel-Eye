@@ -1,4 +1,4 @@
-# Spec 084 — A name collision is refused by the database
+# Spec 086 — A name collision is refused by the database
 
 **Issue:** #2115
 **Branch:** `fix/2115-a-name-collision-is-refused-by-the-database`

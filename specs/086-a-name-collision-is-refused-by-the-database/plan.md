@@ -1,4 +1,4 @@
-# Plan 084 — A name collision is refused by the database
+# Plan 086 — A name collision is refused by the database
 
 **Spec:** `spec.md` (issue #2115)
 **Status:** Phase 2 (Plan) — awaiting gate review
