@@ -37,15 +37,18 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
             new OpenIdConnectConfigurationRetriever(),
             new HttpDocumentRetriever { RequireHttps = false });
 
-        parameters = CreateParameters(authority);
+        parameters = CreateParameters();
 
         handler.MapInboundClaims = false;
     }
 
-    internal static TokenValidationParameters CreateParameters(string authority) => new()
+    internal static TokenValidationParameters CreateParameters() => new()
     {
+        // No ValidIssuer/ValidIssuers here: the issuer is filled in ValidateAsync from
+        // the discovery document, exactly as JwtBearerHandler fills it per request. The
+        // configured authority addresses discovery and nothing else — behind an ingress
+        // it is not the issuer the realm mints (spec 089, #2095).
         ValidateIssuer = true,
-        ValidIssuer = authority,
         // The audience arrives on the sse-audience client scope (spec 069). Read from
         // the constant the bearer pipeline reads, so this hook cannot accept a token
         // the nine APIs would refuse; WhepAudienceTests holds the pairing.
@@ -61,6 +64,7 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
         {
             OpenIdConnectConfiguration configuration = await oidc.GetConfigurationAsync(cancellationToken);
             TokenValidationParameters validationParameters = parameters.Clone();
+            validationParameters.ValidIssuers = [configuration.Issuer];
             validationParameters.IssuerSigningKeys = configuration.SigningKeys;
 
             ClaimsPrincipal principal = handler.ValidateToken(bearerToken, validationParameters, out _);
