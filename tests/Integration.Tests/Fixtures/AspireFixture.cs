@@ -85,6 +85,51 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
     ];
 
     /// <summary>
+    /// The twelve resources <see cref="InitializeAsync"/> waits for, read back
+    /// once after the last of those waits has returned.
+    ///
+    /// <para>
+    /// <c>migrations</c> is deliberately absent: <c>Finished</c> is how it
+    /// succeeds, and its own gate has already read its exit code (#2064).
+    /// </para>
+    ///
+    /// <para>
+    /// Hand-maintained, and nothing enforces it — a thirteenth wait added
+    /// without a name here silently narrows the check. Said plainly rather than
+    /// guarded: a source-scanning guard would prove only that the list had been
+    /// written, not that it holds (#2054).
+    /// </para>
+    /// </summary>
+    private static readonly string[] GatedResources =
+    [
+        "keycloak",
+        "camera-catalog",
+        "mediamtx",
+        "fixture-video",
+        "stream-distribution",
+        "layout-composition",
+        "overlay-designer",
+        "audit-observability",
+        "event-ingestion",
+        "system-variables",
+        "automation",
+        "identity",
+    ];
+
+    /// <summary>
+    /// What goes between one death and the next.
+    ///
+    /// <para>
+    /// Each block ends in up to sixty lines of that resource's own log, so nine
+    /// deaths — the number #2062 saw on one boot — joined by a single newline
+    /// run a stack trace straight into the next verdict with nothing to mark the
+    /// seam. A blank line and a rule, and only ever between blocks.
+    /// </para>
+    /// </summary>
+    private static readonly string DeathSeparator =
+        Environment.NewLine + Environment.NewLine + new string('-', 72) + Environment.NewLine;
+
+    /// <summary>
     /// The states that mean a waited-for resource ended rather than started.
     ///
     /// <para>
@@ -304,6 +349,16 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
             // that lost this race on the Linux runner, timing out ~9 tests while
             // passing on Windows dev boxes.
             await WaitForServiceHealthAsync("overlay-designer", cts.Token).ConfigureAwait(false);
+
+            // Every wait returned. That is not the same as every resource being
+            // alive: DCP publishes `Running` when a process launches, so a
+            // service that crashes a second later has already satisfied its
+            // wait. Phase 4a of #2066 provoked exactly that twice —
+            // camera-catalog dead and InitializeAsync completing normally,
+            // identity dead and a filtered test passing. Sampled here, at the
+            // last instant of the boot; a resource that dies after this point is
+            // #2146's problem, not this one's.
+            await ThrowIfAnyGatedResourceDiedAsync().ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is OperationCanceledException or TaskCanceledException)
         {
@@ -747,6 +802,100 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
         }
 
         return FormatFailedResourceReport(states, _exitCodes, logs);
+    }
+
+    /// <summary>
+    /// Reads each gated resource's state once and refuses to return if any of
+    /// them is dead.
+    ///
+    /// <para>
+    /// <c>TryGetCurrentState</c> rather than a watch: it is synchronous, hands
+    /// back the resource's last snapshot, and is already how this fixture reads
+    /// one resource's current state (<see cref="TryResolveResourceId"/>).
+    /// <see cref="CaptureResourceStateMapAsync"/> answers the same question and
+    /// costs a bounded three-second watch on <i>every</i> boot; this costs twelve
+    /// in-memory reads and no I/O, and a healthy boot must not pay for a check
+    /// that almost never fires.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Not twelve dictionary lookups</b>, although it reads like it.
+    /// <c>TryGetCurrentState</c>'s parameter is a resource <i>id</i>
+    /// (<c>camera-catalog-thwaubpm</c>), so an app-model name misses its keyed
+    /// fast path every time and falls through to the <c>Where</c> beneath it —
+    /// a scan of the forty-odd tracked resources, plus the duplicate-name check
+    /// that makes a replicated name return <see langword="false"/>. Twelve such
+    /// scans, still microseconds against a three-second watch: the cost argument
+    /// survives the correction, the word "lookup" does not.
+    /// </para>
+    ///
+    /// <para>
+    /// No <see cref="CancellationToken"/>, for the reason
+    /// <see cref="CaptureFailedResourceLogsAsync"/> takes none: nothing here is
+    /// unbounded. The lookups are synchronous, and
+    /// <see cref="CaptureOneResourceLogAsync"/> carries its own five-second
+    /// budget — twelve of those bound the failing path at sixty seconds, spent
+    /// only once something is already known to be dead.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>And the only token in scope must not be threaded through.</b> That is
+    /// <c>cts.Token</c>, the eight-minute startup budget. A boot that spent
+    /// 7 m 58 s and then found a dead resource would throw an
+    /// <see cref="OperationCanceledException"/> from here, meet the <c>when</c>
+    /// clause in <see cref="InitializeAsync"/>, and be reported as "did not
+    /// start within 8 minutes" — the misattribution this check exists to remove.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>All of them, not the first.</b> In #2062 nine resources died on one
+    /// boot, so stopping at the first would name an arbitrary member of the set —
+    /// the misattribution this family of fixes exists to remove. Logs are read
+    /// only once something is known to be dead, so a healthy boot pays nothing.
+    /// </para>
+    /// </summary>
+    private async Task ThrowIfAnyGatedResourceDiedAsync()
+    {
+        List<(string Name, string State, int? ExitCode)> dead = [];
+
+        foreach (string name in GatedResources)
+        {
+            // Defensive rather than reachable, like the branch in
+            // CaptureOneResourceLogAsync: each of the twelve has published a
+            // snapshot by now, because its own wait matched one.
+            if (!App.ResourceNotifications.TryGetCurrentState(name, out ResourceEvent? current))
+            {
+                continue;
+            }
+
+            string? stateText = current.Snapshot.State?.Text;
+
+            if (IsFatalStartupState(stateText))
+            {
+                dead.Add((name, stateText, current.Snapshot.ExitCode));
+            }
+        }
+
+        if (dead.Count == 0)
+        {
+            return;
+        }
+
+        Aspire.Hosting.ApplicationModel.ResourceLoggerService loggers =
+            App.Services.GetRequiredService<Aspire.Hosting.ApplicationModel.ResourceLoggerService>();
+
+        List<string> deaths = [];
+        foreach ((string name, string state, int? exitCode) in dead)
+        {
+            string resourceLog = await CaptureOneResourceLogAsync(loggers, name).ConfigureAwait(false);
+            deaths.Add(FormatResourceDeathMessage(name, state, exitCode, resourceLog));
+        }
+
+        // Not a TimeoutException and not any OperationCanceledException, for the
+        // reason the migrations gate throws this type: the catch in
+        // InitializeAsync filters on those and would reclassify a death as "did
+        // not start within 8 minutes".
+        throw new InvalidOperationException(string.Join(DeathSeparator, deaths));
     }
 
     private async Task<string> CaptureOneResourceLogAsync(
