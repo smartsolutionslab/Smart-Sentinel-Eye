@@ -367,12 +367,22 @@ any `[Trait("Category", …)]`.
 `IngestRunShape.cs`, `RunModeStackAddress.cs` — a first pass wrongly included
 seven of these).
 
-**Comments must be stripped before matching.** Without stripping, the count is
-23 and not 34 — see the two traps below.
+**Comments must be stripped before matching.** Without stripping, *this
+command* counts 23 and not 34 — see the two traps below. (The guard built from
+it anchors its attribute match at the start of a line, and that anchor refuses
+the doc-comment case on its own; stripping is load-bearing there for a
+commented-out attribute inside a `/* … */` block. `plan.md` §"The two traps".)
+
+**`obj/` and `bin/` must be pruned**, as the guard does explicitly and as
+`LogTailCoverageTests:165-166` does. The original command below did not, and
+was right by luck: the three generated `.cs` files under that tree carry no
+`[Fact]`, so the fact filter dropped them. A future generated fixture would not
+be dropped, and would be reported by a path nobody can fix.
 
 ```sh
 strip() { sed -e 's|//.*||' -e '/^\s*\*/d' -e '/^\s*<\/\?/d' "$1"; }
-find tests/Integration.Tests -name '*.cs' | sort | while read f; do
+find tests/Integration.Tests -name '*.cs' -not -path '*/obj/*' -not -path '*/bin/*' \
+  | sort | while read f; do
   facts=$(grep -cE '^\s*\[(Fact|Theory)' "$f"); [ "$facts" -eq 0 ] && continue
   strip "$f" | grep -qE '\[Collection\(AspireCollection\.Name\)\]' && continue
   strip "$f" | grep -qE 'Trait\("Category"' && continue
@@ -403,6 +413,17 @@ TOTAL: 4 classes, 34 test methods
 Both traps produce the same wrong number, 23, by different routes — which is
 why FR-003 makes comment-stripping a requirement of the guard and not an
 implementation detail.
+
+**Trap 2 is a property of this shell command, not of the guard.** The guard
+anchors its attribute match at the start of a line, and phase 4a confirmed by
+counterfactual that it reports 4 / 34 with stripping removed: the `[` in
+`/// <c>[Collection(…)]</c>` never begins its line. FR-003 is still a
+requirement, for the shape the anchor cannot tell apart — an attribute
+commented out inside a `/* … */` block.
+
+**Line numbers in this document are as at the census**, before the four
+`[Trait]` attributes were added; each cite in the four affected files is now one
+line later.
 
 ### Why "no `[Collection]`" does not mean "Docker-free"
 
