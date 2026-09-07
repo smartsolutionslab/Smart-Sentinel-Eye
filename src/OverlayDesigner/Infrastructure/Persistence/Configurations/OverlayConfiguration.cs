@@ -65,6 +65,16 @@ public sealed class OverlayConfiguration : IEntityTypeConfiguration<Overlay>
             .IsConcurrencyToken()
             .IsRequired();
 
+        // The chain's own archival, materialised onto the parent row. The
+        // predicate it summarises - every revision Archived - lives on
+        // overlay_revisions, and a Postgres index predicate may not read another
+        // table, so the only way the database can enforce the name rule is to
+        // have the answer on the row the name is on (spec 086 §1.1).
+        builder.Property(overlay => overlay.ArchivedAt)
+            .HasColumnName("archived_at")
+            .HasConversion(at => at!.Value, value => ArchivedAt.From(value))
+            .IsRequired(false);
+
         builder.HasIndex(overlay => overlay.Name)
             .HasDatabaseName("ix_overlays_name");
 
