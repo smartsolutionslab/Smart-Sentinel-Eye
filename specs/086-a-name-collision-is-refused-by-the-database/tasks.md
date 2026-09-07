@@ -21,10 +21,31 @@ The only sequencing preference: **US1 lands the pattern.** If both stories run a
 once, whoever takes US2 should read the US1 diff rather than re-derive the
 design.
 
-**Every commit must build on its own** (ADR-0087). The natural per-context
-commit boundary is: tests → aggregate → configuration + migration + repository +
-comments as one commit (the configuration and the migration cannot compile-and-
-pass apart from each other, and the repository predicate depends on the column).
+**Every commit must build on its own** (ADR-0087).
+
+**T002 and T011 are ordered wrongly below, and were corrected in phase 4b.** Both
+are listed as preceding T005/T014, which cannot be executed in that order: a test
+naming `ArchivedAt` on a tree without the property does not fail, it fails to
+compile (`CS1061`), and `24e6fc4c` on `develop` ruled that is not a red test.
+Each context needs a **prelude commit** carrying the property first —
+`24e6fc4c`'s own remedy, generalised there to *a prelude is required wherever the
+test names a symbol the previous commit lacks*.
+
+The prelude is not one line, for two reasons found while writing it:
+
+- A property whose private setter nothing assigns fails `-c Release` with
+  **S1144**. The smallest seam that survives the analyzers is the property plus
+  its recompute called from `CreateDraft` — always null there, because a new
+  chain has a Draft.
+- An `ArchivedAt?` property EF does not map **breaks the model**, not merely
+  leaves it unindexed: *"The entity type 'ArchivedAt' requires a primary key"*.
+  So the mapping and an `AddColumn` migration ride with the prelude, which is why
+  there are four migrations and not two (`plan.md` §4.2).
+
+The per-context commit boundary is therefore: **prelude** (property + mapping +
+`AddColumn`) → **red domain tests** → **implementation** (recompute in every
+mutator + configuration + backfill/pre-flight/index migration + repository + the
+in-memory fake + comments).
 
 ---
 
@@ -48,7 +69,7 @@ pass apart from each other, and the repository predicate depends on the column).
 | **T005** | | **`Overlay.ArchivedAt`** (`ArchivedAt?`) on `src/OverlayDesigner/Domain/Overlay/Overlay.cs`. Recompute in one private call at the end of every mutator — `CreateDraft`, `BranchDraft`, `EditDraft`, `Publish`, `Revert`, `ArchiveRevision`. Invariant: set **iff** every revision is `Archived`. Reuse the existing predicate shape from the chain's own archived-revision logic; do not duplicate it. | T002 |
 | **T006** | | **`OverlayConfiguration.cs`**: map `archived_at` (nullable, same `HasConversion` shape as the revision-level `ArchivedAt` at lines 145-148); replace the plain index at lines 68-69 with `ux_overlays_name_active` — `.IsUnique().HasFilter("archived_at IS NULL")`. Rewrite the class doc so it describes what the file now does. | T005 |
 | **T007** | | **Migration** (ADR-0067, `OverlayDesignerDbContext`): `AddColumn` → backfill `archived_at` from `overlay_revisions` for chains with no non-`Archived` revision → **pre-flight duplicate check** (`DO $$ … RAISE EXCEPTION … USING HINT`, modelled on `20260823194632_CaseInsensitiveCameraNames.cs:38-61`, listing the colliding names; **not** auto-reconciled) → `DropIndex ix_overlays_name` → `CreateIndex ux_overlays_name_active`. `Down` reverses all four. Regenerate `OverlayDesignerDbContextModelSnapshot.cs`. The pre-flight check runs **after** the backfill — its predicate needs the new column. | T006 |
-| **T008** | | **`OverlayRepository.GetByNameAsync`**: `.Where(candidate => candidate.ArchivedAt == null)` in place of the `Revisions.Any(...)` predicate, so the handler's check and the index evaluate the same column. Delete the stale comment claiming the index is permissive. | T007 |
+| **T008** | | **`OverlayRepository.GetByNameAsync`**: `.Where(candidate => candidate.ArchivedAt == null)` in place of the `Revisions.Any(...)` predicate, so the handler's check and the index evaluate the same column. Delete the stale comment claiming the index is permissive. **And `tests/OverlayDesigner.Application.Tests/Fakes/InMemoryOverlayRepository.cs:21-23`, which carries a third copy of that predicate** — added phase 4b; switching only the real repository leaves the Application suite green against a rule production no longer applies. The fake is scaffolding standing in for the repository, so updating it is not editing an assertion; the handler tests above it stay untouched. | T007 |
 
 ### Gate
 
@@ -79,7 +100,7 @@ pass apart from each other, and the repository predicate depends on the column).
 | **T014** | [P] | **`Layout.ArchivedAt`** (`ArchivedAt?`) on `src/LayoutComposition/Domain/Layout/Layout.cs`, recomputed at the end of every mutator. The predicate already exists as `NewestWhenFullyArchivedOrNull` (`Layout.cs:227-228`) — express the marker in terms of the same rule rather than a second copy of it. | T011 |
 | **T015** | [P] | **`LayoutConfiguration.cs`**: map `archived_at`; replace the plain index at lines 83-84 with `ux_layouts_fab_name_active` on `(Fab, Name)` — `.IsUnique().HasFilter("archived_at IS NULL")`. **Keep `ix_layouts_fab`** (listing filter, not a uniqueness index). Rewrite the class doc at lines 20-26 and the inline comment at lines 76-84 — both currently say the SQL-side index is deferred and that the application check is authoritative for v1. | T014 |
 | **T016** | [P] | **Migration** (`LayoutCompositionDbContext`): same four steps as T007, keyed on `(fab, name)`, backfilling from `layout_revisions`, pre-flight check listing collisions **per fab**. Regenerate `LayoutCompositionDbContextModelSnapshot.cs`. | T015 |
-| **T017** | [P] | **`LayoutRepository.GetByNameAsync`**: `.Where(candidate => candidate.ArchivedAt == null)`; delete the stale comment at lines 33-39. Leave the fab predicate and its comment alone. | T016 |
+| **T017** | [P] | **`LayoutRepository.GetByNameAsync`**: `.Where(candidate => candidate.ArchivedAt == null)`; delete the stale comment at lines **33-36**. Leave the fab predicate and its comment alone — **lines 37-39 *are* that comment**, so the "33-39" this task originally gave contradicted its own next sentence and would have deleted a correct comment with the wrong one (corrected phase 4b). **And `tests/LayoutComposition.Application.Tests/Fakes/InMemoryLayoutRepository.cs`**, for the reason recorded on T008. | T016 |
 
 ### Gate
 

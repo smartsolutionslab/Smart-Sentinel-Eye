@@ -17,11 +17,14 @@ The decision at stake is *"a uniqueness rule is enforced twice — an applicatio
 check for a usable answer, and a unique index for the guarantee."* That is not a
 proposal; it is the product's stated posture, written down in the XML doc on
 `src/ServiceDefaults/Persistence/UniqueConstraintExceptionHandler.cs:16-22` and
-instantiated by twelve `.IsUnique()` indexes across six bounded contexts. The
-handler exists *specifically* to give the loser of an index race a `409` instead
-of a `500`. Layouts and overlays are the two rows that never got the index the
-handler was built to serve, which makes that doc comment's word "every" false —
-a defect in the record, not an open architectural question.
+instantiated by twelve `.IsUnique()` indexes across **nine** bounded contexts
+(re-measured 2026-09-07; the "six" this line carried was wrong, and so was the
+reading of it — see spec §1). The handler exists *specifically* to give the
+loser of an index race a `409` instead of a `500`. Layouts and overlays own four
+of those twelve, all of them structural and on the revisions table; what neither
+has is a unique index on the **operator-chosen name**, which is the row the
+handler was built to serve and which makes that doc comment's word "every" false
+— a defect in the record, not an open architectural question.
 
 The comment at `LayoutConfiguration.cs:80-82` does not say otherwise. Read
 closely, it is a **deferral with a stated blocker** — *"promoting it to the
@@ -159,10 +162,21 @@ what it describes.
 
 ### 4.2 Migrations (ADR-0067)
 
-**Two migrations, one per DbContext.** They are applied by `MigrationRunner`; no
-AppHost or Aspire resource change.
+**Two per DbContext, four in all — corrected during phase 4b; this section
+predicted one per context.** They are applied by `MigrationRunner`; no AppHost or
+Aspire resource change.
 
-Each `Up` does, in order:
+The split is forced by the red-first sequencing, not chosen for tidiness. The
+property has to exist before the domain tests that name it can fail for a reason
+other than `CS1061`, and an `ArchivedAt?` property that EF does not map does not
+merely go unindexed — it breaks the model outright with *"The entity type
+'ArchivedAt' requires a primary key"*. So the column is mapped and added in the
+prelude commit, and the constraint follows in the commit that earns it:
+
+- `*ChainArchivalMarker` — `AddColumn` only.
+- `*NameUniquePerLiveChain` — backfill, pre-flight check, index swap.
+
+Their `Up` steps, in order across the pair:
 
 1. `AddColumn` `archived_at` (`timestamp with time zone`, nullable).
 2. **Backfill** from the child table:
@@ -183,7 +197,9 @@ Each `Up` does, in order:
 4. `DropIndex` the old plain index, then `CreateIndex` the new partial unique
    one.
 
-`Down` reverses: drop the unique index, recreate the plain one, drop the column.
+`Down` reverses across the pair: drop the unique index, recreate the plain one,
+drop the column. The backfill is not undone — its values stay correct while the
+column exists, and the column goes with the migration that added it.
 
 Both `*DbContextModelSnapshot.cs` files regenerate.
 
@@ -205,8 +221,19 @@ they are allowed to differ, the failure mode is a create the handler admits and
 the database refuses, surfacing as the generic code where the specific one was
 expected. Making them identical is not an optimisation.
 
-The stale comments at `LayoutRepository.cs:33-39` ("the DB index is permissive")
-and its overlay twin must go with the change.
+The stale comment at `LayoutRepository.cs:33-36` ("the DB index is permissive")
+goes with the change. Lines 37-39 are the fab comment and stay — this section
+and `tasks.md` T017 both said "33-39", which would have deleted a correct
+comment along with the wrong one.
+
+**Three copies of this predicate exist, not two.** The two in-memory fakes —
+`tests/OverlayDesigner.Application.Tests/Fakes/InMemoryOverlayRepository.cs` and
+`tests/LayoutComposition.Application.Tests/Fakes/InMemoryLayoutRepository.cs` —
+each duplicate it, and switching only the real repositories would leave both
+Application suites green against a rule production no longer applies. They are
+scaffolding standing in for the repository, so updating them is not editing a
+test's assertion; the handler tests above them are untouched and must stay
+untouched. Added phase 4b: neither this section nor T008/T017 mentioned them.
 
 ---
 
