@@ -12,12 +12,13 @@ namespace SmartSentinelEye.Identity.Infrastructure.Tests.KeycloakAdmin;
 ///
 /// <para>
 /// <c>KioskPrivilegeSweep.SweepAsync</c> guards each per-kiosk strip, but its
-/// enumeration — <c>KioskPrivilegeSweep.cs:44</c> — sits <i>outside</i> that
-/// try. A provider that is down or refusing throws straight out of the pass. A
-/// hosted service that throws from <c>StartAsync</c> stops the host, so wiring
-/// the sweep in as written would make the Identity API's boot depend on Keycloak
-/// being up: the API would go dark for the duration of a Keycloak restart, and
-/// the sweep it was running is a background reconciliation nobody is waiting on.
+/// enumeration — the first statement of <c>SweepAsync</c>,
+/// <c>KioskPrivilegeSweep.cs:56</c> — sits <i>outside</i> that try. A provider
+/// that is down or refusing throws straight out of the pass. A hosted service
+/// that throws from <c>StartAsync</c> stops the host, so wiring the sweep in as
+/// written would make the Identity API's boot depend on Keycloak being up: the
+/// API would go dark for the duration of a Keycloak restart, and the sweep it
+/// was running is a background reconciliation nobody is waiting on.
 /// </para>
 ///
 /// <para>
@@ -49,10 +50,12 @@ public class KioskPrivilegeSweepStartupTests
         Exception? thrown = await Record.ExceptionAsync(() => StartAllAsync(startupServices, provider));
 
         thrown.ShouldBeNull(
-            "the enumeration at KioskPrivilegeSweep.cs:44 is outside the try, so an unreachable "
-            + "provider throws out of the pass; a startup service that lets that escape takes the "
-            + "Identity API down with it, and Identity must serve requests whether or not Keycloak "
-            + "is up. The failure belongs in the log, and the next start tries again.");
+            "the enumeration that opens SweepAsync (KioskPrivilegeSweep.cs:56) is outside the "
+            + "try, so an unreachable provider throws out of the pass; a startup service that "
+            + "lets that escape takes the Identity API down with it, and Identity must serve "
+            + "requests whether or not Keycloak is up. The failure belongs in the log, and the "
+            + "next start tries again.");
+
 
         keycloak.EnumerationAttempts.ShouldBe(
             1,
