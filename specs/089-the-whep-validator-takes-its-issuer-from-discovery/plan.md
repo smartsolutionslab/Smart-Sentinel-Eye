@@ -87,12 +87,24 @@ tolerate. Concatenating an empty `null` would be the same result written more
 obscurely.
 
 **No guard is added on `configuration.Issuer`.** If a discovery document lacks
-`issuer`, `ValidIssuers` carries a null entry, `Validators.ValidateIssuer`
-throws `SecurityTokenInvalidIssuerException`, the existing `catch
+`issuer`, or reports it as `""`, `ValidIssuers` carries an entry that cannot
+match any non-empty `iss`, `Validators.ValidateIssuer` throws
+`SecurityTokenInvalidIssuerException`, the existing `catch
 (SecurityTokenException)` at `:79` returns `None`, and MediaMTX gets a clean
-401. That is the same failure the bearer pipeline produces from the same input.
+401 — verified at phase 6 for both the missing-key and empty-string shapes.
+That is the same failure the bearer pipeline produces from the same input.
 ADR-0036: no drive-by error handling; validate at trust boundaries only, and
 this *is* the trust boundary, already validating.
+
+**This is the null-*issuer* case only, not discovery being unreachable.**
+When `oidc.GetConfigurationAsync` on the line above cannot reach discovery at
+all, it throws `InvalidOperationException` (IDX20803) — neither a
+`SecurityTokenException` nor an `ArgumentException` — which propagates
+uncaught out of `ValidateAsync` and `AuthorizeWhepCommandHandler.HandleAsync`,
+giving MediaMTX a 500 rather than a 401. Pre-existing: the same await already
+existed for `SigningKeys` before this change, so this diff neither introduces
+nor worsens it. Access is still refused, so it is an availability gap, not an
+authorization one. Out of scope here; follow-up issue recommended.
 
 **`Ensure.That`** (ADR-0105) is already on the constructor's `options` and is
 unchanged. The signature carrying `CancellationToken` last (ADR-0049) is
