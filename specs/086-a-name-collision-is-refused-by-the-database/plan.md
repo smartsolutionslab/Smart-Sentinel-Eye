@@ -68,7 +68,7 @@ rule is untouched — nothing here goes near `Shared.Contracts`).
 **`Api` and `Application` are deliberately empty.** The endpoints already declare
 `409`; `UniqueConstraintExceptionHandler` is registered centrally in
 `ServiceDefaults` and matches on SQLSTATE `23505` generically
-(`UniqueConstraintExceptionHandler.cs:118-124`), **not** on index names — so the
+(`UniqueConstraintExceptionHandler.cs:124-130`), **not** on index names — so the
 two new indexes need no registration anywhere. This was verified, not assumed:
 the issue asserted it and the assertion holds.
 
@@ -134,7 +134,7 @@ concurrency token. `Version` remains the EF token; `If-Match` remains layer 1.
 The unique index adds a third, different refusal — a name collision, answered
 `409 RESOURCE_ALREADY_EXISTS` — which ADR-0119's vocabulary rule already
 separates from a stale-version `409`
-(`UniqueConstraintExceptionHandler.cs:38-49`).
+(`UniqueConstraintExceptionHandler.cs:44-55`).
 
 ---
 

@@ -255,6 +255,18 @@ other context already exposes, and `UniqueConstraintExceptionHandler`'s doc
 explains why the shared layer stays generic. **No OpenAPI change** — the status
 is unchanged and problem-details bodies are not enumerated per code.
 
+**Four endpoints change their error surface, not two.** The paragraph above was
+written about the two creates and missed the two branch endpoints until phase 6.
+`BranchDraft` is the only mutator that **clears** the marker, so branching a
+fully-archived chain updates its row *into* the partial index — and
+`BranchDraftRevisionCommandHandler` runs its own read-then-write name check on
+exactly that path, because an archived chain's name goes free while it is
+stranded and may have been taken (FR-009). The same race therefore exists at
+`POST /overlays/{id}/draft` and `POST /layouts/{id}/draft`. A caller who loses it
+now gets `409 RESOURCE_ALREADY_EXISTS` where it previously got `201` — having
+silently branched a chain onto a name another chain already holds. Still no
+OpenAPI change: both mappings already declare `409`.
+
 **A retried request is unaffected.** `POST` is not retried by default
 (ADR-0143), and an `Idempotency-Key` replay returns the original answer
 (ADR-0142). The race this closes is two *distinct* callers, not a retry.
@@ -369,3 +381,36 @@ work.
 Case-insensitive layout/overlay names; a fab dimension for OverlayDesigner;
 retro-fitting the generic-versus-specific 409 code split; any change to the two
 endpoints' request or response shapes; any frontend change.
+
+---
+
+## 11. Delivery notes (recorded phase 6)
+
+Facts about the commit series rather than about the feature. They are here
+because they outlive a PR body.
+
+**Two commits are red on their own, and that is the sequencing working.** The
+red-first order (`tasks.md`, the prelude above the task tables) puts the marker's
+domain tests in their own commit ahead of the mutator change that satisfies them,
+so `test(overlay): the chain marker does not follow its revisions` and
+`test(layout): the chain marker does not follow its revisions` each land on
+`develop` with four failing tests in that context's domain suite, made green by
+the `feat` commit immediately after. ADR-0087 requires every commit to **build**,
+and both do; it does not require every commit to be green, and red-first could
+not be honoured if it did. Named by subject rather than by SHA because
+rebase-merge renames them. Anyone bisecting a domain-suite failure into either
+commit has found the sequencing, not a regression.
+
+**Why the rebases replay cleanly — for a different reason than the one first
+given.** The premise recorded during phase 4b was that the newer `develop`
+"touches nothing under `src/LayoutComposition` or `src/OverlayDesigner`". That is
+**false**: `git diff 921dde95 4a514e81` shows
+`src/LayoutComposition/Api/LayoutEndpoints.cs +7` and
+`src/OverlayDesigner/Api/OverlayEndpoints.cs +31`, from spec 085. The conclusion
+survives on the reason that actually holds — both are purely additive
+`.ProducesProblem(StatusCodes.Status403Forbidden)` calls plus comments, nothing
+removed or renamed, and **no commit on this branch touches either `*.Api`
+project**. The branch's files are Domain, Infrastructure, the two
+Application-test fakes, `ServiceDefaults`, the two new integration test files and
+these three artifacts; verified with `git log --name-only`, not inferred from
+directory names.

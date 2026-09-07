@@ -13,7 +13,7 @@ namespace SmartSentinelEye.ServiceDefaults.Persistence;
 /// <see cref="ConcurrencyConflictExceptionHandler"/>.
 ///
 /// <para>
-/// Every uniqueness rule in this product is enforced twice: an
+/// The product's posture is that every uniqueness rule is enforced twice: an
 /// application-level check that produces an answer an operator can act on, and
 /// a unique index that guarantees the invariant. The two are <b>not atomic</b>,
 /// so another writer can take the name in between. Before this handler existed
@@ -22,14 +22,20 @@ namespace SmartSentinelEye.ServiceDefaults.Persistence;
 /// </para>
 ///
 /// <para>
-/// That first sentence was <b>false from the day it was written until spec
-/// 086</b>. Layout and overlay names — the only two revision-chain aggregates,
-/// whose rule is about a state living on a child table — had the check and no
-/// index, so the case this handler exists for could not arise for them and a
-/// second writer simply won. <c>ux_layouts_fab_name_active</c> and
-/// <c>ux_overlays_name_active</c> closed it. Recorded rather than quietly
-/// corrected: a doc comment asserting a product-wide posture is exactly the kind
-/// of claim that goes unchecked, and it went unchecked for two contexts.
+/// That posture did <b>not</b> hold for two contexts, from the day this comment
+/// was written until spec 086. Layout and overlay names — the only two
+/// revision-chain aggregates, whose rule is about a state living on a child
+/// table — had the check and no index, so the case this handler exists for could
+/// not arise for them and a second writer simply won.
+/// <c>ux_layouts_fab_name_active</c> and <c>ux_overlays_name_active</c> close
+/// <b>those two known gaps</b>, and that is the whole of what spec 086
+/// establishes. It does not re-establish the word "every": the search that found
+/// these two counted <c>.IsUnique()</c> <i>indexes</i>, so it can say which
+/// rules have an index and cannot say which application checks lack one.
+/// Recorded rather than quietly corrected — a doc comment asserting a
+/// product-wide posture is exactly the kind of claim that goes unchecked, and it
+/// went unchecked for two contexts. Replacing one unchecked claim with another
+/// would not be the fix.
 /// </para>
 ///
 /// <para>
