@@ -120,7 +120,7 @@ jobs:
         run: pnpm -r --filter "./apps/**" lint
 
       - name: Typecheck
-        run: pnpm -r --filter "./apps/**" typecheck
+        run: pnpm typecheck
 
       - name: Test
         run: pnpm -r --filter "./apps/**" test

@@ -48,7 +48,7 @@ async function screenUnderOutage(
 test('several screens recovering from one outage do not arrive together', async ({ browser }) => {
   test.setTimeout(600_000);
 
-  const screens = [];
+  const screens: Awaited<ReturnType<typeof screenUnderOutage>>[] = [];
   for (let index = 0; index < SCREENS; index += 1) {
     screens.push(await screenUnderOutage(browser));
   }

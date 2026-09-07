@@ -18,6 +18,9 @@ const WALL_PASSWORD = 'Wall-munich-1234';
 /** Every scope the issued token actually carries. */
 function scopesOf(accessToken: string): string[] {
   const [, payload] = accessToken.split('.');
+  if (payload === undefined) {
+    throw new Error('a wall access token should have a payload segment');
+  }
   const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { scope?: string };
   return (claims.scope ?? '').split(' ').filter(Boolean);
 }
