@@ -67,8 +67,18 @@ public class IntegrationTestSelectionTests
         @"^[ \t]*\[\s*Collection\(\s*AspireCollection\.Name\s*\)\s*\]",
         RegexOptions.Multiline | RegexOptions.Compiled);
 
+    /// <summary>
+    /// Constrained to the four categories <c>ci.yml</c> actually knows about —
+    /// the cheap-step selector at <see cref="CheapStep"/> and the exclusion
+    /// filter at <see cref="ExcludeStep"/>. Matching <c>[Trait("Category"</c>
+    /// without reading the value would credit any spelling:
+    /// <c>[Trait("Category", "FixtureLogick")]</c> would satisfy the guard
+    /// while selecting nothing in either job, running only in the thirty-minute
+    /// Docker job — the precise omission this guard exists to close, now
+    /// behind a declaration that looks correct.
+    /// </summary>
     private static readonly Regex CategoryDeclaration = new(
-        @"^[ \t]*\[\s*Trait\(\s*""Category""",
+        @"^[ \t]*\[\s*Trait\(\s*""Category""\s*,\s*""(FixtureLogic|Measurement|Disruptive|Maintenance)""\s*\)\s*\]",
         RegexOptions.Multiline | RegexOptions.Compiled);
 
     [Fact]
@@ -176,6 +186,31 @@ public class IntegrationTestSelectionTests
     }
 
     /// <summary>
+    /// A misspelled category is not a declaration <see cref="CategoryDeclaration"/> credits.
+    /// Before this test existed, matching <c>[Trait("Category"</c> without reading the value
+    /// meant <c>[Trait("Category", "FixtureLogick")]</c> satisfied the guard while
+    /// <c>ci.yml:72</c> and <c>ci.yml:179</c> select and exclude neither — the class would run
+    /// only in the thirty-minute Docker job, exactly the omission this guard exists to close,
+    /// now behind a declaration that looks correct.
+    /// </summary>
+    [Fact]
+    public void A_misspelled_category_value_is_not_a_declaration()
+    {
+        const string source = """
+            [Trait("Category", "FixtureLogick")]
+            public class MisspelledCategoryTests
+            {
+                [Fact]
+                public void It_holds() { }
+            }
+            """;
+
+        Describe("synthetic/MisspelledCategoryTests.cs", source).Undeclared.ShouldBeTrue(
+            "\"FixtureLogick\" selects nothing at ci.yml:72 and is excluded by nothing at "
+            + "ci.yml:179, so it is not one of the four declarations the guard recognises.");
+    }
+
+    /// <summary>
     /// No soft edge: the obligation attaches to classes that produce a verdict.
     /// A helper type produces none, and demanding a category of it would teach
     /// people to annotate files rather than to declare where tests run. The
@@ -246,6 +281,11 @@ public class IntegrationTestSelectionTests
             .OrderBy(file => file.Path, StringComparer.Ordinal)
             .Select(file => $"  {file.Path} ({file.Facts} tests)"));
 
+        message.Add(string.Empty);
+        message.Add(
+            "Only \"FixtureLogic\", \"Measurement\", \"Disruptive\" and \"Maintenance\" count — that is "
+            + $"the exact set {CheapStep} selects and {ExcludeStep} excludes, so any other spelling is "
+            + "silently undeclared, not merely unrecognised.");
         message.Add(string.Empty);
         message.Add(
             "Add one of the legitimate declarations — the correct fix differs between them and the "
