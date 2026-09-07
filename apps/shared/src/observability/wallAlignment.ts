@@ -134,8 +134,15 @@ export function lagSampleFrom(report: Map<string, unknown>): LagSample | null {
  * Pure, and it logs nothing (spec 095 FR-007). The caller decides whether a
  * name is worth saying out loud, and how often.
  * </p>
+ *
+ * <p>
+ * <b>Answers one of {@link REQUIRED_LAG_FIELDS}, not any string.</b> The union
+ * costs nothing — it is the same declaration the sampler reads — and it makes a
+ * caller comparing against a misspelled counter a compile error rather than a
+ * comparison that is silently always false. Found in code review.
+ * </p>
  */
-export function missingLagFieldIn(report: Map<string, unknown>): string | null {
+export function missingLagFieldIn(report: Map<string, unknown>): (typeof REQUIRED_LAG_FIELDS)[number] | null {
   const stat = inboundVideoStatIn(report);
   if (stat === null) return null;
   return REQUIRED_LAG_FIELDS.find((field) => typeof stat[field] !== 'number') ?? null;

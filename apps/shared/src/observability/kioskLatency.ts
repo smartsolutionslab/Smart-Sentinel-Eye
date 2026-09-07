@@ -224,8 +224,13 @@ export function decodeSampleFrom(report: Map<string, unknown>): DecodeSample | n
  * that has not started producing, which happens on every mount (spec 095
  * FR-002). Pure, and it logs nothing (FR-007).
  * </p>
+ *
+ * <p>
+ * <b>Answers one of {@link REQUIRED_DECODE_FIELDS}, not any string</b> — see
+ * <c>missingLagFieldIn</c> for why.
+ * </p>
  */
-export function missingDecodeFieldIn(report: Map<string, unknown>): string | null {
+export function missingDecodeFieldIn(report: Map<string, unknown>): (typeof REQUIRED_DECODE_FIELDS)[number] | null {
   const stat = inboundVideoStatIn(report);
   if (stat === null) return null;
   return REQUIRED_DECODE_FIELDS.find((field) => typeof stat[field] !== 'number') ?? null;
