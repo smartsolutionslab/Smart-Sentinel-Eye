@@ -13,8 +13,8 @@
     "test": "pnpm -r --filter \"./apps/**\" test",
     "typecheck": "pnpm -r --filter \"./apps/**\" typecheck && pnpm typecheck:e2e",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json --noEmit",
-    "format": "prettier --write \"apps/**/*.{ts,tsx,js,jsx,json,css,md,yaml,yml}\"",
-    "format:check": "prettier --check \"apps/**/*.{ts,tsx,js,jsx,json,css,md,yaml,yml}\"",
+    "format": "prettier --write \"{apps,e2e}/**/*.{ts,tsx,js,jsx,json,css,md,yaml,yml}\"",
+    "format:check": "prettier --check \"{apps,e2e}/**/*.{ts,tsx,js,jsx,json,css,md,yaml,yml}\"",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium"
   },
