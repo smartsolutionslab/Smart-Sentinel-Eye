@@ -75,6 +75,21 @@ public class ResilienceRegistrationTests
 
     private const string Narrowing = "IdempotentRetry.RetryIdempotentMethodsOnly";
 
+    private const string FixtureWiringSite = "tests/Integration.Tests/Fixtures/AspireFixture.cs";
+
+    /// <summary>
+    /// The wire between the defaults and the clients, and the one thing neither this
+    /// guard nor <c>FixtureRetryPolicyTests</c> observed. That suite calls
+    /// <c>FixtureHttpClients.Configure</c> directly and this scan reads registration
+    /// text; delete this call and both stay green while every client the fixture hands
+    /// out has no resilience handler at all. <c>POST</c> is incidentally safe that way,
+    /// so the POST facts pass for the wrong reason, while the <c>GET</c> and <c>PUT</c>
+    /// retries the suite relies on against a still-warming stack vanish — the
+    /// latent-flake class the fix was supposed to close, reintroducible with nothing red
+    /// anywhere.
+    /// </summary>
+    private const string FixtureWiring = "ConfigureHttpClientDefaults(FixtureHttpClients.Configure)";
+
     [Fact]
     public void The_standard_resilience_handler_is_called_exactly_once_across_src()
     {
@@ -173,6 +188,18 @@ public class ResilienceRegistrationTests
     public void Every_resilience_registration_under_the_tests_declares_the_predicate()
     {
         Dictionary<string, string> sources = ReadSources(TestTree);
+
+        bool wired = sources.TryGetValue(FixtureWiringSite, out string? fixture)
+            && CodeLines(fixture).Any(line => line.Contains(FixtureWiring, StringComparison.Ordinal));
+
+        wired.ShouldBeTrue(
+            $"{FixtureWiringSite} is expected to apply the fixture's client defaults with "
+            + $"{FixtureWiring}, and without that call the narrowing below is configuration nothing "
+            + "reads. Every client the fixture hands out would be built with no resilience handler at "
+            + "all — which this guard cannot see, because it reads registrations, and which "
+            + "FixtureRetryPolicyTests cannot see either, because it calls FixtureHttpClients.Configure "
+            + "itself. POST would still be attempted once, for the wrong reason; the GET and PUT "
+            + "retries would be gone.");
 
         (string Path, string Line)[] registrations = [.. sources
             .Where(file => !file.Key.StartsWith(ExemptTestProject, StringComparison.Ordinal))
