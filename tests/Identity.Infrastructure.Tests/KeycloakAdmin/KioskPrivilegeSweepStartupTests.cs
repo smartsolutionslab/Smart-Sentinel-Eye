@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using SmartSentinelEye.Identity.Application.KeycloakAdmin;
+using SmartSentinelEye.Identity.Infrastructure.KeycloakAdmin;
 using SmartSentinelEye.Identity.Infrastructure.Tests.Fakes;
 
 namespace SmartSentinelEye.Identity.Infrastructure.Tests.KeycloakAdmin;
@@ -42,10 +43,15 @@ public class KioskPrivilegeSweepStartupTests
         UnreachableKeycloakAdminClient keycloak = new();
         using ServiceProvider provider = Compose(keycloak, out Type[] startupServices);
 
-        startupServices.ShouldNotBeEmpty(
-            "AddIdentityInfrastructure registers no startup service of Identity's own, so there is "
-            + "nothing to drive: the pass that would have to survive an unreachable provider does "
-            + "not run at all (issue #2132).");
+        // ShouldContain, not ShouldNotBeEmpty: the message names
+        // KioskPrivilegeSweep's pass, and a count-only assertion stays green
+        // when a second startup service joins this assembly and this
+        // registration goes.
+        startupServices.ShouldContain(
+            typeof(KioskPrivilegeSweepHostedService),
+            "AddIdentityInfrastructure registers no startup service that drives KioskPrivilegeSweep, "
+            + "so there is nothing to drive: the pass that would have to survive an unreachable "
+            + "provider does not run at all (issue #2132).");
 
         Exception? thrown = await Record.ExceptionAsync(() => StartAllAsync(startupServices, provider));
 
@@ -55,7 +61,6 @@ public class KioskPrivilegeSweepStartupTests
             + "lets that escape takes the Identity API down with it, and Identity must serve "
             + "requests whether or not Keycloak is up. The failure belongs in the log, and the "
             + "next start tries again.");
-
 
         keycloak.EnumerationAttempts.ShouldBe(
             1,

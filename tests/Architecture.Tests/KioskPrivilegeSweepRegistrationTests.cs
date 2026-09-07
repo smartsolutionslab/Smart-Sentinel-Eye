@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using SmartSentinelEye.Identity.Application.KeycloakAdmin;
 using SmartSentinelEye.Identity.Infrastructure;
+using SmartSentinelEye.Identity.Infrastructure.KeycloakAdmin;
 
 namespace SmartSentinelEye.Architecture.Tests;
 
@@ -122,9 +123,15 @@ public class KioskPrivilegeSweepRegistrationTests
             .Select(descriptor => descriptor.ImplementationType!)
             .ToArray();
 
-        startupServices.ShouldNotBeEmpty(
-            "AddIdentityInfrastructure registers no startup service of Identity's own, so nothing "
-            + "drives KioskPrivilegeSweep when the Identity API starts. A client stamped "
+        // ShouldContain, not ShouldNotBeEmpty: the message below is about
+        // KioskPrivilegeSweep, and an assertion that only counts startup
+        // services stays green when a second, unrelated one is added to this
+        // assembly and this registration is deleted — the message would then be
+        // false and nothing would say so.
+        startupServices.ShouldContain(
+            typeof(KioskPrivilegeSweepHostedService),
+            "AddIdentityInfrastructure registers no startup service that drives KioskPrivilegeSweep "
+            + "when the Identity API starts. A client stamped "
             + "sse.kind=kiosk that HttpKeycloakAdminClient.TryDeleteClientAsync could not remove "
             + "keeps offline_access for as long as the realm lives, and the best-effort comment "
             + "in TryDeleteClientAsync (HttpKeycloakAdminClient.cs:363) delegates that case "
