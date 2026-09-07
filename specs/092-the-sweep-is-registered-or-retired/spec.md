@@ -101,10 +101,22 @@ ADR-0134 §Decision 1 already decides this, in terms:
 > Enrolment removes it as part of creating a kiosk, and a startup sweep covers
 > the kiosks enrolled before this existed.
 
-The sweep is a *named component of an Accepted decision*. Registering it makes
-that sentence true; it does not choose between alternatives, move a boundary,
-change a technology, or alter a cross-context contract. **Nothing is being
-decided; something recorded as decided is being connected.**
+The sweep is a *named component of an Accepted decision*. Registering it **makes
+the mechanism that sentence names exist**; it does not choose between
+alternatives, move a boundary, change a technology, or alter a cross-context
+contract. **Nothing is being decided; something recorded as decided is being
+connected.**
+
+> **Corrected at phase 6.** This paragraph originally said registering "makes
+> that sentence true", and the sentence is *"a startup sweep covers the kiosks
+> enrolled before this existed"*. **Registering cannot make that true**, because
+> this spec's own §"The verdict" proves the population it names empty in every
+> environment that exists. What registering makes true is the mechanism half —
+> there is now a startup sweep, and it runs. The justification half of §Decision
+> 1 stays false, and it is false in the way this repository has had to correct
+> before: a stated reason nobody re-checked. **Correcting it wants its own
+> issue**, because amending an ADR is a blocked outcome for the autonomous lane
+> (ADR-0144) and is not attempted here.
 
 The adjudication the issue asks for is worth stating in full, because it points
 the other way and the difference is the whole shape of the change:
@@ -120,8 +132,10 @@ rather than a `tasks.md`.
 One consequence worth recording: **ADR-0134 §Decision 1 has been false since it
 was accepted on 2026-08-31**, in the same way constitution §IV's leg table and
 `specs/052/tasks.md:37` were false — a record nobody checked against what
-happens. This spec makes it true rather than correcting it, which is the cheaper
-of the two repairs and the only one the lane may perform.
+happens. This spec builds the mechanism it names, which is the cheaper of the two
+repairs and the only one the lane may perform. It does **not** make the whole
+sentence true: the population clause stays false, and squaring that with the ADR
+is a separate issue for a human (see the correction above).
 
 ---
 
@@ -283,8 +297,12 @@ matched everything would pass steps 6 and 8 on the way past.
 - **Registration in `AddIdentityInfrastructure`** (ADR-0051), **not** in
   `AddKeycloakAdminClient` — `MigrationRunner/Program.cs:60` calls the latter
   too, and MigrationRunner must not sweep.
-- **`[LoggerMessage]` source-gen** in the existing `Identity/Application/Log.cs`
-  (ADR-0050).
+- **`[LoggerMessage]` source-gen** in the existing `Identity/Infrastructure/Log.cs`
+  (ADR-0050). *Corrected at phase 6: this originally said
+  `Identity/Application/Log.cs`. The new message reports that the **wrapper's**
+  pass failed, and the wrapper is in Infrastructure — plan §VII already placed it
+  next to `CouldNotRemoveHalfEnrolledClient`, which is where it went.
+  `Identity/Application/Log.cs` is unchanged by this branch.*
 - **xUnit + Shouldly + the Aspire fixture** (ADR-0052, ADR-0103). No
   Testcontainers.
 
@@ -355,6 +373,13 @@ test's name and docstring claim — that a second pass does no more than the fir
 — lives in `HttpKeycloakAdminClient`'s `if (assigned.Length == 0) return;` early
 exit, in a project this test assembly does not reference. **The test duplicates
 `Strips_every_kiosk_this_system_enrolled` under an idempotency label.**
+
+**This finding is filed on issue #2151**, alongside
+`Does_not_touch_an_account_this_system_did_not_enrol`, which that issue already
+named. It was found here and it is recorded here, but a finding whose only home
+is a spec.md about to merge is a finding nobody reads again — so it was added to
+the issue that already owns the other one. #2151 argues against deleting either
+test; nothing here changes that.
 
 **`Does_not_touch_an_account_this_system_did_not_enrol` is vacuous in its
 load-bearing half** — already found as F8 in `specs/087-*/spec.md:324`, marked

@@ -107,7 +107,9 @@ ADR-0139, ADR-0144.
   > rests on exactly that absence.
   >
   > A new `tests/Identity.Infrastructure.Tests` project was created instead, in
-  > the slnx, mirroring the three sibling `*.Infrastructure.Tests` projects. It
+  > the slnx, mirroring the **four** sibling `*.Infrastructure.Tests` projects —
+  > Automation, EventIngestion, StreamDistribution and SystemVariables. (Written
+  > as "three" until phase 6; `ls tests/*Infrastructure.Tests` counts four.) It
   > is picked up by `scripts/coverage-check.ps1`, which discovers test projects
   > by directory glob; ADR-0065's thresholds are a fixed list of Domain,
   > Application and Shared projects and does not include Infrastructure, so no
