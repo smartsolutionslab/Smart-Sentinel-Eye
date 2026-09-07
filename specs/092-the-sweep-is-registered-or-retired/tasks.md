@@ -174,13 +174,38 @@ nothing.
 
 ## Phase 4 — Verification
 
-- [ ] **T010** [US1] `verification.md`, following the independent procedure in
+- [x] **T010** [US1] `verification.md`, following the independent procedure in
   spec §"Independent end-to-end test procedure". **Plant the residue before
   restarting** — with the steady-state line now silenced (T008), an empty realm
   produces no output and would read as success. Quote the log line with a
   non-zero count, and the provider's answer before and after. **State what was
   not done**: no production deployment exists, and no environment has ever
   contained a residue client outside this procedure.
+
+  Done at phase 6, having been left unticked with no note behind it — on the
+  one branch where a green suite standing in for an observation is the defect
+  under repair. `verification.md` carries the log line, both accounts' before
+  and after, the steady-state boot that stayed silent, a measured 30 s for the
+  unreachable-provider delay, and **one finding: step 9 of the procedure is
+  wrong.** The line is logged again on the next start, because the guard is on
+  the kiosk count and the residue client is still there.
+
+---
+
+## Phase 5 — Review remediation (phase 6)
+
+- [x] **T011** [US1] The steady-state guard T008 added had no test, and no
+  colour. `KioskPrivilegeSweepSteadyStateTests` in
+  `tests/Identity.Infrastructure.Tests/` — capturing `ILogger`, empty realm
+  logs nothing, one kiosk logs once and names the count. Red observed by
+  counterfactual; `KioskPrivilegeSweepTests` still untouched, and
+  `Identity.Application.Tests` still 61.
+
+- [x] **T012** [US1] All three registration assertions filtered by assembly and
+  then asserted `ShouldNotBeEmpty`, under messages naming
+  `KioskPrivilegeSweep`. A second `IHostedService` in `Identity.Infrastructure`
+  with this registration deleted left all three green and all three messages
+  false. `ShouldContain(typeof(KioskPrivilegeSweepHostedService))` at each.
 
 ---
 
