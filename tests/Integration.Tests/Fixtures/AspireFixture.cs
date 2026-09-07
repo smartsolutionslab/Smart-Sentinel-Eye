@@ -84,6 +84,37 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
         "system-variables",
     ];
 
+    /// <summary>
+    /// The states that mean a waited-for resource ended rather than started.
+    ///
+    /// <para>
+    /// Four of the five are <see cref="KnownResourceStates"/> constants, and the
+    /// set is Aspire's own reading:
+    /// <c>ResourceNotificationService.IsContinuableState</c> stops a
+    /// <c>StopOnResourceUnavailable</c> wait on
+    /// <c>Running | Finished | Exited | FailedToStart | RuntimeUnhealthy</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// The fifth can only ever be a string literal.
+    /// <c>KnownResourceStates.TerminalStates</c> is exactly
+    /// <c>{ Finished, FailedToStart, Exited }</c> and has no <c>Terminated</c>;
+    /// the state exists only as
+    /// <c>Aspire.Hosting.Dcp.Model.ExecutableState.Terminated</c>, which is
+    /// <c>internal</c> and cannot be referenced. It reaches the snapshot because
+    /// <c>ResourceSnapshotBuilder.ToSnapshot(Executable, ...)</c> copies the
+    /// state text through unmodified.
+    /// </para>
+    /// </summary>
+    private static readonly string[] FatalStartupStates =
+    [
+        KnownResourceStates.Finished,
+        KnownResourceStates.Exited,
+        KnownResourceStates.FailedToStart,
+        KnownResourceStates.RuntimeUnhealthy,
+        "Terminated",
+    ];
+
     private readonly ConcurrentDictionary<string, ConcurrentQueue<string>> _logTails = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _logTailFailures = new(StringComparer.Ordinal);
     private CancellationTokenSource? _logCts;
@@ -472,6 +503,27 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
         name is "migrations" || name.StartsWith("migrations-", StringComparison.Ordinal);
 
     /// <summary>
+    /// Whether a resource's state text means it is dead rather than starting.
+    ///
+    /// <para>
+    /// <b>Fail-open on everything else</b>, <see langword="null"/>,
+    /// <c>Unknown</c> and <c>NotStarted</c> included. A false positive here
+    /// fails every integration run on every machine; a false negative leaves the
+    /// behaviour that existed before this check. The asymmetry decides the
+    /// default.
+    /// </para>
+    ///
+    /// <para>
+    /// <c>OrdinalIgnoreCase</c>, matching
+    /// <c>Aspire.StringComparers.ResourceState</c>, which is <c>internal</c> and
+    /// cannot be borrowed — the same reading the migrations gate above makes.
+    /// </para>
+    /// </summary>
+    internal static bool IsFatalStartupState([NotNullWhen(true)] string? stateText) =>
+        stateText is not null
+        && FatalStartupStates.Contains(stateText, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// The whole message a startup timeout throws, assembled where a test can
     /// read it.
     ///
@@ -576,6 +628,47 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
         $"migrations exited with code {exitCode} — a non-zero exit is a failure, not a clean finish.\n" +
         "The startup wait stopped here rather than spending the remaining budget on services that wait for it.\n" +
         $"migrations log:\n{migrationsLog}";
+
+    /// <summary>
+    /// What the fixture says when a resource it waited for is dead by the time
+    /// the last wait has returned.
+    ///
+    /// <para>
+    /// Scoped to one resource, like <see cref="FormatMigrationFailureMessage"/>
+    /// and for its reason: at this instant the others are <c>Running</c> and say
+    /// nothing about the failure, so a forty-five-line state list would be
+    /// forty-four rows of the noise #2061 removed. Two deaths produce two of
+    /// these, joined — nothing here is phrased as a singular verdict that a
+    /// second occurrence would contradict.
+    /// </para>
+    ///
+    /// <para>
+    /// Takes <c>int?</c> where <see cref="FormatMigrationFailureMessage"/> takes
+    /// <c>int</c>: the container branch of <c>ResourceSnapshotBuilder</c> maps
+    /// <c>ExitCode == -1</c> to <see langword="null"/>, so a dead container
+    /// legitimately arrives with no code. Rendering that through an
+    /// <c>int</c>-shaped formatter yields "with exit code  —", and rendering it
+    /// as <c>0</c> would claim a clean exit.
+    /// </para>
+    ///
+    /// <para>
+    /// The verdict sentence deliberately does <b>not</b> say the wait stopped
+    /// rather than spending the remaining budget, which
+    /// <see cref="FormatMigrationFailureMessage"/> says and is true there. This
+    /// check runs after all twelve waits: it spends the whole boot and only then
+    /// refuses to return. It saves no time; what it changes is the verdict.
+    /// </para>
+    /// </summary>
+    internal static string FormatResourceDeathMessage(
+        string name,
+        string state,
+        int? exitCode,
+        string resourceLog) =>
+        $"{name} reached {state} "
+        + (exitCode is null ? "(no exit code recorded)" : $"with exit code {exitCode.Value}")
+        + " — a resource that ends during startup is a failure, not a start.\n"
+        + "The fixture stopped here rather than reporting a healthy boot over a dead resource.\n"
+        + $"{name} log:\n{resourceLog}";
 
     /// <summary>
     /// One section per selected resource, each header saying <i>why</i> that
