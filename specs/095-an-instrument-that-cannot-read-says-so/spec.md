@@ -150,19 +150,36 @@ started producing, it happens on every mount, and reporting it would put a line
 on the console every two seconds for the normal case. Only a stat that is
 *present* with a *missing field* is reported.
 
-**FR-003 — Once per camera per session, not at a cadence.** A missing field is a
-permanent property of the engine, not a stream of dropped events. #2084's
-decade-cadence (`countReportableSkew`, `CellPage.tsx:517-530`) exists because
-frames arrive continuously and each one is a fresh drop; a browser does not
-grow a stats field halfway through a session. One line, then silence.
+**FR-003 — Once per mounted tile per session, not at a cadence.** A missing
+field is a permanent property of the engine, not a stream of dropped events.
+#2084's decade-cadence (`countReportableSkew`, `CellPage.tsx:517-530`) exists
+because frames arrive continuously and each one is a fresh drop; a browser does
+not grow a stats field halfway through a session. One line, then silence.
 Deliberately **not** reusing that helper, and this FR is where that choice is
 recorded.
+
+**The scope is the mounted tile, and the tile is a grid position — not the
+camera.** `CellPage.tsx:290` keys tiles on `positionKey(row, col)`, so a layout
+revision that puts a different camera at (0,0) reuses the same `CameraViewer`
+instance and changes only the `cameraIdentifier` prop. The latch does not reset,
+and the newly-placed camera's equally unreadable instrument is not reported
+again. **That is deliberate.** A missing `totalProcessingDelay`, like an absent
+`jitterBufferTarget` in FR-004, is a property of the browser engine and not of
+the camera, so one line per kiosk is the whole of the information there is to
+give; resetting per camera would multiply an engine-level fact by however many
+cameras pass through a slot overnight. `cameraIdentifier` in the detail
+therefore **names the tile that noticed** rather than scoping the report — and a
+reader who takes it as a scope will wait for a line this code deliberately does
+not emit. Written down because this FR said "once per camera" until code review,
+and an unstated scope is the same defect class the spec exists to close.
 
 **FR-004 — A playout target that did not apply says so.** When
 `setPlayoutTarget` answers `false` for a session whose status is `live`, or
 throws, `CameraViewer` emits one `logResilienceEvent('stream',
-'playout-target-unsupported', { cameraIdentifier })`. Once per mounted tile, on the same
-rule as FR-003 and for the same reason.
+'playout-target-unsupported', { cameraIdentifier })`. Once per mounted tile, on
+the same rule as FR-003 and with the same scope: the tile is a grid position, an
+engine that carries no `jitterBufferTarget` carries none for any camera the wall
+later puts in that slot, and `cameraIdentifier` names the tile that noticed.
 
 **FR-005 — The `?? false` in `useWhepSession` is left alone.**
 `useWhepSession.ts:331-333` answers `false` when `clientRef.current` is still
@@ -303,7 +320,7 @@ playout alignment (≤ 200 ms).** Both are `Implemented: yes`.
 **No measurement is required, and no *before* figure can be cited.**
 
 - The change adds a `console.info` on branches that **already return early**,
-  bounded to at most one line per camera per session (FR-003, FR-004). No
+  bounded to at most one line per mounted tile per session (FR-003, FR-004). No
   timer, interval, render, actuation or network call is added, removed or
   re-timed (FR-006). The path's cost is unchanged by construction, and the
   guard against that claim is FR-006's behaviour-preserving assertions in

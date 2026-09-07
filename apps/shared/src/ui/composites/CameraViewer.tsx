@@ -109,6 +109,20 @@ export function CameraViewer({
   // Spec 095 FR-001/FR-003: a read that fails names the counter it could not
   // read, once per counter for the life of this mounted tile.
   //
+  // ONCE PER MOUNTED TILE, NOT ONCE PER CAMERA — and the tile is a grid
+  // position. `CellPage` keys its tiles on `positionKey(row, col)`, so a layout
+  // revision that puts a different camera at (0,0) leaves this instance mounted
+  // and changes only the `cameraIdentifier` prop; neither ref resets, and the
+  // second camera's equally unreadable instrument says nothing. That is the
+  // intended scope, not an oversight: a missing `totalProcessingDelay` — like an
+  // absent `jitterBufferTarget` below — is a property of the browser engine and
+  // not of the camera, so one line per kiosk is the whole of the information.
+  // Resetting per camera would multiply an engine-level fact by however many
+  // cameras pass through the slot overnight. `cameraIdentifier` in the detail
+  // therefore names the tile that noticed, and does not scope the claim — which
+  // is why the callback's `[cameraIdentifier]` dependency, which reads as
+  // per-camera, does not reset anything.
+  //
   // ONE ref shared by both samplers, keyed by field name. They read the same
   // inbound video stat at different cadences, so a receiver omitting
   // `totalProcessingDelay` would otherwise say so twice — once from each — for
@@ -251,7 +265,9 @@ export function CameraViewer({
   //
   // At component scope for the same reason as the field ref above — this effect
   // is keyed on `status` too, so a flapping tile would otherwise report on every
-  // recovery.
+  // recovery. And on the same scope for the same reason: once per mounted tile,
+  // because an engine that carries no `jitterBufferTarget` carries none for any
+  // camera the wall later puts in this slot.
   const reportedNoPlayoutRef = useRef(false);
 
   // Apply the wall's decision. Undefined and null both mean "leave this tile
