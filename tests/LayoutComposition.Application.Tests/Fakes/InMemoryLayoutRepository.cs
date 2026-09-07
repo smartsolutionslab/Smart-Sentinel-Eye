@@ -30,11 +30,14 @@ public sealed class InMemoryLayoutRepository : ILayoutRepository
         Ensure.That(fab).IsNotNull();
         Ensure.That(name).IsNotNull();
         // Fab first, mirroring the real repository: a name is unique only
-        // within one (spec 017 FR-019).
+        // within one (spec 017 FR-019). Archived-ness likewise mirrors it and
+        // now reads the chain's own marker rather than its revisions (spec 086)
+        // — left on the old predicate this fake would keep the Application
+        // suite green against a rule production no longer applies.
         Layout? found = _layouts.SingleOrDefault(candidate =>
             candidate.Fab == fab &&
             candidate.Name == name &&
-            candidate.Revisions.Any(r => r.State != LayoutRevisionState.Archived));
+            candidate.ArchivedAt is null);
         return Task.FromResult(found is null ? Option<Layout>.None : Option<Layout>.Some(found));
     }
 

@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using SmartSentinelEye.LayoutComposition.Infrastructure.Persistence;
@@ -11,9 +12,11 @@ using SmartSentinelEye.LayoutComposition.Infrastructure.Persistence;
 namespace SmartSentinelEye.LayoutComposition.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(LayoutCompositionDbContext))]
-    partial class LayoutCompositionDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260907012846_LayoutNameUniquePerLiveChain")]
+    partial class LayoutNameUniquePerLiveChain
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

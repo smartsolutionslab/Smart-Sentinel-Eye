@@ -18,11 +18,15 @@ namespace SmartSentinelEye.LayoutComposition.Infrastructure.Persistence.Configur
 /// </para>
 ///
 /// <para>
-/// FR-006 (name unique across non-archived chains) is enforced by
-/// application code in <c>CreateLayoutDraftCommandHandler</c> via the
-/// repository's <c>GetByNameAsync</c> lookup. A function-backed partial
-/// index on the SQL side is deferred — the application check is
-/// authoritative for v1.
+/// FR-006 (name unique across non-archived chains, per fab since spec 017
+/// FR-019) is enforced twice: by <c>CreateLayoutDraftCommandHandler</c> through
+/// the repository's <c>GetByNameAsync</c>, which produces an answer an operator
+/// can act on, and by <c>ux_layouts_fab_name_active</c>, which guarantees it
+/// against two writers who both read nothing. The index needs
+/// <c>layouts.archived_at</c> to exist at all: the rule is about the chain's
+/// revisions, and an index predicate can read only its own row (spec 086 §1.1).
+/// The column is the aggregate's answer written down, not a cache —
+/// <c>Layout.RecomputeArchival</c> restates it after every mutation.
 /// </para>
 /// </summary>
 public sealed class LayoutConfiguration : IEntityTypeConfiguration<Layout>
@@ -83,15 +87,25 @@ public sealed class LayoutConfiguration : IEntityTypeConfiguration<Layout>
             .HasConversion(at => at!.Value, value => ArchivedAt.From(value))
             .IsRequired(false);
 
-        // Replaces ix_layouts_name. The name-uniqueness check is enforced in
-        // CreateLayoutDraftCommandHandler and became fab-scoped with spec 017
-        // (FR-019), so the lookup it backs is now (fab, name).
+        // FR-006 and FR-019 together, in the database rather than only in
+        // CreateLayoutDraftCommandHandler: one live chain per name per fab.
+        // Keyed on (fab, name) and not on name alone — a name is unique only
+        // within one fab, and the narrower key would refuse a second fab's wall
+        // its own North Wall.
         //
-        // Still not unique. The constraint is application-level today, and
-        // promoting it to the database is a behaviour change on data that may
-        // already violate it — a separate decision from fab-scoping.
+        // Replaces ix_layouts_fab_name, a plain btree that read like a
+        // constraint without being one. The comment it replaces deferred this on
+        // the grounds that the data might already violate it; spec 086 §6
+        // measured that and the migration refuses with the collisions listed
+        // rather than assuming the measurement travels.
+        //
+        // Partial, and deliberately so. A total unique index would satisfy every
+        // race test and quietly turn archiving into permanent confiscation of
+        // the word — the reuse clause FR-006 spells out.
         builder.HasIndex(layout => new { layout.Fab, layout.Name })
-            .HasDatabaseName("ix_layouts_fab_name");
+            .HasDatabaseName("ux_layouts_fab_name_active")
+            .IsUnique()
+            .HasFilter("archived_at IS NULL");
 
         // Supports the listing filter, the only query the column alone
         // participates in.
