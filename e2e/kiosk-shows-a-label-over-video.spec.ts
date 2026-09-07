@@ -90,9 +90,7 @@ async function readDecode(page: Page): Promise<DecodeReading> {
   return page.evaluate(() => {
     const videos = Array.from(document.querySelectorAll('video'));
     const perElement = videos.map((video) =>
-      typeof video.getVideoPlaybackQuality === 'function'
-        ? video.getVideoPlaybackQuality().totalVideoFrames
-        : 0,
+      typeof video.getVideoPlaybackQuality === 'function' ? video.getVideoPlaybackQuality().totalVideoFrames : 0,
     );
 
     return {
@@ -186,8 +184,7 @@ test('a tile shows an overlay label over video that is actually decoding', async
 
   await expect(
     page.getByTestId('camera-viewer-overlay-label').first(),
-    `the overlay label is present but does not carry the variable's resolved value ` +
-      `"${wall.variableInitialValue}"`,
+    `the overlay label is present but does not carry the variable's resolved value ` + `"${wall.variableInitialValue}"`,
   ).toContainText(wall.variableInitialValue, { timeout: 30_000 });
 });
 
@@ -294,8 +291,7 @@ function report(measurements: ReadonlyArray<SpanMeasurement>): void {
     // The lower-middle of an even count is not the median either; average the
     // two middles rather than silently picking a side.
     const middle = Math.floor(figures.length / 2);
-    const median =
-      figures.length % 2 === 1 ? figures[middle]! : (figures[middle - 1]! + figures[middle]!) / 2;
+    const median = figures.length % 2 === 1 ? figures[middle]! : (figures[middle - 1]! + figures[middle]!) / 2;
     console.info(`[span] median ${median} ms, range ${figures[0]}-${figures[figures.length - 1]} ms`);
   }
   console.info(`[span] covers: ${LEGS_COVERED.join(', ')}`);

@@ -74,9 +74,7 @@ cleanup('archive the overlays this run published', async ({ page }) => {
   // skip — the opposite of the honest accounting this file exists to give. A
   // sweep that silently did nothing also looks exactly like a clean database,
   // which is how the camera teardown's first run was mistaken for a success.
-  console.info(
-    `[cleanup] archived ${archived} overlay(s); nothing to do ${nothingToDo}; refused ${refused}`,
-  );
+  console.info(`[cleanup] archived ${archived} overlay(s); nothing to do ${nothingToDo}; refused ${refused}`);
   if (outOfTime) {
     console.info('[cleanup] stopped on the deadline — a later run continues where this one left off');
   }
@@ -98,9 +96,7 @@ async function disposableNames(page: Page): Promise<string[]> {
   // then read.
   await expect
     .poll(
-      async () =>
-        (await page.getByRole('listitem').count()) > 0 ||
-        (await page.getByText(/no overlays/i).count()) > 0,
+      async () => (await page.getByRole('listitem').count()) > 0 || (await page.getByText(/no overlays/i).count()) > 0,
       { timeout: 30_000 },
     )
     .toBe(true);

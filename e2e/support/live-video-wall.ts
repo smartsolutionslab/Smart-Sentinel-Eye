@@ -39,8 +39,7 @@ export interface LiveVideoWall {
  * returned 404` and looks like a broken product rather than a broken fixture.
  * </p>
  */
-export const FIXTURE_VIDEO_RTSP_URL =
-  process.env['E2E_FIXTURE_VIDEO_RTSP_URL'] ?? 'rtsp://fixture-video:8554/loop';
+export const FIXTURE_VIDEO_RTSP_URL = process.env['E2E_FIXTURE_VIDEO_RTSP_URL'] ?? 'rtsp://fixture-video:8554/loop';
 
 const handoffPath = resolve(process.cwd(), 'test-results', 'spec056-live-video-wall.json');
 
@@ -87,10 +86,6 @@ export function readLiveVideoWall(): LiveVideoWall {
  * assertion and the count is not.
  * </para>
  */
-export function isDecodeOngoing(
-  framesBefore: number,
-  framesAfter: number,
-  minimumFrames: number,
-): boolean {
+export function isDecodeOngoing(framesBefore: number, framesAfter: number, minimumFrames: number): boolean {
   return framesAfter - framesBefore >= minimumFrames;
 }
