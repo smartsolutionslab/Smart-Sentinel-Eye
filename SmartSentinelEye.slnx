@@ -226,6 +226,9 @@
   <Folder Name="/tests/Identity.Application.Tests/">
     <Project Path="tests/Identity.Application.Tests/SmartSentinelEye.Identity.Application.Tests.csproj" />
   </Folder>
+  <Folder Name="/tests/Identity.Infrastructure.Tests/">
+    <Project Path="tests/Identity.Infrastructure.Tests/SmartSentinelEye.Identity.Infrastructure.Tests.csproj" />
+  </Folder>
   <Folder Name="/tests/AuditObservability.Domain.Tests/">
     <Project Path="tests/AuditObservability.Domain.Tests/SmartSentinelEye.AuditObservability.Domain.Tests.csproj" />
   </Folder>
