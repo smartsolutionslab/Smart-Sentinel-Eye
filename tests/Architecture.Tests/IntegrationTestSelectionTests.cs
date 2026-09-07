@@ -159,6 +159,40 @@ public class IntegrationTestSelectionTests
     }
 
     /// <summary>
+    /// A <c>/*</c> inside a string literal is not a comment opener. <see cref="StripComments"/>
+    /// used to run over the raw file before counting facts, so a glob like <c>"**/*.cs"</c>
+    /// opened a "comment" that a later <c>/* trailing */</c> closed, erasing every
+    /// <c>[Fact]</c> in between and dropping the file out of the population — silent-green,
+    /// not safe-direction, since <c>Undeclared</c> requires <c>Facts &gt; 0</c>. Facts are now
+    /// counted on raw source, so the population gate no longer depends on the stripper at all.
+    /// </summary>
+    [Fact]
+    public void A_string_literal_containing_block_comment_syntax_does_not_erase_the_population()
+    {
+        const string source = """
+            public class GlobTests
+            {
+                private const string Pattern = "**/*.cs";
+
+                [Fact]
+                public void It_holds() { }
+
+                [Fact]
+                public void It_also_holds() { }
+            }
+            /* trailing */
+            """;
+
+        TestFile file = Describe("synthetic/GlobTests.cs", source);
+
+        file.Facts.ShouldBe(2,
+            "the string literal's `/*` is not a comment opener; a naive stripper treating it as "
+            + "one erases both facts and removes the file from the population entirely.");
+        file.Undeclared.ShouldBeTrue(
+            "the class carries neither declaration, and a wrong fact count must not excuse that.");
+    }
+
+    /// <summary>
     /// Trap 2, the same wrong count of 23 by the other route: naming the fixture
     /// in reflection code or in an assertion message is not being decorated with
     /// it — and here the naming exists <i>because</i> the class asserts it does
@@ -315,13 +349,23 @@ public class IntegrationTestSelectionTests
 
     private static TestFile Describe(string path, string source)
     {
-        string code = StripComments(source);
+        // The population gate (Facts > 0) is counted on raw source, not on the
+        // comment-stripped text below: BlockComment is a single naive `/\*.*?\*/`
+        // over the whole file, so a `/*` inside a string literal (a glob like
+        // "**/*.cs") opens a "comment" the stripper never closes correctly,
+        // erasing every fact after it and silently dropping the file out of the
+        // population it should have been checked against. The fact regex is
+        // already line-anchored on `[`, so a comment cannot inflate the count —
+        // only a genuine [Fact]/[Theory] at the start of its own line counts.
+        int facts = FactOrTheory.Count(source);
+
+        string declarations = StripComments(source);
 
         return new TestFile(
             path,
-            FactOrTheory.Count(code),
-            CollectionDeclaration.IsMatch(code),
-            CategoryDeclaration.IsMatch(code));
+            facts,
+            CollectionDeclaration.IsMatch(declarations),
+            CategoryDeclaration.IsMatch(declarations));
     }
 
     /// <summary>
