@@ -65,7 +65,7 @@ The design is built on the actual code paths, not assumptions:
 | Stage | Contract / entry point | Verified shape |
 |---|---|---|
 | MQTT ingress | `MqttSubscriberHostedService` (EventIngestion) subscribes `fab/+/+/+` QoS 1 | topic `fab/{fabId}/{source}/{deviceId}`; body `MqttIngressPayload { eventId:Guid, kind:string, occurredAt:DateTimeOffset, payload:JsonElement }`; payload ≤ 64 KB; `eventId` = idempotency; bad shape/JSON/size → dead-letter |
-| MQTT auth | `mosquitto.conf` + `jwt_auth.go` (ADR-0100) | password = Keycloak RS256 JWT; plugin requires **`azp == MQTT username`** and `iss` ends in `/realms/smart-sentinel-eye`. **ACL (`acl.txt`) still applies per username** |
+| MQTT auth | `mosquitto.conf` + `jwt_auth.go` (ADR-0100) | password = Keycloak RS256 JWT; plugin requires **`aud` contains `smart-sentinel-eye-api`** (spec 090), **`azp == MQTT username`** and `iss` ends in `/realms/smart-sentinel-eye`. **ACL (`acl.txt`) still applies per username** |
 | Persist + fan-out | EventIngestion → `FabEventIngestedV1` (`Shared.Contracts/EventIngestion`) | primitives only; `Source ∈ plc\|inference\|manual\|webhook` |
 | Rule eval | `FabEventIngestedV1Handler` → `RuleEvaluator` (Automation) | candidates keyed by **`(source, kind)`**; AEL predicate over `$.source`,`$.kind`,`$.device`,`$.payload.*`; effects → `OverlayHighlightRequestedV1(OverlayIdentifier, DurationMs)` or `SystemVariableValueRequestedV1` |
 | Highlight delivery | `OverlayHighlightRequestedV1Handler` (LayoutComposition) | SignalR `OverlayHighlightChanged` on `/hubs/layouts`; kiosk applies `ssE-overlay-highlight` CSS for `DurationMs` to **every tile whose overlay matches** (ADR-0112 §5 highlight-all-matching) |
