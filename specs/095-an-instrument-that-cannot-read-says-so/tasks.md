@@ -5,12 +5,19 @@
 **Engineer:** `frontend-engineer` (every file is `.ts`/`.tsx` under
 `apps/shared`; no backend, no infra, no Aspire).
 
-**Phase 4a colour — RED for every task in this spec.** Each one adds a line that
-is not emitted today, which is new behaviour under constitution §Testing. There
-is no behaviour-preserving task here, so there is no characterisation lane and
-no ambiguity to resolve. The behaviour-preserving *claims* (spec FR-006) are
-held down by the **existing** suites, which must pass **unmodified** — that is
-T009, and an assertion that has to be edited is a block, not an adjustment.
+**Phase 4a colour — RED.** The spec adds lines that are not emitted today, which
+is new behaviour under constitution §Testing. There is no behaviour-preserving
+task here, so there is no characterisation lane and no ambiguity to resolve. The
+behaviour-preserving *claims* (spec FR-006) are held down by the **existing**
+suites, which must pass **unmodified** — that is T009, and an assertion that has
+to be edited is a block, not an adjustment.
+
+**The reds that are the evidence are T004-T006** — four failing cases on a
+component that runs, with the doubles asserted reached. **T002 and T003 are
+guards, not reds**: they cover a pure function being introduced, and a commit
+that names an export before it exists does not compile, which spec 061's
+`24e6fc4c` already ruled is not a red test. See T002 for the whole reasoning and
+what changed at phase 4b.
 
 **Format:** `[ID] [P?] [Story] description`. `[P]` = safe to run in parallel
 because the task owns files no other in-flight task writes (ADR-0109).
@@ -50,9 +57,23 @@ because the task owns files no other in-flight task writes (ADR-0109).
   the brief: exercise the omitted-field path) → expect
   `missingLagFieldIn(report) === 'totalProcessingDelay'`; a complete report →
   `null`; a report with no video stat at all → `null`.
-  **Red because `missingLagFieldIn` does not exist** — the failure is a
+  ~~**Red because `missingLagFieldIn` does not exist** — the failure is a
   `TypeError`/type error, and that is the honest red for a function being
-  introduced. Quote it.
+  introduced. Quote it.~~
+
+  **Corrected at phase 4b: T002 and T003 are guards, not reds, and their output
+  is not ADR-0139 evidence.** A commit whose tests name an export that does not
+  exist fails to *compile* (`TS2305 ×2` here), and spec 061's `24e6fc4c` already
+  ruled that **a compile error is not a red test** — it is a commit that breaks
+  ADR-0087's build-on-its-own rule. For a *new pure function* the two cannot
+  both hold: making the commit compile means adding the function, and adding the
+  function makes these six cases pass. So T001's predicates are folded into the
+  same commit as T002/T003, which lands green, and the six cases stand as
+  guards on the predicates' contract.
+
+  **The ADR-0139 evidence for this spec is T004-T006**, where the component
+  runs, the doubles are reached and asserted reached, and zero `[resilience]`
+  lines come out. Those four reds are the ones quoted in the PR body.
 
 - **[T003] [P] [US1]** *Red — the same, for the decode leg.*
   `apps/shared/src/observability/kioskLatency.test.ts`, mirroring T002 over
@@ -62,14 +83,13 @@ because the task owns files no other in-flight task writes (ADR-0109).
 - **[T004] [US1]** *Red — the composite reports the missing field once, and
   only from a stat that exists.*
   `apps/shared/src/ui/composites/CameraViewerAlignment.test.tsx`. Extend the
-  existing `WhepClient` double with a `stats` mock (the current double only has
-  `statsThrows`). Two cases:
+  existing `WhepClient` double with a *reading* `stats` mock. Two cases:
   1. `stats()` resolves a report whose video stat **omits**
      `totalProcessingDelay` → after `advanceTimersByTimeAsync(20_000)`, a
      `console.info` spy has recorded **exactly one** `[resilience]` call with
-     `{subsystem: 'stream', transition: 'stats-field-missing', camera: 'cam-42',
-     field: 'totalProcessingDelay'}` — one, not ten, though the lag sampler
-     ticked ten times.
+     `{subsystem: 'stream', transition: 'stats-field-missing',
+     cameraIdentifier: 'cam-42', field: 'totalProcessingDelay'}` — one, not ten,
+     though the lag sampler ticked ten times.
   2. `stats()` resolves a report with **no** `inbound-rtp` video stat → **zero**
      `stats-field-missing` calls (spec FR-002; plan risk R2).
 
@@ -81,12 +101,18 @@ because the task owns files no other in-flight task writes (ADR-0109).
   Depends on T002 landing the predicate's *name*; may be written in parallel
   with it and run after.
 
+  **Corrected at phase 4b:** this task said *"the current double only has
+  `statsThrows`"*. It has `setPlayoutTargetThrows` too, and T005 depends on
+  that half being swappable — a task that under-describes the double it is
+  extending invites the extension that clobbers the other case.
+
 - **[T005] [US1]** *Red — a playout target that never applies says so.*
   Same file. A double whose `setPlayoutTarget` returns `false` (the
   browser-capability case — distinct from the existing `setPlayoutTargetThrows`
   double). With `playoutTargetMilliseconds={120}` and 20 s of timers: exactly
-  one `[resilience]` `{transition: 'playout-target-unsupported', camera:
-  'cam-42'}`, the double was called, and `container.querySelector('video')` is
+  one `[resilience]` `{transition: 'playout-target-unsupported',
+  cameraIdentifier: 'cam-42'}`, the double was called, and
+  `container.querySelector('video')` is
   still non-null (spec 045 FR-013 survives).
   **Red: today the boolean is discarded and nothing is emitted.**
 
@@ -109,8 +135,8 @@ and what goes in the PR body. The engineer may not edit these tests to pass
   sampler and the lag sampler, on the `current === null` branch only, call the
   matching predicate and, when it names a field not already in
   `reportedMissingFieldsRef` (a `useRef<Set<string>>` at component scope), add
-  it and `logResilienceEvent('stream', 'stats-field-missing', {camera:
-  cameraIdentifier, field})`. One shared ref across both samplers (plan
+  it and `logResilienceEvent('stream', 'stats-field-missing', {cameraIdentifier,
+  field})`. One shared ref across both samplers (plan
   §"Where the once-per-session state lives"). Nothing else in either effect
   changes — same interval, same gating, same payloads.
   Depends on **T001, T004**.
@@ -119,8 +145,8 @@ and what goes in the PR body. The engineer may not edit these tests to pass
   Same file, the effect at `:217-227`. Capture `setPlayoutTarget(...)`'s
   boolean; treat a thrown call as not-applied; on the first not-applied for a
   `live` session, set `reportedNoPlayoutRef` and
-  `logResilienceEvent('stream', 'playout-target-unsupported', {camera:
-  cameraIdentifier})`. The `try`/`catch` stays and still swallows (spec 045
+  `logResilienceEvent('stream', 'playout-target-unsupported',
+  {cameraIdentifier})`. The `try`/`catch` stays and still swallows (spec 045
   FR-013). `useWhepSession.ts:331-333`'s `?? false` is **not** touched
   (spec FR-005).
   Depends on **T005**. Independent of T007's logic but writes the same file, so
@@ -192,7 +218,8 @@ figure off a running wall. **No cell of §IV's table moves.**
 ## Gate — phase 3
 
 - Tasks are atomic and each names the file it writes.
-- Phase 4a's colour is declared per task: **red, all eleven**.
+- Phase 4a's colour is declared per task: **red**, with T002/T003 recorded at
+  phase 4b as guards on a new pure function rather than reds (see T002).
 - **The board gate:** #2109 is already on Project #13 (status *In Progress*), so
   nothing needs adding — verify with `--limit 2000`, never the 30-item default.
   Per-task issues are **not** created (the repo stopped after spec 028).

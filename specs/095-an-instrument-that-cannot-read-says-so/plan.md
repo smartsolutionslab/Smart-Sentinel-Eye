@@ -92,8 +92,13 @@ Two new `transition` values are added:
 
 | Transition | Subsystem | Detail | Emitted from |
 |---|---|---|---|
-| `stats-field-missing` | `stream` | `{ camera, field }` | `CameraViewer` lag sampler and decode sampler |
-| `playout-target-unsupported` | `stream` | `{ camera }` | `CameraViewer` playout effect |
+| `stats-field-missing` | `stream` | `{ cameraIdentifier, field }` | `CameraViewer` lag sampler and decode sampler |
+| `playout-target-unsupported` | `stream` | `{ cameraIdentifier }` | `CameraViewer` playout effect |
+
+The detail key is `cameraIdentifier` because `useWhepSession.ts:137` — the only
+existing `[resilience]` site that names a camera — spells it that way, and a
+stable observable contract must not carry two spellings of the same thing. The
+artefacts said `camera` until phase 4b; spec FR-001 records the correction.
 
 `subsystem: 'stream'` rather than a new one: `ResilienceSubsystem` is a closed
 union of four, `WhepClient.ts:79` already files a stream-shape defect under
