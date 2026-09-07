@@ -90,6 +90,25 @@ public sealed class RealmProbe(AspireFixture aspire)
             .ToArray();
     }
 
+    /// <summary>
+    /// Removes the probe, and <b>says so when it cannot</b>.
+    ///
+    /// <para>
+    /// The unchecked <c>DeleteAsync</c> this replaces is the same shape as the
+    /// defect issue #2166 reports in <c>TryDeleteClientAsync</c>: a DELETE
+    /// answering 404, 409 or 500 leaves the client behind and nothing reports
+    /// it. Here that would leave a client stamped <c>sse.kind=kiosk</c> in the
+    /// realm the next test in this collection sweeps — a residue the suite
+    /// planted itself, indistinguishable from one it is meant to find.
+    /// </para>
+    ///
+    /// <para>
+    /// Both call sites are <c>finally</c> blocks, so a throw here replaces a
+    /// failure from the body. That is the accepted cost: a cleanup that failed
+    /// silently is how a suite starts lying about the realm it runs against,
+    /// and the message below names the client and the status.
+    /// </para>
+    /// </summary>
     public async Task DeleteAsync(string clientId, CancellationToken cancellationToken)
     {
         using HttpClient admin = await AuthorisedAdminClientAsync(cancellationToken);
@@ -98,8 +117,13 @@ public sealed class RealmProbe(AspireFixture aspire)
             admin, $"admin/realms/{Realm}/clients?clientId={Uri.EscapeDataString(clientId)}", cancellationToken);
         foreach (JsonElement client in clients.EnumerateArray())
         {
-            await admin.DeleteAsync(
+            HttpResponseMessage deleted = await admin.DeleteAsync(
                 $"admin/realms/{Realm}/clients/{client.GetProperty("id").GetString()}", cancellationToken);
+
+            deleted.IsSuccessStatusCode.ShouldBeTrue(
+                $"removing probe client '{clientId}' answered {(int)deleted.StatusCode}; it is still "
+                + "in the realm, stamped as this suite planted it, and the next pass over this "
+                + "realm will read it as residue it did not create");
         }
     }
 
@@ -113,8 +137,13 @@ public sealed class RealmProbe(AspireFixture aspire)
             AdminClientId = AdminClientId,
             AdminClientSecret = AdminClientSecret,
         };
+
+        // One client, not two: the mint happens before the bearer header is
+        // attached below, so the token provider can borrow the same one the
+        // caller will use and dispose. A second client here was created per
+        // call and never disposed.
         KeycloakAdminTokenProvider tokens = new(
-            new FakeHttpClientFactory(aspire.CreateKeycloakClient()),
+            new FakeHttpClientFactory(http),
             Options.Create(options),
             TimeProvider.System,
             NullLogger<KeycloakAdminTokenProvider>.Instance);
