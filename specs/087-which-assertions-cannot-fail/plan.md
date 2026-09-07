@@ -204,8 +204,9 @@ changes no gate. If the name is judged wrong, that is a separate, trivial PR.
 These four classes carry no *excluded* category, so they already run in the
 30-minute `integration` job and will continue to. After the change they **also**
 run in the cheap `backend` job. That is the intended effect — the verdict is
-read earlier — and it duplicates 34 sub-second tests, which is the same shape as
-the three classes already carrying `FixtureLogic`.
+read earlier — and it duplicates 50 sub-second cases (34 `[Fact]`/`[Theory]`
+sites, several carrying `[InlineData]`), which is the same shape as the three
+classes already carrying `FixtureLogic`.
 
 ---
 
@@ -229,14 +230,14 @@ about this change.
 
 | Job | Before | After |
 |---|---|---|
-| `backend` → "Docker-free fixture logic tests" (`ci.yml:72`) | 3 classes | **7 classes**, +34 tests |
+| `backend` → "Docker-free fixture logic tests" (`ci.yml:72`) | 3 classes, 30 cases | **7 classes**, +50 cases (34 sites, 80 total) |
 | `backend` → unit + architecture (`coverage-check.ps1`) | — | +1 architecture test |
 | `integration` (`ci.yml:179`) | unchanged | unchanged |
 | `e2e` | unchanged | unchanged |
 
 **No gate is weakened.** Nothing is deleted, no threshold moves, no analyzer is
 narrowed, no suppression is added. The only change to what CI blocks on is
-*additive*: one new guard, and 34 tests now also read in a cheaper job.
+*additive*: one new guard, and 50 cases now also read in a cheaper job.
 
 ---
 
