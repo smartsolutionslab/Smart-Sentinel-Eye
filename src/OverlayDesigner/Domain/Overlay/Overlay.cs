@@ -141,47 +141,64 @@ public sealed class Overlay : AggregateRoot<OverlayIdentifier>
     }
 
     /// <summary>
-    /// Archives a Draft or Published revision. Idempotent on Archived
-    /// (no event raised, no state change).
+    /// Archives a Draft or Published revision. Idempotent on Archived: no event
+    /// is raised and no revision changes state. The chain marker is still
+    /// restated on that path — see <see cref="RecomputeArchival"/>, where a
+    /// re-archive is the only repair a stale marker has.
     /// </summary>
     public void ArchiveRevision(
         OverlayRevisionNumber number, OperatorIdentifier by, IClock clock)
     {
         Ensure.That(clock).IsNotNull();
         Revision target = RequireRevision(number);
+        DateTimeOffset now = clock.UtcNow;
         if (target.State == OverlayRevisionState.Archived)
         {
+            RecomputeArchival(now);
             return;
         }
 
         bool wasObservable = target.State == OverlayRevisionState.Published;
-        DateTimeOffset now = clock.UtcNow;
         target.Archive(now);
-        RecomputeArchival(now);
         if (wasObservable)
         {
             Raise(new OverlayRevisionArchivedDomainEvent(Id, number, now, by));
         }
+
+        RecomputeArchival(now);
     }
 
     /// <summary>
-    /// Restates <see cref="ArchivedAt"/> from the revisions that decide it, and
-    /// is called at the end of every mutator rather than only the three that can
-    /// currently move the answer. The two that cannot cost one list scan; a
-    /// mutator added later without the call costs the index its meaning.
+    /// Restates <see cref="ArchivedAt"/> from the revisions that decide it, on
+    /// <b>every path through every mutator</b> rather than only the three that
+    /// can currently move the answer. The paths that cannot cost one list scan;
+    /// a mutator added later without the call costs the index its meaning.
     ///
     /// <para>
-    /// The instant is not preserved across a re-entry because it cannot be lost
-    /// by one: no mutator both runs on a fully-archived chain and leaves it
-    /// fully archived. ArchiveRevision returns early on an Archived revision,
-    /// EditDraft refuses a non-Draft, and BranchDraft revives the chain.
+    /// The instant survives a re-entry: a chain that is already fully archived
+    /// keeps the instant it acquired instead of taking the caller's clock.
+    /// <see cref="BranchDraft"/> revives the chain and clears the marker, so a
+    /// later re-archive legitimately takes the new instant.
+    /// </para>
+    ///
+    /// <para>
+    /// <see cref="ArchiveRevision"/>'s idempotent early return calls this too,
+    /// and that is the point rather than symmetry. A fully-archived chain whose
+    /// marker is unset reads as <i>live</i> through the repository's
+    /// name lookup, so archiving stops releasing the name and a legitimate
+    /// reuse is refused <c>409</c> for good: every other mutator refuses a
+    /// fully-archived chain, and <see cref="BranchDraft"/> clears the marker
+    /// rather than setting it. The state is not hypothetical — a chain archived
+    /// by code predating the column, whether through a rolling deploy or a
+    /// developer switching branches against one dev volume, arrives exactly so.
+    /// Re-archiving heals it; nothing else can.
     /// </para>
     /// </summary>
     private void RecomputeArchival(DateTimeOffset now)
     {
         bool fullyArchived = revisions.All(
             revision => revision.State == OverlayRevisionState.Archived);
-        ArchivedAt = fullyArchived ? ArchivedAt.From(now) : null;
+        ArchivedAt = fullyArchived ? (ArchivedAt ?? ArchivedAt.From(now)) : null;
     }
 
     private Revision? CurrentPublishedOrNull() =>
