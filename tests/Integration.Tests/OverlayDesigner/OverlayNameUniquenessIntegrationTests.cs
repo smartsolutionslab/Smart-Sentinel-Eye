@@ -105,10 +105,10 @@ public class OverlayNameUniquenessIntegrationTests(AspireFixture aspire) : IAsyn
     /// The user-visible half: distinct callers who happen to pick the same name
     /// at the same moment. Shaped after
     /// <c>ServiceDefaults.UniquenessRaceIntegrationTests</c>, which is this
-    /// repository own answer to "how do you make the race likely" — every
+    /// repository's own answer to "how do you make the race likely" — every
     /// attempt is dispatched before any is awaited, and there are enough of
     /// them that some pair interleaves without the test becoming a load test.
-    /// Issued sequentially they would be refused by the handler own check and
+    /// Issued sequentially they would be refused by the handler's own check and
     /// prove nothing.
     ///
     /// <para>
@@ -218,7 +218,7 @@ public class OverlayNameUniquenessIntegrationTests(AspireFixture aspire) : IAsyn
     /// <summary>
     /// Spec 037 FR-009 (ADR-0121), unchanged: a stranded chain is recoverable,
     /// but not back onto a name somebody has taken in the meantime. The refusal
-    /// is the handler own and stays specific — the index is a backstop for the
+    /// is the handler's own and stays specific — the index is a backstop for the
     /// race, not a replacement for the check.
     /// </summary>
     [Fact]
