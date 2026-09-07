@@ -1,4 +1,4 @@
-# Tasks 084 — A name collision is refused by the database
+# Tasks 086 — A name collision is refused by the database
 
 **Spec:** `spec.md` · **Plan:** `plan.md` · **Issue:** #2115
 **Status:** Phase 3 (Tasks) — awaiting gate review
