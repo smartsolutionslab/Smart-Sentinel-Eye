@@ -51,6 +51,12 @@ export interface WhepSessionResult {
 const RETRY_BASE_MS = 1_000;
 const RETRY_CAP_MS = 15_000;
 const DISCONNECT_GRACE_MS = 5_000;
+// Spec 002 FR-013 budgets click → first decoded frame at 3 s p95: a session
+// `connected` this long with no frame has already breached it on its own.
+const MEDIA_WATCHDOG_MS = 3_000;
+// 1/12 of the window. A timer rather than requestAnimationFrame, which stops in
+// a background tab and would let the watchdog demote a healthy backgrounded tile.
+const MEDIA_POLL_MS = 250;
 
 function jitteredRetryDelay(attempt: number): number {
   const base = Math.min(RETRY_BASE_MS * 2 ** attempt, RETRY_CAP_MS);
@@ -60,9 +66,29 @@ function jitteredRetryDelay(attempt: number): number {
 }
 
 /**
+ * Whether this browser can be asked how many frames the tile has decoded —
+ * absent from jsdom and Firefox, so checked rather than assumed: gating Live on
+ * an absent instrument says "not live" over good video, forever (FR-005).
+ */
+function canObserveFrames(videoEl: HTMLVideoElement): boolean {
+  return typeof videoEl.getVideoPlaybackQuality === 'function';
+}
+
+/**
+ * Frames this element's decoder has produced, or 0 where it cannot be asked.
+ * The instrument spec 077 §3 decided, read the same way by
+ * `e2e/click-to-first-frame.spec.ts`.
+ */
+function framesProduced(videoEl: HTMLVideoElement): number {
+  return canObserveFrames(videoEl) ? videoEl.getVideoPlaybackQuality().totalVideoFrames : 0;
+}
+
+/**
  * Owns the per-tile stream session state machine (spec 011 data-model §1).
- * "Live" is derived from the RTCPeerConnection state — never from the WHEP
- * POST succeeding — and failed sessions are retried indefinitely with
+ * "Live" means a frame was decoded into this tile's element — never the WHEP
+ * POST succeeding, and never the transport state alone, which is a fact about a
+ * socket that left Live standing over black (spec 094, #2111). Failed sessions,
+ * and sessions that never produce a picture, are retried indefinitely with
  * jittered exponential backoff (FR-001…FR-005).
  */
 export function useWhepSession(options: WhepSessionOptions): WhepSessionResult {
@@ -121,6 +147,18 @@ export function useWhepSession(options: WhepSessionOptions): WhepSessionResult {
     let disposed = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let graceTimer: ReturnType<typeof setTimeout> | null = null;
+    let mediaTimer: ReturnType<typeof setTimeout> | null = null;
+    let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+    // Per session, and only ever set to true: a local of this effect's closure,
+    // created fresh for each WhepClient and unable to outlive one (FR-006).
+    let mediaConfirmed = false;
+
+    const clearMediaTimers = () => {
+      if (mediaTimer !== null) clearTimeout(mediaTimer);
+      if (watchdogTimer !== null) clearTimeout(watchdogTimer);
+      mediaTimer = null;
+      watchdogTimer = null;
+    };
 
     const scheduleRetry = (message: string | null) => {
       if (disposed || retryTimer !== null) return;
@@ -130,6 +168,38 @@ export function useWhepSession(options: WhepSessionOptions): WhepSessionResult {
       retryTimer = setTimeout(() => setRetryNonce((nonce) => nonce + 1), delay);
     };
 
+    const confirmMedia = () => {
+      mediaConfirmed = true;
+      clearMediaTimers();
+      // FR-004: reset where the session demonstrably succeeded. `connected` fires
+      // on every retry of a mediumless source, so resetting there would flatten
+      // the backoff ladder to a fixed cadence forever.
+      attemptRef.current = 0;
+      transitionTo('live');
+    };
+
+    const pollForMedia = () => {
+      if (disposed) return;
+      if (framesProduced(videoEl) > 0) {
+        confirmMedia();
+        return;
+      }
+      mediaTimer = setTimeout(pollForMedia, MEDIA_POLL_MS);
+    };
+
+    const armMediaWatch = () => {
+      // FR-006: confirmation is sticky, so nothing re-arms the watch once a
+      // picture arrived; a blip before one keeps the window already open.
+      if (mediaConfirmed || mediaTimer !== null || watchdogTimer !== null) return;
+      mediaTimer = setTimeout(pollForMedia, MEDIA_POLL_MS);
+      watchdogTimer = setTimeout(() => {
+        // FR-003: no path out of `connected` leaves the tile on Connecting… with
+        // nothing pending — the poll confirms, or this re-enters the ladder.
+        clearMediaTimers();
+        scheduleRetry('No video received. Reconnecting…');
+      }, MEDIA_WATCHDOG_MS);
+    };
+
     const onConnectionStateChange = (state: RTCPeerConnectionState) => {
       if (disposed) return;
       if (state === 'connected') {
@@ -137,8 +207,20 @@ export function useWhepSession(options: WhepSessionOptions): WhepSessionResult {
           clearTimeout(graceTimer);
           graceTimer = null;
         }
-        attemptRef.current = 0;
-        transitionTo('live');
+        if (mediaConfirmed) {
+          // A transport blip on a tile that is already showing video (FR-006).
+          transitionTo('live');
+          return;
+        }
+        if (!canObserveFrames(videoEl)) {
+          // FR-005: absence of a measurement is not evidence of absence of media.
+          // This browser keeps today's behaviour exactly, and there `connected`
+          // is the strongest evidence of success available.
+          attemptRef.current = 0;
+          transitionTo('live');
+          return;
+        }
+        armMediaWatch();
         return;
       }
       if (state === 'failed') {
@@ -174,6 +256,7 @@ export function useWhepSession(options: WhepSessionOptions): WhepSessionResult {
       disposed = true;
       if (retryTimer !== null) clearTimeout(retryTimer);
       if (graceTimer !== null) clearTimeout(graceTimer);
+      clearMediaTimers();
       controller.abort();
       client.close();
       clientRef.current = null;
