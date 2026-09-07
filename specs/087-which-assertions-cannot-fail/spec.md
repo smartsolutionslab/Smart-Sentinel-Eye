@@ -481,8 +481,9 @@ Runs without Docker and without Aspire.
 3. `dotnet test tests/Architecture.Tests -c Release` → **passes**.
 4. `dotnet test tests/Integration.Tests -c Release --filter "Category=FixtureLogic"`
    → the selected count rises from the current 3 classes to 7 classes, and the
-   34 newly-selected tests execute and pass **without Docker running**. This is
-   the observable end-to-end behaviour: the cheap step now reads verdicts it
+   50 newly-selected cases (34 `[Fact]`/`[Theory]` sites, several carrying
+   `[InlineData]`) execute and pass **without Docker running**. This is the
+   observable end-to-end behaviour: the cheap step now reads verdicts it
    previously skipped.
 5. Counterfactual (per the standing "prove a guard by counterfactual" rule):
    remove the trait from one class again and confirm the guard reddens for
