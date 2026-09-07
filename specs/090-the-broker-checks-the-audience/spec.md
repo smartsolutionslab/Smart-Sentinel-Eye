@@ -221,6 +221,20 @@ delete the Keycloak data volume before the first run after this lands.
 Restarting the container is not enough — it keeps the old realm and the
 stack looks perfectly healthy.
 
+**The mitigation has its own second-order consequence.** Dropping the
+Keycloak data volume does not merely retire the pre-#91 clients this
+section is about — it destroys **every** runtime-registered device, kiosk
+and webhook client, because Keycloak's realm data is where they live.
+Identity's own record of them does not go with it:
+`RegisteredClientRepository` persists `RegisteredClient` rows
+(`src/Identity/Domain/RegisteredClient/RegisteredClient.cs`) to Postgres,
+which the volume drop never touches. After the drop, every such row names
+a `ClientId` Keycloak no longer has — a healthy-looking Identity database
+pointing at clients that do not exist, discoverable only when something
+tries to use one. The instruction in the PR body must say both halves:
+drop the volume, and reconcile or clear the now-orphaned
+`RegisteredClient` rows.
+
 ---
 
 ## User stories
