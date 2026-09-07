@@ -11,6 +11,7 @@ namespace SmartSentinelEye.Integration.Tests.AuditObservability;
 /// skewed machine would never be exercised.
 /// </para>
 /// </summary>
+[Trait("Category", "FixtureLogic")]
 public class AttributionVerdictTests
 {
     private static RelativeSkew Skew(double milliseconds, double residualMilliseconds) =>

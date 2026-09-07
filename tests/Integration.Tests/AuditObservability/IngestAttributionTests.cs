@@ -10,6 +10,7 @@ namespace SmartSentinelEye.Integration.Tests.AuditObservability;
 /// as a single confident figure it cannot support.
 /// </para>
 /// </summary>
+[Trait("Category", "FixtureLogic")]
 public class IngestAttributionTests
 {
     private static IngestAttribution Attribution(
