@@ -22,9 +22,15 @@ public sealed class OverlayRepository(
         OverlayName name, CancellationToken cancellationToken)
     {
         Ensure.That(name).IsNotNull();
+        // FR-006 ignores archived chains, and the same predicate has to answer
+        // here and in ux_overlays_name_active. Not for the saved EXISTS over
+        // overlay_revisions: if the check and the index could differ, the gap
+        // would be a create the handler admits and Postgres refuses, reaching
+        // the caller as the generic RESOURCE_ALREADY_EXISTS where the specific
+        // OVERLAY_NAME_TAKEN was earned.
         Overlay? found = await dbContext.Overlays
             .Where(candidate => candidate.Name == name)
-            .Where(candidate => candidate.Revisions.Any(revision => revision.State != OverlayRevisionState.Archived))
+            .Where(candidate => candidate.ArchivedAt == null)
             .FirstOrDefaultAsync(cancellationToken);
         return found is null ? Option<Overlay>.None : Option<Overlay>.Some(found);
     }

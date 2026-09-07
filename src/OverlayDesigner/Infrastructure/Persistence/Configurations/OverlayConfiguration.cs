@@ -17,6 +17,15 @@ namespace SmartSentinelEye.OverlayDesigner.Infrastructure.Persistence.Configurat
 /// </para>
 ///
 /// <para>
+/// Two partial unique indexes, not one. The second —
+/// <c>ux_overlays_name_active</c> — backs FR-006, one live chain per name,
+/// and needs <c>overlays.archived_at</c> to exist at all: the rule is about
+/// the chain's revisions, and an index predicate can read only its own row
+/// (spec 086 §1.1). The column is the aggregate's answer written down, not a
+/// cache — <c>Overlay.RecomputeArchival</c> restates it after every mutation.
+/// </para>
+///
+/// <para>
 /// The <see cref="Label"/> value object is flattened across six columns
 /// rather than mapped as a separate owned entity — kiosks need to render
 /// every Published revision without joins, and Label has no identity of
@@ -75,8 +84,20 @@ public sealed class OverlayConfiguration : IEntityTypeConfiguration<Overlay>
             .HasConversion(at => at!.Value, value => ArchivedAt.From(value))
             .IsRequired(false);
 
+        // FR-006 in the database rather than only in
+        // CreateOverlayDraftCommandHandler: one live chain per name. Replaces
+        // ix_overlays_name, a plain btree that read like a constraint without
+        // being one.
+        //
+        // Partial, and deliberately so. A total unique index would satisfy every
+        // race test and quietly turn archiving into permanent confiscation of
+        // the word — the reuse clause FR-006 spells out, and the same thing
+        // RuleConfiguration and VariableConfiguration each ask the next reader
+        // not to take away.
         builder.HasIndex(overlay => overlay.Name)
-            .HasDatabaseName("ix_overlays_name");
+            .HasDatabaseName("ux_overlays_name_active")
+            .IsUnique()
+            .HasFilter("archived_at IS NULL");
 
         builder.OwnsMany(overlay => overlay.Revisions, revisions =>
         {
