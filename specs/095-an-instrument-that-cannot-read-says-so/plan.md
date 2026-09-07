@@ -78,7 +78,8 @@ holds down:
 4. `presentation_buffer` and `receive_to_decoded` keep their existing gating,
    cadence and payload. No measurement is added, removed or re-shaped.
 5. No report is emitted when there is no `inbound-rtp` video stat (spec FR-002).
-6. At most one line per camera per mounted tile per session (spec FR-003/004).
+6. At most one line per mounted tile per session (spec FR-003/004) — per
+   *tile*, which is a grid position, and not per camera (see FR-003).
 
 ---
 
