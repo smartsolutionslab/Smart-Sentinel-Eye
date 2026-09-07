@@ -248,7 +248,8 @@ reformatted files. Ship after US1 so the P1 diff stays readable.
 
 ### Out of scope — lint
 
-See *Scope* in `plan.md`. A separate issue, argued, not dropped.
+See *Scope* in `plan.md`. A separate issue, argued, not dropped. Filed as
+[#2154](https://github.com/smartsolutionslab/smart-sentinel-eye/issues/2154).
 
 ---
 
