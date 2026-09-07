@@ -49,10 +49,24 @@ public class ResilienceRegistrationTests
     /// </summary>
     private const string SoleRegistrationSite = "src/ServiceDefaults/Extensions.cs";
 
+    private const string SourceTree = "src";
+
+    /// <summary>
+    /// Scoped to the integration fixture's tree rather than to all of
+    /// <c>tests</c>. <c>ServiceDefaults.Tests</c> registers the bare handler on
+    /// purpose — it is testing the handler itself, and
+    /// <c>ResilienceHandlerNestingTests</c> has to be able to construct an
+    /// unnarrowed pipeline in order to describe one. The fixture's clients are not
+    /// testing the handler; they are talking to the stack.
+    /// </summary>
+    private const string IntegrationTestTree = "tests/Integration.Tests";
+
+    private const string Narrowing = "IdempotentRetry.RetryIdempotentMethodsOnly";
+
     [Fact]
     public void The_standard_resilience_handler_is_called_exactly_once_across_src()
     {
-        string[] callers = ReadSources()
+        string[] callers = ReadSources(SourceTree)
             .Where(file => CodeLines(file.Value).Any(line => line.Contains(Registration, StringComparison.Ordinal)))
             .Select(file => file.Key)
             .OrderBy(path => path, StringComparer.Ordinal)
@@ -78,7 +92,7 @@ public class ResilienceRegistrationTests
     [Fact]
     public void The_one_registration_is_the_one_that_reaches_every_client()
     {
-        string extensions = ReadSources()[SoleRegistrationSite];
+        string extensions = ReadSources(SourceTree)[SoleRegistrationSite];
 
         string[] code = [.. CodeLines(extensions)];
 
@@ -108,7 +122,7 @@ public class ResilienceRegistrationTests
     [Fact]
     public void No_client_caps_the_resilience_pipeline_with_its_own_timeout()
     {
-        (string File, string Line)[] finite = ReadSources()
+        (string File, string Line)[] finite = ReadSources(SourceTree)
             .SelectMany(file => CodeLines(file.Value).Select(line => (File: file.Key, Line: line.Trim())))
             .Where(entry => entry.Line.Contains(".Timeout = ", StringComparison.Ordinal))
             .Where(entry => !entry.Line.Contains("Timeout.InfiniteTimeSpan", StringComparison.Ordinal))
@@ -123,6 +137,71 @@ public class ResilienceRegistrationTests
     }
 
     /// <summary>
+    /// The tree ADR-0143's own fix did not reach, and which this guard could not
+    /// see. The narrowing lives inside <c>AddServiceDefaults</c>, no test project
+    /// calls it, and the fixture registered the bare handler — so its clients
+    /// retried <c>POST</c> exactly as if they had opted back in, with no
+    /// <c>RetryEveryMethod()</c> anywhere to grep for. The registration was in
+    /// neither the population the fix changed nor the population this file
+    /// defended, because the reader below was hard-coded to <c>src</c> (#2129).
+    /// </summary>
+    [Fact]
+    public void Every_resilience_registration_under_the_integration_tests_declares_the_predicate()
+    {
+        Dictionary<string, string> sources = ReadSources(IntegrationTestTree);
+
+        string[] registrations = [.. sources
+            .Where(file => Registers(file.Value))
+            .Select(file => file.Key)
+            .OrderBy(path => path, StringComparer.Ordinal)];
+
+        registrations.ShouldNotBeEmpty(
+            $"no resilience registration was found under {IntegrationTestTree} at all, which this guard "
+            + "cannot tell apart from every registration being correct. A source scan over an empty "
+            + "population passes while checking nothing. If the fixture's client configuration moved, "
+            + "point this scan at wherever it went rather than letting it match nothing.");
+
+        string[] unnarrowed = [.. registrations.Where(path => !Narrows(sources[path]))];
+
+        unnarrowed.ShouldBeEmpty(
+            $"the integration fixture does not call AddServiceDefaults, so nothing else applies ADR-0143's "
+            + "narrowing to the clients it hands out. Registered bare, the handler carries the library's "
+            + "own predicate, which reads the outcome and never the method — a POST is retried like a GET, "
+            + "and a POST whose response was lost is indistinguishable from one that never arrived. Pass "
+            + $"{Narrowing} to the registration. Do not reach for RetryEveryMethod(): it is the opt-back-in, "
+            + "and using it here reinstates the defect with a justification attached to it.");
+    }
+
+    /// <summary>
+    /// The counterfactual, without which the fact above rests on its own comment
+    /// — it would read exactly the same if the predicate matched nothing it
+    /// claims to catch.
+    /// </summary>
+    [Fact]
+    public void The_scan_catches_a_registration_that_omits_the_predicate()
+    {
+        const string bare = "        http.AddStandardResilienceHandler();";
+        const string narrowed = "        http.AddStandardResilienceHandler(IdempotentRetry.RetryIdempotentMethodsOnly);";
+        const string described = "        // http.AddStandardResilienceHandler() is what this used to be.";
+
+        Registers(bare).ShouldBeTrue("the bare registration is the shape the guard exists to catch.");
+        Narrows(bare).ShouldBeFalse("nothing in the bare registration names the predicate.");
+
+        Registers(narrowed).ShouldBeTrue();
+        Narrows(narrowed).ShouldBeTrue("the narrowed registration is the shape the guard exists to allow.");
+
+        Registers(described).ShouldBeFalse(
+            "a commented-out registration is prose, not wiring, and a guard that counted prose would flag "
+            + "the file that explains it.");
+    }
+
+    private static bool Registers(string source) =>
+        CodeLines(source).Any(line => line.Contains(Registration, StringComparison.Ordinal));
+
+    private static bool Narrows(string source) =>
+        CodeLines(source).Any(line => line.Contains(Narrowing, StringComparison.Ordinal));
+
+    /// <summary>
     /// Lines with the comment prefix stripped out. The registration is named in
     /// prose in a few places — including in the comment explaining why it must not
     /// be called twice — and a guard that counted those would fail for describing
@@ -131,7 +210,7 @@ public class ResilienceRegistrationTests
     private static IEnumerable<string> CodeLines(string source) =>
         source.Split('\n').Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal));
 
-    private static Dictionary<string, string> ReadSources()
+    private static Dictionary<string, string> ReadSources(string tree)
     {
         DirectoryInfo? candidate = new(AppContext.BaseDirectory);
         while (candidate is not null && !File.Exists(Path.Combine(candidate.FullName, "SmartSentinelEye.slnx")))
@@ -143,8 +222,8 @@ public class ResilienceRegistrationTests
             ?? throw new InvalidOperationException(
                 $"could not locate the repository root above {AppContext.BaseDirectory}");
 
-        string src = Path.Combine(root.FullName, "src");
-        return Directory.EnumerateFiles(src, "*.cs", SearchOption.AllDirectories)
+        string scanned = Path.Combine(root.FullName, tree);
+        return Directory.EnumerateFiles(scanned, "*.cs", SearchOption.AllDirectories)
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
                 && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
             .ToDictionary(
