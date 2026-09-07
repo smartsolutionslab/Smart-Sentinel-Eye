@@ -42,4 +42,24 @@ public class OverlayNameTests
     {
         Should.Throw<ArgumentException>(() => OverlayName.From(raw));
     }
+
+    /// <summary>
+    /// Spec 086 §1.3. Equality is ordinal and there is no normalised form, so
+    /// two names differing only in case are two different names — to the create
+    /// handler and to a Postgres btree on the raw column, identically. That
+    /// agreement is why the partial unique index needs no
+    /// <c>name_normalized</c> companion, and this records the premise rather
+    /// than leaving it implied. Making these names case-insensitive, as
+    /// <c>CameraName</c> became, is a separate user-visible change.
+    /// </summary>
+    [Fact]
+    public void Names_differing_only_in_case_are_not_equal()
+    {
+        OverlayName upper = OverlayName.From("Wall A");
+        OverlayName lower = OverlayName.From("wall a");
+
+        upper.ShouldNotBe(lower);
+        upper.Value.ShouldBe("Wall A");
+        lower.Value.ShouldBe("wall a");
+    }
 }
