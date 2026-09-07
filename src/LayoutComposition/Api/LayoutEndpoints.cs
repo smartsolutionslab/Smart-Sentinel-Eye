@@ -60,6 +60,7 @@ public static partial class LayoutEndpoints
                 + "Required scope: sse.layouts.read")
             .Produces<LayoutDto>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
         group.MapGet("/", List)

@@ -39,6 +39,7 @@ public static class StreamEndpoints
                 + "is reported exactly as a camera with no stream (spec 016 FR-006). "
                 + "Required scope: sse.streams.read")
             .Produces<StreamHealthDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
