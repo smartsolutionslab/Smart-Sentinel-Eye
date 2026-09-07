@@ -53,12 +53,23 @@ rows.
 | `scenario-simulator` | client credentials | `src/ScenarioSimulator/Keycloak/KeycloakTokenProvider.cs`; `PlantFloor.cs`; `FabGroupClaimIntegrationTests.cs` | **yes** — cameras, overlays, rules, layouts | `smart-sentinel-eye-api` |
 | `identity-admin` | client credentials | `src/Identity/Infrastructure/KeycloakAdmin/KeycloakAdminTokenProvider.cs` | no — Keycloak Admin REST only | `smart-sentinel-eye-api` (inert) |
 | `migration-runner` | client credentials | MigrationRunner worker | no — Keycloak Admin REST only | `smart-sentinel-eye-api` (inert) |
-| `event-ingestion` | client credentials | `src/EventIngestion/Infrastructure/Ingress/MqttTokenProvider.cs` | no — Mosquitto only, and the plugin does not read `aud` | `smart-sentinel-eye-api` (inert) |
+| `event-ingestion` | client credentials | `src/EventIngestion/Infrastructure/Ingress/MqttTokenProvider.cs` | **yes** — Mosquitto's JWT plugin requires the audience at CONNECT (spec 090) | `smart-sentinel-eye-api` |
 
-**The three inert rows still get the scope.** The rule that survives contact
+**Corrected by spec 090 (2026-09-07).** This row read *"no — Mosquitto only,
+and the plugin does not read `aud`"*, with the audience marked **(inert)**, and
+that was true when it was written. Spec 090 added `jwt.WithAudience` to
+`src/AppHost/mosquitto/plugin/jwt_auth.go`, so `event-ingestion`'s audience is
+now load-bearing: without it the subscriber is refused at CONNECT.
+**`identity-admin` and `migration-runner` stay inert** — both reach only the
+Keycloak Admin REST API, which validates no audience — so this is one row, not
+a sweep of three.
+
+**The remaining inert rows still get the scope.** The rule that survives contact
 with the next feature is *every client in this realm*, not *the seven we
 reasoned about*. An extra audience on a token nobody audience-checks costs
-nothing; a client-by-client exemption list is the thing that goes stale.
+nothing; a client-by-client exemption list is the thing that goes stale — and
+`event-ingestion` is the row that proves it, having gone from inert to
+load-bearing without anyone editing the realm.
 
 **`management-web` is minted only by a test.** The app named after it signs in
 as `smart-sentinel-eye-web` (`apps/management-web/src/app/auth.ts`). That is a
