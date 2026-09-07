@@ -139,10 +139,12 @@ public sealed class Layout : AggregateRoot<LayoutIdentifier>
             ?? throw new InvalidOperationException(
                 $"Layout {Id} has a Draft revision already; BranchDraft needs a Published revision or a fully-archived chain.");
 
+        DateTimeOffset now = clock.UtcNow;
         LayoutRevisionNumber next = MaxRevisionNumber().Next();
         Revision draft = Revision.Branch(
-            next, baseRevision.Grid, baseRevision.Tiles, clock.UtcNow, by);
+            next, baseRevision.Grid, baseRevision.Tiles, now, by);
         revisions.Add(draft);
+        RecomputeArchival(now);
         return draft;
     }
 
@@ -159,6 +161,7 @@ public sealed class Layout : AggregateRoot<LayoutIdentifier>
         Ensure.That(clock).IsNotNull();
         Revision target = RequireRevision(number);
         target.ReplaceTiles(grid, tiles);
+        RecomputeArchival(clock.UtcNow);
     }
 
     /// <summary>
@@ -183,6 +186,7 @@ public sealed class Layout : AggregateRoot<LayoutIdentifier>
         }
         Raise(new LayoutRevisionPublishedDomainEvent(
             Fab, Id, number, Name, target.Grid, target.Tiles, now, by));
+        RecomputeArchival(now);
     }
 
     /// <summary>
@@ -193,9 +197,11 @@ public sealed class Layout : AggregateRoot<LayoutIdentifier>
     public void Revert(LayoutRevisionNumber number, OperatorIdentifier by, IClock clock)
     {
         Ensure.That(clock).IsNotNull();
+        DateTimeOffset now = clock.UtcNow;
         Revision target = RequireRevision(number);
         target.Revert();
-        Raise(new LayoutRevisionArchivedDomainEvent(Fab, Id, number, clock.UtcNow, by));
+        Raise(new LayoutRevisionArchivedDomainEvent(Fab, Id, number, now, by));
+        RecomputeArchival(now);
     }
 
     /// <summary>
@@ -215,6 +221,7 @@ public sealed class Layout : AggregateRoot<LayoutIdentifier>
         bool wasObservable = target.State == LayoutRevisionState.Published;
         DateTimeOffset now = clock.UtcNow;
         target.Archive(now);
+        RecomputeArchival(now);
         if (wasObservable)
         {
             Raise(new LayoutRevisionArchivedDomainEvent(Fab, Id, number, now, by));
@@ -222,7 +229,10 @@ public sealed class Layout : AggregateRoot<LayoutIdentifier>
     }
 
     /// <summary>
-    /// Restates <see cref="ArchivedAt"/> from the revisions that decide it.
+    /// Restates <see cref="ArchivedAt"/> from the revisions that decide it, and
+    /// is called at the end of every mutator rather than only the three that can
+    /// currently move the answer. The two that cannot cost one list scan; a
+    /// mutator added later without the call costs the index its meaning.
     ///
     /// <para>
     /// The instant is not preserved across a re-entry because it cannot be lost

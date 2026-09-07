@@ -30,17 +30,20 @@ public sealed class LayoutRepository(
     {
         Ensure.That(fab).IsNotNull();
         Ensure.That(name).IsNotNull();
-        // FR-006: ignore archived chains for name-uniqueness. A chain is
-        // "archived" when every revision is in Archived state. Implemented
-        // here in LINQ; the application-level uniqueness check is the
-        // authoritative source of truth (the DB index is permissive).
+        // FR-006 ignores archived chains, and the same predicate has to answer
+        // here and in ux_layouts_fab_name_active. Not for the saved EXISTS over
+        // layout_revisions: if the check and the index could differ, the gap
+        // would be a create the handler admits and Postgres refuses, reaching
+        // the caller as the generic RESOURCE_ALREADY_EXISTS where the specific
+        // LAYOUT_NAME_TAKEN was earned.
+        //
         // Fab first: a name is unique only within one (spec 017 FR-019), so
         // without it this returns another fab's layout — and the caller turns
         // that into a 409 that confirms the layout exists.
         Layout? found = await dbContext.Layouts
             .Where(candidate => candidate.Fab == fab)
             .Where(candidate => candidate.Name == name)
-            .Where(candidate => candidate.Revisions.Any(revision => revision.State != LayoutRevisionState.Archived))
+            .Where(candidate => candidate.ArchivedAt == null)
             .FirstOrDefaultAsync(cancellationToken);
         return found is null ? Option<Layout>.None : Option<Layout>.Some(found);
     }
