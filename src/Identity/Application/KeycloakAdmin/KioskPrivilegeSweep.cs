@@ -7,10 +7,22 @@ namespace SmartSentinelEye.Identity.Application.KeycloakAdmin;
 /// enrolled (spec 052 US1).
 ///
 /// <para>
-/// <b>Why a sweep and not only the enrolment path.</b> Every kiosk enrolled
-/// before this existed is still holding a privilege that mints credentials
-/// which never expire. Fixing new enrolments alone would leave the claim — only
-/// a wall display may hold it — true of the future and false of the present.
+/// <b>Why a sweep and not only the enrolment path.</b> Not, any more, for the
+/// reason first written here: spec 092 asked every realm this system has —
+/// the persistent one, three orphaned volumes, CI, e2e — and found no client
+/// carrying <c>sse.kind</c> anywhere, so the backfill population that
+/// justification named is empty and cannot refill by import.
+/// </para>
+///
+/// <para>
+/// <b>The live reason is one path forward, not a population behind.</b> Enrolment
+/// strips inside the create and deletes the client when the strip throws, but
+/// that delete is best effort — see <c>HttpKeycloakAdminClient</c>'s
+/// <c>TryDeleteClientAsync</c>, whose comment delegates the case here by name.
+/// When it also fails, a client stamped <c>sse.kind=kiosk</c> survives holding
+/// the privilege, with a service account and a secret the caller never
+/// received, and the existence probe answers already-enrolled for it forever.
+/// Enrolment reported failure, so nobody retries. This is the backstop.
 /// </para>
 ///
 /// <para>
@@ -57,8 +69,16 @@ public sealed class KioskPrivilegeSweep(
             }
         }
 
-        logger.SweptKioskPrivileges(kiosks.Count - unreachable.Count, kiosks.Count);
+        if (kiosks.Count > 0)
+        {
+            logger.SweptKioskPrivileges(kiosks.Count - unreachable.Count, kiosks.Count);
+        }
 
+        // Silent otherwise on purpose (spec 092). Now that this runs on every
+        // Identity start, an empty realm is what every start in every
+        // environment that exists today looks like — and a line per restart
+        // saying nothing happened trains an operator to skip the one that
+        // matters. StreamFabAttributionService made the same call.
         return new KioskSweepOutcome(kiosks.Count, unreachable);
     }
 }
