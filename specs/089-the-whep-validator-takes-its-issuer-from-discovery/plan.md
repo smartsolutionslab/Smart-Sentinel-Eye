@@ -210,22 +210,24 @@ Three cases:
    accepted issuer, and it fails if the fix turns `ValidateIssuer` off. It is
    the test that makes the forbidden shapes unreachable rather than merely
    forbidden in prose.
-3. **`A_token_carrying_neither_issuer_is_refused`** — `iss =
+3. **`A_token_carrying_an_unrelated_issuer_is_refused`** — `iss =
    https://keycloak.attacker.example/realms/smart-sentinel-eye`, same key.
    The control that stops case 1 from being satisfied by validating nothing.
 
-**Case 3 alone is green on `develop`; cases 1 and 2 are both red** — corrected
-at phase 4b against the observed run. The prediction here was that only case 1
-would fail, on the reasoning that an anti-relaxation guard constrains the fix
-rather than participating in the failure. That reasoning is sound in general and
-wrong for case 2 in particular, because the shape it guards against — the
-dialled URL as an accepted issuer — is not a hypothetical future edit here, it
-is what `develop` already does. Case 3's issuer is neither string, which is why
-it is the one green, and green for the wrong reason: it fails against whichever
-of the two the hook is comparing. The over-correction pattern
+**Three cases are red on `develop`, not two: cases 1 and 2 above, and the
+`WhepAudienceTests` parity case below (`Failed: 3, Passed: 7, Total: 10` at
+`08d778d6`). Case 3 alone is green** — corrected at phase 4b against the
+observed run. The prediction here was that only case 1 would fail, on the
+reasoning that an anti-relaxation guard constrains the fix rather than
+participating in the failure. That reasoning is sound in general and wrong for
+case 2 in particular, because the shape it guards against — the dialled URL as
+an accepted issuer — is not a hypothetical future edit here, it is what
+`develop` already does. Case 3's issuer is neither string, which is why it is
+the one green, and green for the wrong reason: it fails against whichever of
+the two the hook is comparing. The over-correction pattern
 `WhepAudienceTests.A_whep_token_minted_for_this_api_is_accepted` established
-still describes case 3; it did not describe case 2, and this paragraph claimed
-it did.
+still describes case 3; it did not describe case 2 or the parity case below,
+and this paragraph originally claimed only case 1 would fail.
 
 ### And a factory-level parity test, paired and labelled
 
