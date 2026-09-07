@@ -22,6 +22,17 @@ namespace SmartSentinelEye.ServiceDefaults.Persistence;
 /// </para>
 ///
 /// <para>
+/// That first sentence was <b>false from the day it was written until spec
+/// 086</b>. Layout and overlay names — the only two revision-chain aggregates,
+/// whose rule is about a state living on a child table — had the check and no
+/// index, so the case this handler exists for could not arise for them and a
+/// second writer simply won. <c>ux_layouts_fab_name_active</c> and
+/// <c>ux_overlays_name_active</c> closed it. Recorded rather than quietly
+/// corrected: a doc comment asserting a product-wide posture is exactly the kind
+/// of claim that goes unchecked, and it went unchecked for two contexts.
+/// </para>
+///
+/// <para>
 /// The refusal is deliberately generic. This layer knows a constraint was
 /// violated; it does not know which domain concept collided, and teaching it
 /// would mean giving shared code the vocabulary of nine contexts. It does not

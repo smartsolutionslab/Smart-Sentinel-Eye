@@ -28,8 +28,23 @@ same-named rows result, and neither caller is told.
 posture: *"Every uniqueness rule in this product is enforced twice: an
 application-level check that produces an answer an operator can act on, and a
 unique index that guarantees the invariant."* Twelve `.IsUnique()` indexes across
-six contexts instantiate that posture. Layouts and overlays are the two that do
-not — which is what makes the assertion in that comment false today.
+**nine** contexts instantiate that posture.
+
+**LayoutComposition and OverlayDesigner are not absent from that twelve — they
+own four of it**, and the first draft of this section said otherwise. Each has
+`ux_*_revisions_number` and `ux_*_revisions_one_published`, both on the
+revisions table. What neither has is a unique index on the **operator-chosen
+name**: their only name index is a plain btree. So the narrower true claim, and
+the one this spec rests on, is that these two contexts enforce their
+*structural* rules twice and their *name* rule once — which is what makes the
+word "every" in that comment false today.
+
+Re-measured 2026-09-07, and the command is written down because the earlier
+figure was not:
+
+```sh
+grep -rn "\.IsUnique()" src --include=*.cs | grep -v /Migrations/ | grep -v /obj/
+```
 
 ### 1.1 Why this is not "just add `unique: true`"
 
@@ -250,9 +265,9 @@ is unchanged and problem-details bodies are not enumerated per code.
 
 Run against the Aspire fixture (ADR-0103); no Testcontainers.
 
-1. Boot the stack. `MigrationRunner` applies both new migrations. Confirm in the
-   migration log that each ran and that neither raised the duplicate pre-flight
-   exception.
+1. Boot the stack. `MigrationRunner` applies all four new migrations. Confirm in
+   the migration log that each ran and that neither pre-flight check raised the
+   duplicate exception.
 2. `psql` the two databases and assert the index definitions:
    - `overlay-designer-db`: `ux_overlays_name_active` exists, its `indexdef`
      contains `UNIQUE` and the partial predicate; `ix_overlays_name` is gone.
@@ -311,8 +326,9 @@ colliding names listed, and do **not** auto-reconcile.
 ## 7. Locked tech choices
 
 Postgres partial unique index; EF Core `HasIndex(...).IsUnique().HasFilter(...)`;
-migrations applied by `MigrationRunner` (ADR-0067) — **two** migrations, one per
-DbContext; xUnit + Shouldly + hand-written fakes (ADR-0052/0054); integration via
+migrations applied by `MigrationRunner` (ADR-0067) — **four** migrations, two per
+DbContext (this line said two, one per context; `plan.md` §4.2 records why the
+column has to land before the constraint); xUnit + Shouldly + hand-written fakes (ADR-0052/0054); integration via
 `AspireFixture` (ADR-0103); nullable value-object reference for the persisted
 absence (constitution §II and the CLAUDE.md house rule that persisted absences
 use nullable value-object references, not `Option<T>`).
