@@ -19,6 +19,17 @@ public sealed class Overlay : AggregateRoot<OverlayIdentifier>
 
     public Creation Creation { get; private set; } = null!;
 
+    /// <summary>
+    /// When every revision in this chain became Archived, and null while any of
+    /// them is still live. The chain already knew this â it is the condition
+    /// behind <see cref="NewestWhenFullyArchivedOrNull"/> â but it lived only in
+    /// the revisions, and a Postgres index predicate may neither read another
+    /// table nor call a non-immutable function. Writing the answer onto the
+    /// parent row is what lets the name rule be a partial unique index rather
+    /// than an application check nothing backs up (spec 086 Â§1.1).
+    /// </summary>
+    public ArchivedAt? ArchivedAt { get; private set; }
+
     private Overlay() { }
 
     /// <summary>
@@ -45,6 +56,7 @@ public sealed class Overlay : AggregateRoot<OverlayIdentifier>
         };
         overlay.revisions.Add(
             Revision.NewDraft(OverlayRevisionNumber.One, label, now, createdBy));
+        overlay.RecomputeArchival(now);
         return overlay;
     }
 
@@ -143,6 +155,23 @@ public sealed class Overlay : AggregateRoot<OverlayIdentifier>
         {
             Raise(new OverlayRevisionArchivedDomainEvent(Id, number, now, by));
         }
+    }
+
+    /// <summary>
+    /// Restates <see cref="ArchivedAt"/> from the revisions that decide it.
+    ///
+    /// <para>
+    /// The instant is not preserved across a re-entry because it cannot be lost
+    /// by one: no mutator both runs on a fully-archived chain and leaves it
+    /// fully archived. ArchiveRevision returns early on an Archived revision,
+    /// EditDraft refuses a non-Draft, and BranchDraft revives the chain.
+    /// </para>
+    /// </summary>
+    private void RecomputeArchival(DateTimeOffset now)
+    {
+        bool fullyArchived = revisions.All(
+            revision => revision.State == OverlayRevisionState.Archived);
+        ArchivedAt = fullyArchived ? ArchivedAt.From(now) : null;
     }
 
     private Revision? CurrentPublishedOrNull() =>
