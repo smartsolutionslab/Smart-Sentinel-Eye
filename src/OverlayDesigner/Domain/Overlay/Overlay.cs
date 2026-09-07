@@ -21,12 +21,12 @@ public sealed class Overlay : AggregateRoot<OverlayIdentifier>
 
     /// <summary>
     /// When every revision in this chain became Archived, and null while any of
-    /// them is still live. The chain already knew this â it is the condition
-    /// behind <see cref="NewestWhenFullyArchivedOrNull"/> â but it lived only in
+    /// them is still live. The chain already knew this — it is the condition
+    /// behind <see cref="NewestWhenFullyArchivedOrNull"/> — but it lived only in
     /// the revisions, and a Postgres index predicate may neither read another
     /// table nor call a non-immutable function. Writing the answer onto the
     /// parent row is what lets the name rule be a partial unique index rather
-    /// than an application check nothing backs up (spec 086 Â§1.1).
+    /// than an application check nothing backs up (spec 086 §1.1).
     /// </summary>
     public ArchivedAt? ArchivedAt { get; private set; }
 
