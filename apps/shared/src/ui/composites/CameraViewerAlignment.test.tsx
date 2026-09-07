@@ -328,6 +328,44 @@ describe('CameraViewer when alignment fails', () => {
   });
 
   /**
+   * Spec 095 FR-004, the quiet half. **An engine that can hold a target is not
+   * told it cannot.**
+   *
+   * <p>
+   * The twin of *"Says nothing about a session that is not producing video
+   * yet"*, on the actuator rather than the sampler — and the case that makes
+   * the new signal's most damaging failure mode fail loudly rather than
+   * quietly. Every other `setPlayoutTarget` double in the tree throws, refuses,
+   * or is never reached, so without this case the `!applied` half of the guard
+   * could be dropped and every tile on every supported browser would
+   * permanently claim its target unsupported — with the whole suite still
+   * green. Found in code review.
+   * </p>
+   */
+  it('Says nothing about a receiver that holds the playout target', async () => {
+    const setPlayoutTargetApplies = vi.fn(() => true);
+    setPlayoutTargetBehaviour = setPlayoutTargetApplies;
+
+    render(
+      <CameraViewer
+        cameraIdentifier="cam-42"
+        getToken={() => Promise.resolve('token')}
+        playoutTargetMilliseconds={120}
+        onLagMeasured={() => {}}
+      />,
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+
+    // Asserted BEFORE the silence: an actuator that was never reached is silent
+    // too, and would make this case true of a component that did nothing.
+    expect(setPlayoutTargetApplies, 'the actuator must actually have run').toHaveBeenCalledWith(120);
+    expect(resilienceLines('playout-target-unsupported')).toHaveLength(0);
+  });
+
+  /**
    * Spec 095 T006 / FR-003, plan risk R3. **A flap is not a new engine.**
    *
    * <p>
