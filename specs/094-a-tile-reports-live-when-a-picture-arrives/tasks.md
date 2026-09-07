@@ -89,6 +89,21 @@ reporting `Live` — not a harness error, not a missing element. A red that fail
 for the wrong reason proves nothing, and this repository has caught guards
 failing that way.
 
+**Added at phase 6 (T011).** Review found that the first cut closed only the
+case of a tile that has never shown a picture, because `totalVideoFrames` is
+per element and not per session (`spec.md` §"the counter is per element").
+
+| ID | Test | Colour | Traces |
+|---|---|---|---|
+| R4 | `Does not claim Live on a session that has produced no frame of its own` — session one banks 5000 frames and goes Live, the transport fails, session two connects with no track; the tile must hold `Connecting…` and then `Reconnecting…` | **RED** on `develop` *and* on the first cut of the fix | FR-002, AS-1.8 |
+
+**G3 changed, and only G3.** Its stub pinned `producedFrames = 1` before render,
+so no frame was ever *added* — a decoder producing a frame before its own
+session began. The stub now advances the counter during the session. Recorded
+because editing a phase-4a test is otherwise forbidden: the behaviour genuinely
+moved, the double was unfaithful, and this is not an assertion relaxed to fit a
+fix.
+
 ---
 
 ## Tasks
@@ -104,12 +119,13 @@ failing that way.
 | T007 | | US-1 | `pnpm lint` — assert **no new `eslint-disable`** and the `:115` suppression untouched (FR-008, I-5). If a new suppression appears necessary, **stop and report**: the lane may not weaken a gate (ADR-0144). |
 | T008 | [P] | US-1 | `pnpm typecheck` (covers `e2e/` since today) and `pnpm -r --filter "./apps/**" build`. Disjoint from T009. |
 | T009 | [P] | — | Comment on **#2157**: this landed per-session media confirmation in the same file, one more thing its restructuring must carry; and its §IV premise does not hold as written (`spec.md` §Boundary). **Comment only** — do not relabel, do not unblock. Disjoint from T008. |
+| T011 | | US-1 | Phase 6: baseline the frame counter when the watch is armed (FR-002), clear the media timers in `scheduleRetry` (FR-010), make the instrument read non-throwing (FR-009); add R4, adjust G3's stub. Two counterfactuals: reverting the baseline must redden R4, and moving `attemptRef`'s reset back to `connected` must redden R3 alone. `frontend-engineer`. |
 | T010 | | — | Phase 5 verification note. Steps 1–3 of the spec's procedure need no stack. Steps 4–5 need `aspire run` — **ask before booting**; another track holds a PR on CI. |
 
 ### Dependencies
 
 ```
-T001 → T002 → T004 → T005 → T006 → T007 → {T008 ‖ T009} → T010
+T001 → T002 → T004 → T005 → T006 → T007 → {T008 ‖ T009} → T011 → T010
         T003 ↗
 ```
 
