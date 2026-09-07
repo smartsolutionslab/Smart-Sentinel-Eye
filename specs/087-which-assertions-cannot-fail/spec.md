@@ -390,6 +390,25 @@ to decide whether a class *really* needs Docker. It checks that the class has
 4. **A commented-out `[Collection]` reads as absent** — which is the safe
    direction (the class is then required to declare a category), and is
    asserted rather than assumed.
+5. **It reasons per *file*, not per class**, though this document and `plan.md`
+   say "class" throughout. The two coincide today: no file under
+   `tests/Integration.Tests` declares more than one top-level type except
+   `IngestSpanMeasurement.cs`, which holds no facts. A future file holding two
+   test classes — one declared, one not — satisfies the guard on the declared
+   one and the undeclared one escapes. Closing it means parsing C# rather than
+   scanning lines, which is a larger instrument than the omission justifies;
+   recorded so the next reader knows the wording is a simplification and not a
+   claim.
+6. **A category trait is accepted at class *or* method level**, so a class
+   without `[Collection]` whose traits sit on its methods satisfies the guard
+   even if some of its facts carry none — and those facts then declare nothing
+   while the file looks declared. The population is currently empty: the only
+   two classes of that shape, `RunModeIngestAttributionTests` and
+   `RunModeVariableResidueSweep`, have exactly one fact and one trait each.
+   Demanding class-level traits would be wrong — `ClockOffsetIntegrationTests`
+   and `NFR001_AuditIngestLatencyTests` deliberately mark individual methods
+   `Measurement` inside a collection-declared class — so this is recorded, not
+   fixed.
 
 ---
 

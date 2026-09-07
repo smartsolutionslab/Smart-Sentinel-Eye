@@ -44,14 +44,26 @@ to redo.
 
 ### US-1 (P1) — A Docker-free integration test declares where it runs
 
-- [ ] **T003** [US1] **Write the guard, and observe it red.**
+- [X] **T003** [US1] **Write the guard, and observe it red.**
   New file `tests/Architecture.Tests/IntegrationTestSelectionTests.cs`.
-  One `[Fact]`: every `*.cs` under `tests/Integration.Tests` containing a
-  `[Fact]`/`[Theory]` and lacking `[Collection(AspireCollection.Name)]` must
-  carry `[Trait("Category", …)]`.
-  - Strip `//` and XML doc-comments **before** matching (FR-003). Without this
-    the guard is green on `RunModeDriverTests`, whose doc-comment contains the
-    literal `[Collection(AspireCollection.Name)]`.
+  One `[Fact]` over the tree: every `*.cs` under `tests/Integration.Tests`
+  containing a `[Fact]`/`[Theory]` and lacking `[Collection(AspireCollection.Name)]`
+  must carry `[Trait("Category", …)]`. **Six were written** — the tree scan plus
+  five trap and edge discriminators asserted on synthetic sources, so the
+  matching keeps being checked when the tree changes shape (plan §"One assertion
+  over the tree, five discriminators beside it").
+  - Match an attribute **at the start of a line**, so a doc-comment naming
+    `[Collection(AspireCollection.Name)]` — `RunModeDriverTests` does — is
+    refused. That anchor, not the stripping below, is what refuses this one:
+    with `StripComments` neutered the guard still reports 4 / 34, because the
+    `[` sits behind `/// <c>`. The claim that the guard goes *green* without
+    stripping is true of the census's unanchored `grep` and **false** of the
+    anchored match.
+  - Strip `/* … */` blocks and `//` to end of line **before** matching
+    (FR-003). The shape this is for is an attribute commented out inside a
+    block comment: it *does* begin its own line, so only the stripping tells it
+    from a live one. Assert it separately, or FR-003 is carried by a test that
+    passes without it.
   - Do **not** key on "mentions `AspireFixture`" — same class, same reason.
   - Report offenders repository-relative with `/` separators (FR-004); reuse the
     `Path.GetRelativePath(...).Replace(Path.DirectorySeparatorChar, '/')` form
@@ -63,7 +75,7 @@ to redo.
     output — that is the phase-4 evidence.
   - Depends on: nothing. **Blocks: T004, T005, T006.**
 
-- [ ] **T004** [US1] **Prove the guard by counterfactual.**
+- [X] **T004** [US1] **Prove the guard by counterfactual.**
   Before fixing anything, confirm the guard reddens for the right reason: add a
   throwaway test class under `tests/Integration.Tests` with a `[Fact]` and
   neither attribute, confirm it is named, then remove it. Also confirm a
@@ -71,7 +83,7 @@ to redo.
   scenario).
   - Depends on: T003.
 
-- [ ] **T005** [US1] **Add `[Trait("Category", "FixtureLogic")]` to the four
+- [X] **T005** [US1] **Add `[Trait("Category", "FixtureLogic")]` to the four
   classes**, turning the guard green:
   `AuditObservability/AttributionVerdictTests.cs` (7 facts),
   `AuditObservability/IngestAttributionTests.cs` (13),
@@ -79,12 +91,17 @@ to redo.
   `EventIngestion/ListEventsTranslationTests.cs` (3).
   - Depends on: T003 (the red must be captured first).
 
-- [ ] **T006** [US1] **Observe the end-to-end effect, without Docker.**
+- [X] **T006** [US1] **Observe the end-to-end effect, without Docker.**
   `dotnet test tests/Integration.Tests -c Release --filter "Category=FixtureLogic"`
-  → the selected population rises from 3 classes to 7, and the 34 newly-selected
+  → the selected population rises from 3 classes to 7, and the newly-selected
   tests execute and pass **with Docker not running**. Record the before/after
   counts. This is the phase-5 observation: the cheap step now reads verdicts it
   previously skipped.
+  - **34 is the count of `[Fact]`/`[Theory]` sites, not of executed cases**, and
+    the two are the same number only where no theory carries `[InlineData]`.
+    Here they do not: the four classes' 34 sites run as **50** cases, so the
+    step goes 30 → 80. Recorded because "34 tests execute" is the kind of
+    figure this spec exists to catch.
   - Depends on: T005.
 
 ### Follow-up issues — filed, not fixed

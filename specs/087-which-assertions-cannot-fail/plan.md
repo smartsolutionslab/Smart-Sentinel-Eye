@@ -114,12 +114,47 @@ One `[Fact]`. Steps:
 Both are documented in `census.md` §D5 and both produce the *same* wrong count,
 23 instead of 34 — which is why neither is left to reviewer memory:
 
-1. **Comments must be stripped.** `RunModeDriverTests.cs:20` contains the
-   literal `<c>[Collection(AspireCollection.Name)]</c>` in its doc-comment. An
-   unstripped scan credits it and the class escapes.
+1. **A doc-comment naming the attribute is not the attribute.**
+   `RunModeDriverTests` contains the literal
+   `<c>[Collection(AspireCollection.Name)]</c>` in its doc-comment, and the
+   census's unanchored `grep` credited it.
+
+   **What refuses it here is the line anchor, not the comment stripping** —
+   proved by counterfactual during phase 4a: with `StripComments` neutered the
+   guard still reports 4 classes / 34 tests, because that `[` sits behind
+   `/// <c>` and never begins its line. An earlier draft of this section, and
+   of `tasks.md` T003, said the guard would be *green* on `RunModeDriverTests`
+   without stripping. That holds for the census's shell `grep` and not for the
+   line-anchored attribute match specified above.
+
+   **Stripping stays load-bearing, for a different shape:** an attribute
+   commented out inside a `/* … */` block *does* begin its own line, so the
+   anchor sees it exactly as it sees a live one and only the stripping tells
+   the two apart. That is the case FR-003 exists for, and it is asserted
+   separately (`A_commented_out_declaration_is_not_a_declaration`) so the
+   requirement is not carried by a test that passes without it.
 2. **Do not key on "mentions `AspireFixture`".** The same class names the
    fixture in reflection code precisely because its job is to assert it does
    *not* acquire it.
+
+### One assertion over the tree, five discriminators beside it
+
+`tasks.md` T003 specifies "one `[Fact]`". Six were written, and the five extra
+are not drift: the tree scan is the only one that can go green by matching
+nothing or by matching the wrong thing, and a source-scanning guard whose
+matching is asserted only through the tree it scans stops discriminating the
+moment the tree changes shape. Each of the five pins one decision on a
+synthetic source string, so it keeps saying the same thing when the repository
+does not:
+
+| Fact | The decision it pins |
+|---|---|
+| `Every_integration_test_class_declares_where_it_runs` | the guard itself, over the real tree |
+| `A_doc_comment_naming_the_collection_attribute_is_not_a_declaration` | trap 1 — prose is not an attribute |
+| `A_commented_out_declaration_is_not_a_declaration` | the shape FR-003's stripping is actually for |
+| `Naming_the_fixture_in_code_is_not_a_declaration` | trap 2 — a mention is not a declaration |
+| `A_file_with_no_test_methods_is_not_asked_to_declare` | the population's edge: no verdict, nothing to declare |
+| `Either_declaration_satisfies_the_guard` | the guard requires *a* declaration, not a specific one |
 
 ### Slash normalisation is a requirement, not a polish
 
