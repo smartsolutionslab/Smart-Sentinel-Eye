@@ -38,27 +38,49 @@ ADR-0139, ADR-0144.
 
 ## Phase 1 — Red (the gate)
 
-- [ ] **T001** [US1] Integration test in
+- [x] **T001** [US1] Integration test in
   `tests/Integration.Tests/Identity/` — **the load-bearing red.** Plant a residue
   client through the Admin API: `serviceAccountsEnabled: true`, attributes
   `sse.kind=kiosk` and `sse.fab=munich`, created **directly** so nothing strips
-  it. Resolve the wired sweep from the running Identity API's container, drive
-  one pass, then **ask the provider** for that account's effective realm roles and
+  it. Drive one pass through Identity's own registration, then **ask the
+  provider** for that account's effective realm roles and
   assert `offline_access` is absent. Delete the probe in a `finally`.
   Mirror `KioskInheritedPrivilegeIntegrationTests` — same fixture, same
   `EffectiveRealmRolesAsync` helper, same cleanup discipline. **Assert on what
   the provider says, never on the pass completing.**
 
-- [ ] **T002** [P] [US1] **The control, in the same file.** A client created the
-  same way but **without** the `sse.kind` stamp, holding realm roles. After the
-  same pass, assert it holds **exactly what it held**. Its own task because it is
+  > **Corrected at phase 4a.** This task originally said "resolve the wired
+  > sweep from the running Identity API's container". **That cannot be done**:
+  > the Identity API runs in its own process and its container is not
+  > addressable from the test process. What *is* addressable — and what carries
+  > the whole of the defect — is `AddIdentityInfrastructure`, the one line
+  > `Identity/Api/Program.cs` calls. The test composes that extension in the
+  > test process against the fixture's real Keycloak and starts only the startup
+  > services Identity's own assembly registers, so removing the registration
+  > still turns it red. **Phase 5 must not inherit the original belief**: the
+  > only evidence the pass runs *at boot* is the sweep's log line in a running
+  > Identity API, which is T010's job and not this one's.
+
+- [x] **T002** [P] [US1] **The control, in the same file.** A client created the
+  same way but **without** the `sse.kind` stamp, holding realm roles — **and a
+  residue planted alongside it and asserted stripped in the same test.** After
+  the same pass, assert the unstamped account holds **exactly what it held**.
+  Its own task because it is
   the assertion that can actually fail dangerously: the removal takes away every
   directly-assigned realm role, so a sweep that matched everything would strip an
   operator bare **and not throw while doing it** — T001 would pass on the way
   past. Spec 052 T006 made this point and its unit-level version turned out
   vacuous; this is the version that is not.
 
-- [ ] **T003** [P] [US1] Registration assertion in `tests/Architecture.Tests/`
+  > **Corrected at phase 4a.** The residue alongside the control is not
+  > decoration. T008 silences the steady-state log line, and over a
+  > residue-free realm a control-only run is satisfied by a pass that did
+  > nothing at all — the bystander is untouched for the wrong reason, and the
+  > test reads green while the sweep never ran. Asserting the residue was
+  > stripped **in the same test** is what makes the bystander's "unchanged"
+  > mean something.
+
+- [x] **T003** [P] [US1] Registration assertion in `tests/Architecture.Tests/`
   that the Identity API's service collection contains the hosted-service
   registration. **Label it `declaration only` in its own docstring**, exactly as
   spec 052's T010 labelled its realm-file guard, and say in that docstring that
@@ -66,12 +88,30 @@ ADR-0139, ADR-0144.
   because T001 cannot see startup wiring — not because reading a container is
   good evidence.
 
-- [ ] **T004** [P] [US1] Unit test in
-  `tests/Identity.Application.Tests/KeycloakAdmin/` — a **new file**, so
+- [x] **T004** [P] [US1] Unit test in
+  `tests/Identity.Infrastructure.Tests/KeycloakAdmin/` — a **new file**, so
   `KioskPrivilegeSweepTests` is not touched — that a failing **enumeration** does
-  not stop the host. Drive the wrapper, not `SweepAsync`; use
-  `FakeKeycloakAdminClient.FailNextCall`. Red today because
+  not stop the host. Drive the startup service, not `SweepAsync`; use a
+  hand-written provider that refuses every call and counts the enumeration, so a
+  service that survives by never asking is not mistaken for one that survived the
+  failure. Red today because
   `KioskPrivilegeSweep.cs:44` sits outside the try and no wrapper exists.
+
+  > **Corrected at phase 4a. The home this task named was impossible.** It said
+  > `tests/Identity.Application.Tests/`, but the wrapper the plan puts the catch
+  > in lives in `Identity.Infrastructure`, and that assembly references
+  > Application, Domain, Shared.Kernel, Shared.CQRS and Shared.Contracts —
+  > **nothing that could reach Infrastructure**. Adding the reference would have
+  > destroyed the spec's own argument for why
+  > `Does_not_touch_an_account_this_system_did_not_enrol` is vacuous, which
+  > rests on exactly that absence.
+  >
+  > A new `tests/Identity.Infrastructure.Tests` project was created instead, in
+  > the slnx, mirroring the three sibling `*.Infrastructure.Tests` projects. It
+  > is picked up by `scripts/coverage-check.ps1`, which discovers test projects
+  > by directory glob; ADR-0065's thresholds are a fixed list of Domain,
+  > Application and Shared projects and does not include Infrastructure, so no
+  > gate is added and none is weakened.
 
 **Checkpoint.** T001–T004 observed **red**, and the verbatim output captured for
 the PR body (ADR-0139). A test arriving green here is a phase-4 failure, not a
@@ -81,7 +121,7 @@ shortcut. Nothing in Phase 2 lands until the red is recorded.
 
 ## Phase 2 — Green
 
-- [ ] **T005** [US1] Add `KioskPrivilegeSweepHostedService` in
+- [x] **T005** [US1] Add `KioskPrivilegeSweepHostedService` in
   `src/Identity/Infrastructure/KeycloakAdmin/`, implementing `IHostedService`.
   Take `IServiceScopeFactory` and `ILogger<T>`; `StartAsync` creates an async
   scope, resolves `KioskPrivilegeSweep`, drives one pass, and **catches
@@ -91,7 +131,7 @@ shortcut. Nothing in Phase 2 lands until the red is recorded.
   — including a comment saying the swallow is **chosen**: Identity must serve
   requests even when Keycloak is unreachable, and the next start retries.
 
-- [ ] **T006** [US1] Register it in
+- [x] **T006** [US1] Register it in
   `src/Identity/Infrastructure/IdentityInfrastructureModule.cs` —
   `AddScoped<KioskPrivilegeSweep>()` alongside the other scoped handlers, and
   `AddHostedService<KioskPrivilegeSweepHostedService>()` inside
@@ -99,12 +139,12 @@ shortcut. Nothing in Phase 2 lands until the red is recorded.
   Its own task, separate from T005, because this one line is the entire defect
   #2132 reports and a reviewer should be able to see it alone.
 
-- [ ] **T007** [US1] Add the pass-failed message to
+- [x] **T007** [US1] Add the pass-failed message to
   `src/Identity/Infrastructure/Log.cs` at Warning, `[LoggerMessage]` source-gen
   (ADR-0050), placed next to `CouldNotRemoveHalfEnrolledClient` — the message on
   the other side of the same failure, so both halves are read together.
 
-- [ ] **T008** [US1] In `src/Identity/Application/KeycloakAdmin/KioskPrivilegeSweep.cs`:
+- [x] **T008** [US1] In `src/Identity/Application/KeycloakAdmin/KioskPrivilegeSweep.cs`:
   guard the `SweptKioskPrivileges` call on `kiosks.Count > 0`, and replace the
   "why a sweep and not only the enrolment path" paragraph — its stated population
   is provably empty — with the live reason: the half-enrolled client
@@ -121,7 +161,7 @@ nothing.
 
 ## Phase 3 — US2: the record stops ticking a mechanism that never ran *(P2)*
 
-- [ ] **T009** [P] [US2] Correct `specs/052/tasks.md:37`. T005 shipped
+- [x] **T009** [P] [US2] Correct `specs/052/tasks.md:37`. T005 shipped
   `KioskPrivilegeSweep` and no wiring, so the class existed and the sweep never
   ran. State that, cite this spec, and **change no other tick in that file** —
   the repair is against what shipped, not toward internal consistency.
@@ -183,7 +223,7 @@ that does not yet exist breaks `git bisect` forever.
 
 | # | The wrong turn | Caught by |
 |---|---|---|
-| 1 | Registered in `AddKeycloakAdminClient`, so MigrationRunner sweeps | Reviewer; the task names the method. Nothing automated catches this. |
+| 1 | Registered in `AddKeycloakAdminClient`, so MigrationRunner sweeps | `The_shared_keycloak_registration_starts_nothing_of_identitys`, added at phase 4b. It was left open at 4a on purpose — it arrives green, and a green test in a red-first phase dilutes the gate. Proven by counterfactual: moving the two lines one method down leaves the build clean and the other two registration tests green, and fails only this one. |
 | 2 | `IKeycloakAdminClient` injected into the singleton | Container validation at boot — T001 fails to start the fixture |
 | 3 | Enumeration failure stops the Identity API host | T004 |
 | 4 | The sweep matches accounts enrolment did not create | T002, asserted on the operator's roles |
