@@ -273,7 +273,7 @@ Planned sequence, one commit per task:
 
 ### Verification and follow-up
 
-- [ ] **T006** [P] [US1] **Merge blocker — confirm no `POST` was relying on the
+- [X] **T006** [P] [US1] **Merge blocker — confirm no `POST` was relying on the
   retry.**
 
   This is the one risk in `plan.md`'s table that source reading cannot settle: a
@@ -294,9 +294,18 @@ Planned sequence, one commit per task:
   *Done when:* the selection is green, or every failure is traced and fixed by
   waiting rather than retrying.
 
-  **Not run at phase 4b — still open.** The engineer was instructed not to boot
-  Aspire or Docker: another worktree holds the one stack. This remains the merge
-  blocker it was declared to be, and nothing in phase 4b substitutes for it.
+  **Run at phase 4b — green.** 438 passed, 0 failed, 9 m 16 s, on the calibrated
+  ~9 m 37 s clean figure for this box, so no contention. Trx retained;
+  `TokenAudienceIntegrationTests`, `IdempotentRegistrationIntegrationTests` and
+  NFR002 all pass. No POST in the normal population was relying on the retry.
+
+  **A first attempt added the throughput burst to the same run and came back red
+  (4 failed, 435 passed, 19 m 29 s).** Its filter merged this task's question with
+  symptom reproduction and so could answer neither: the contention was
+  self-inflicted. Recorded because the two failures it did surface — a socket
+  failure on `TokenAudience`'s POST and a 1 437 ms layout publish against a 500 ms
+  budget — are facts about the burst, which `ci.yml:179` excludes deliberately,
+  and not about this change.
 
 - [ ] **T007** [P] **File the orphan, do not fix it here.**
 
