@@ -87,7 +87,7 @@ function claimsOf(token: string): Record<string, string> {
  */
 function issuerOf(token: string): string {
   const issuer = claimsOf(token)['iss'];
-  if (issuer === undefined) {
+  if (!issuer) {
     throw new Error('a grant should name its issuer');
   }
   return issuer;
