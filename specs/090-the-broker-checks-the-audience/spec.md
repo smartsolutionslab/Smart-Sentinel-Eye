@@ -193,9 +193,15 @@ scope yet" — #91 gave it to all of them. It is **clients Keycloak already
 stored without it**.
 
 `RegisterDeviceCommandHandler` **creates** a Keycloak client and never
-updates one; the only `PutAsync` in `HttpKeycloakAdminClient` is a group
-join (`:188`). Keycloak stores `defaultClientScopes` on the client at
-creation. So a device client registered **before #91 merged on 2026-09-05**
+updates one. `HttpKeycloakAdminClient` issues exactly two PUTs, and neither
+touches default scopes: the one `PutAsync` call is a group join (`:188`), and
+`DisableClientAsync` PUTs `{ enabled: false }` on a client through an
+`HttpRequestMessage` (`:147`). *(Corrected in phase 4b: this paragraph said
+"the only `PutAsync` … is a group join", which is true of the method and
+reads as "no PUT touches a client", which is false. `plan.md`'s R2 states it
+correctly. The conclusion is unaffected — nothing updates
+`defaultClientScopes`.)* Keycloak stores `defaultClientScopes` on the client
+at creation. So a device client registered **before #91 merged on 2026-09-05**
 still mints tokens without `aud`, and this change refuses it at CONNECT.
 
 **Where such a client can survive:** a developer's persistent Keycloak data

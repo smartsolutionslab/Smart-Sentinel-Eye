@@ -120,14 +120,29 @@ Mechanics, each checked against the tree rather than assumed:
   `IAsyncLifetime.DisposeAsync`. Unique `clientId` per run
   (`Guid.CreateVersion7()`), so a failed teardown leaves an inert,
   uniquely-named row rather than colliding with the next run.
-- **Reading the refusal.** MQTTnet surfaces a broker `CONNACK` refusal as a
-  non-`Success` `ResultCode` or as a thrown
-  `MqttClientConnectingFailedException` depending on version and code path.
-  Assert *refusal*, not a specific code — and assert it is not a transport
-  failure, so a broker that is simply down cannot pass the test. Mosquitto's
-  `MOSQ_ERR_AUTH` maps to `NotAuthorized` / `BadUserNameOrPassword`
-  depending on protocol version; the test pins MQTT v3.1.1 as
-  `NFR002_MqttConnectAuthTests` does.
+- **Reading the refusal.** *(Corrected in phase 4a — this bullet previously
+  said MQTTnet surfaces a refusal "as a non-`Success` `ResultCode` or as a
+  thrown `MqttClientConnectingFailedException` depending on version and code
+  path". Both halves were wrong, and the error was load-bearing.)* No such
+  type exists; the real one is `MQTTnet.Adapter.MqttConnectingFailedException`,
+  and in 5.2.0.1603 it carries **no** `ResultCode` property. Nor is the
+  choice a disjunction — probed against a loopback server speaking raw CONNACK
+  bytes:
+
+  ```
+  connack-rc5-not-authorized: RETURNED ResultCode=NotAuthorized
+  connack-rc4-bad-user-pass:  RETURNED ResultCode=BadUserNameOrPassword
+  no-connack-socket-closed:   THREW MQTTnet.Adapter.MqttConnectingFailedException
+  ```
+
+  **A CONNACK refusal is always *returned*; the exception means no CONNACK
+  arrived at all.** That distinction is what T002 needs: "non-`Success` **or**
+  the exception" would let *a broker that is down* satisfy the test, which is
+  exactly what T002 forbids. So the test asserts a `ResultCode` was returned
+  (a transport failure fails it) and only then that the code is not
+  `Success` — refusal, not a specific code. Mosquitto's `MOSQ_ERR_AUTH` maps
+  to `NotAuthorized` / `BadUserNameOrPassword` depending on protocol version;
+  the test pins MQTT v3.1.1 as `NFR002_MqttConnectAuthTests` does.
 
 ### The characterisation, observed green before the change
 
