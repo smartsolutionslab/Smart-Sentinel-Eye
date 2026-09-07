@@ -22,6 +22,14 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Warning, Message = "Could not remove half-enrolled Keycloak client {ClientUuid}; the startup sweep will strip its privileges.")]
     public static partial void CouldNotRemoveHalfEnrolledClient(this ILogger logger, string clientUuid, Exception exception);
 
+    // Spec 092, and deliberately next to the message above: that one says a
+    // half-enrolled client was left behind and the startup sweep will strip it,
+    // this one says the startup sweep could not run. Whoever reads the first
+    // needs the second to be in the same place. Warning rather than error — the
+    // API is serving, and the next start tries again.
+    [LoggerMessage(Level = LogLevel.Warning, Message = "The kiosk privilege startup sweep could not complete; enrolled kiosks may still hold inherited realm privileges until the next start.")]
+    public static partial void KioskPrivilegeSweepFailed(this ILogger logger, Exception exception);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Applying Identity EF Core migrations.")]
     public static partial void ApplyingMigrations(this ILogger logger);
 
