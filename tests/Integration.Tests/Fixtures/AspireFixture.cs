@@ -210,7 +210,7 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
                 .CreateAsync<Projects.SmartSentinelEye_AppHost>(parameters, cts.Token)
                 .ConfigureAwait(false);
 
-        builder.Services.ConfigureHttpClientDefaults(http => http.AddStandardResilienceHandler());
+        builder.Services.ConfigureHttpClientDefaults(FixtureHttpClients.Configure);
 
         _app = await builder.BuildAsync(cts.Token).ConfigureAwait(false);
 
