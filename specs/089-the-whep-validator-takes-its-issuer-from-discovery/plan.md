@@ -187,10 +187,14 @@ Three cases:
    the wall: *the whole wall goes dark behind an ingress while every management
    page still loads*.
 2. **`A_token_carrying_the_dialled_url_as_its_issuer_is_refused`** — identical
-   harness, only `iss = DialledAuthority`. **The anti-relaxation guard.** Green
-   on `develop` for the wrong reason (that string is the configured
-   `ValidIssuer`) and green after the fix for the right one (discovery says
-   otherwise). It fails if the fix keeps the configured URL as an *additional*
+   harness, only `iss = DialledAuthority`. **The anti-relaxation guard.**
+   **RED on `develop`** — corrected at phase 4b, having been predicted green
+   here. The reason it is red is the reason it was predicted green: that string
+   *is* the configured `ValidIssuer` today, so a token carrying it is accepted
+   and the refusal fails. Green after the fix for the right reason (discovery
+   says otherwise). The correction runs in the safe direction — the guard goes
+   red→green with the fix rather than green→green, which is stronger evidence
+   than advertised. It fails if the fix keeps the configured URL as an *additional*
    accepted issuer, and it fails if the fix turns `ValidateIssuer` off. It is
    the test that makes the forbidden shapes unreachable rather than merely
    forbidden in prose.
@@ -198,12 +202,18 @@ Three cases:
    https://keycloak.attacker.example/realms/smart-sentinel-eye`, same key.
    The control that stops case 1 from being satisfied by validating nothing.
 
-Cases 2 and 3 are green on `develop`. **Only case 1 is the red**, which is
-correct: the anti-relaxation guards exist to constrain the fix, not to be part
-of the failure. That is the same pattern `WhepAudienceTests`
-`A_whep_token_minted_for_this_api_is_accepted` established as the
-over-correction guard, and the plan says so explicitly so a reviewer does not
-read two green tests in a new file as a phase-4a shortcut.
+**Case 3 alone is green on `develop`; cases 1 and 2 are both red** — corrected
+at phase 4b against the observed run. The prediction here was that only case 1
+would fail, on the reasoning that an anti-relaxation guard constrains the fix
+rather than participating in the failure. That reasoning is sound in general and
+wrong for case 2 in particular, because the shape it guards against — the
+dialled URL as an accepted issuer — is not a hypothetical future edit here, it
+is what `develop` already does. Case 3's issuer is neither string, which is why
+it is the one green, and green for the wrong reason: it fails against whichever
+of the two the hook is comparing. The over-correction pattern
+`WhepAudienceTests.A_whep_token_minted_for_this_api_is_accepted` established
+still describes case 3; it did not describe case 2, and this paragraph claimed
+it did.
 
 ### And a factory-level parity test, paired and labelled
 

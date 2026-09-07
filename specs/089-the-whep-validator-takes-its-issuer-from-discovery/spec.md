@@ -471,11 +471,23 @@ Runnable by someone who did not write the change, without Docker for steps 1–3
    because `ValidIssuer` is the dialled URL. Quote that failure in the PR.
 2. **Apply the change and re-run the same command.** All cases pass, including
    the anti-relaxation refusal.
-3. **Prove the guard by counterfactual.** Re-apply
-   `ValidIssuer = authority` in `CreateParameters` — the acceptance case fails
-   again. Then, separately, set `ValidateIssuer = false` — the *refusal* case
-   fails. Two different failures from two different weakenings is the evidence
-   the pair is not decorative. Revert both.
+3. **Prove the guard by counterfactual.** Three weakenings, each reverted
+   immediately. **Corrected at phase 4b against the observed runs — the first of
+   the two originally written here predicted the wrong failure.**
+   - Re-apply `ValidIssuer = authority` in `CreateParameters` while **keeping**
+     the discovery fill: the *refusal* case fails, and so does the factory
+     parity case — not the acceptance case. `Validators.ValidateIssuer` accepts
+     the union of `ValidIssuer` and `ValidIssuers`, so the realm's issuer is
+     still accepted and what is caught is exactly the forbidden "in addition to"
+     shape.
+   - Remove the discovery fill as well, i.e. the full pre-fix shape: the
+     *acceptance* case fails, as the phase-4a red already showed.
+   - Set `ValidateIssuer = false`: the *refusal* case and the unrelated-issuer
+     control both fail.
+
+   Three weakenings, three distinct failure sets, is the evidence the guards are
+   not decorative — and the first two also show that "put the URL back" and
+   "never took it from discovery" are separately caught.
 4. **Non-regression, with Docker.**
    ```
    dotnet test tests/Integration.Tests --filter "FullyQualifiedName~WhepAuthIntegrationTests"
