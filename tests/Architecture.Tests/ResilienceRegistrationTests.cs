@@ -51,15 +51,27 @@ public class ResilienceRegistrationTests
 
     private const string SourceTree = "src";
 
+    private const string TestTree = "tests";
+
     /// <summary>
-    /// Scoped to the integration fixture's tree rather than to all of
-    /// <c>tests</c>. <c>ServiceDefaults.Tests</c> registers the bare handler on
-    /// purpose — it is testing the handler itself, and
-    /// <c>ResilienceHandlerNestingTests</c> has to be able to construct an
-    /// unnarrowed pipeline in order to describe one. The fixture's clients are not
-    /// testing the handler; they are talking to the stack.
+    /// The one project the scan skips, and the only one. <c>ServiceDefaults.Tests</c>
+    /// registers the bare handler on purpose — it is testing the handler itself, and
+    /// <c>ResilienceHandlerNestingTests</c> has to be able to construct an unnarrowed
+    /// pipeline in order to describe one. No other test project's clients are testing
+    /// the handler; they are talking to something.
+    ///
+    /// <para>
+    /// Expressed as a denial rather than as the list of trees worth scanning, because an
+    /// allow-list is the shape of the defect this guard exists for: <c>ReadSources</c>
+    /// was hard-coded to <c>src</c>, so the fixture's registration was in neither the
+    /// population ADR-0143's fix changed nor the population this file defended (#2129).
+    /// Naming the trees to look at fixes the one tree that was missed and re-arms the
+    /// trap for the next — a new test project falls outside the list and is silently
+    /// unguarded. Naming the exception covers a new project by default, and makes adding
+    /// a second exception a visible act.
+    /// </para>
     /// </summary>
-    private const string IntegrationTestTree = "tests/Integration.Tests";
+    private const string ExemptTestProject = "tests/ServiceDefaults.Tests/";
 
     private const string Narrowing = "IdempotentRetry.RetryIdempotentMethodsOnly";
 
@@ -158,28 +170,29 @@ public class ResilienceRegistrationTests
     /// </para>
     /// </summary>
     [Fact]
-    public void Every_resilience_registration_under_the_integration_tests_declares_the_predicate()
+    public void Every_resilience_registration_under_the_tests_declares_the_predicate()
     {
-        Dictionary<string, string> sources = ReadSources(IntegrationTestTree);
+        Dictionary<string, string> sources = ReadSources(TestTree);
 
         (string Path, string Line)[] registrations = [.. sources
+            .Where(file => !file.Key.StartsWith(ExemptTestProject, StringComparison.Ordinal))
             .SelectMany(file => Lines(file.Value).Select(line => (Path: file.Key, Line: line)))
             .Where(entry => Registers(entry.Line))
             .OrderBy(entry => entry.Path, StringComparer.Ordinal)];
 
         registrations.ShouldNotBeEmpty(
-            $"no resilience registration was found under {IntegrationTestTree} at all, which this guard "
+            $"no resilience registration was found under {TestTree} at all, which this guard "
             + "cannot tell apart from every registration being correct. A source scan over an empty "
-            + "population passes while checking nothing. If the fixture's client configuration moved, "
-            + "point this scan at wherever it went rather than letting it match nothing.");
+            + "population passes while checking nothing. If a test project's client configuration moved, "
+            + "follow it rather than letting this scan match nothing.");
 
         string[] unnarrowed = [.. registrations
             .Where(entry => !Narrows(entry.Line))
             .Select(entry => $"{entry.Path}: {entry.Line.Trim()}")];
 
         unnarrowed.ShouldBeEmpty(
-            $"the integration fixture does not call AddServiceDefaults, so nothing else applies ADR-0143's "
-            + "narrowing to the clients it hands out. Registered bare, the handler carries the library's "
+            $"no test project calls AddServiceDefaults, so nothing else applies ADR-0143's "
+            + "narrowing to the clients one hands out. Registered bare, the handler carries the library's "
             + "own predicate, which reads the outcome and never the method — a POST is retried like a GET, "
             + "and a POST whose response was lost is indistinguishable from one that never arrived. Pass "
             + $"{Narrowing} to the registration. Do not reach for RetryEveryMethod(): it is the opt-back-in, "
@@ -197,6 +210,7 @@ public class ResilienceRegistrationTests
         const string bare = "        http.AddStandardResilienceHandler();";
         const string narrowed = "        http.AddStandardResilienceHandler(IdempotentRetry.RetryIdempotentMethodsOnly);";
         const string described = "        // http.AddStandardResilienceHandler() is what this used to be.";
+        const string quoted = "        const string shape = \"http.AddStandardResilienceHandler();\";";
 
         Registers(bare).ShouldBeTrue("the bare registration is the shape the guard exists to catch.");
         Narrows(bare).ShouldBeFalse("nothing in the bare registration names the predicate.");
@@ -207,6 +221,12 @@ public class ResilienceRegistrationTests
         Registers(described).ShouldBeFalse(
             "a commented-out registration is prose, not wiring, and a guard that counted prose would flag "
             + "the file that explains it.");
+
+        Registers(quoted).ShouldBeFalse(
+            "a registration inside a string literal is prose too. The scan now covers this very file, "
+            + "which spells both shapes as literals in order to test the matcher — counting them would "
+            + "fail the guard for describing itself, and would have to be bought off with an exemption "
+            + "entry, which is the mechanism this fact just stopped relying on.");
     }
 
     /// <summary>
@@ -219,8 +239,31 @@ public class ResilienceRegistrationTests
 
     private static bool Narrows(string line) => Mentions(line, Narrowing);
 
-    private static bool Mentions(string line, string token) =>
-        !IsComment(line) && line.Contains(token, StringComparison.Ordinal);
+    /// <summary>
+    /// A quoted occurrence is not wiring, for the same reason <see cref="CodeLines"/>
+    /// gives about a commented one. This file spells both shapes as string literals in
+    /// order to test the matcher, and the scan now reaches this file: counting those
+    /// would fail the guard for describing itself, and no exemption entry should have to
+    /// be spent on saying so.
+    /// </summary>
+    private static bool Mentions(string line, string token)
+    {
+        int at = line.IndexOf(token, StringComparison.Ordinal);
+
+        return at >= 0 && !IsComment(line) && !IsQuoted(line, at);
+    }
+
+    /// <summary>
+    /// Odd number of quotes before the match means the match is inside one. The escaped
+    /// quotes come out first: <c>\"</c> opens nothing, and counting it as if it did puts
+    /// the parity back to even and reports a literal as wiring. This is not hypothetical
+    /// — the counterfactual below spells a quoted registration inside a quoted string,
+    /// and the first version of this method flagged it.
+    /// </summary>
+    private static bool IsQuoted(string line, int at) =>
+        line[..at]
+            .Replace("\\\"", string.Empty, StringComparison.Ordinal)
+            .Count(character => character == '"') % 2 == 1;
 
     private static string[] Lines(string source) => source.Split('\n');
 
