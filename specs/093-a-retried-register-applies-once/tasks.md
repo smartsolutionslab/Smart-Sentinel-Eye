@@ -120,6 +120,14 @@ Planned sequence, one commit per task:
 
 ## Tasks
 
+**There is no T002, and this file does not record why.** The numbering runs
+T001, T003 … T008, and no task is defined under that number in `spec.md`,
+`plan.md` or this file. The gap is stated here rather than closed up, because
+the numbers are load-bearing: the commit table above, the dependency graph,
+and the messages of commits already on the branch all cite them, and
+re-seating them would silently repoint every one. A gap a reader can see
+explained is cheaper than a renumber they have to reconcile.
+
 ### Foundation — blocks everything
 
 - [X] **T001** [US1] **Extract the fixture's client defaults into a named,
