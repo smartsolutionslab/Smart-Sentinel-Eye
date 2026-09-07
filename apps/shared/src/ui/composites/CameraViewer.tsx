@@ -1,14 +1,22 @@
 import clsx from 'clsx';
 import { useGetStreamQuery } from '@smart-sentinel-eye/shared/api/streams.api';
 import type { StreamHealth } from '@smart-sentinel-eye/shared/api/streams.api';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import {
   decodeElapsedBetween,
   decodeSampleFrom,
+  missingDecodeFieldIn,
   reportKioskLatency,
   type DecodeSample,
 } from '../../observability/kioskLatency.js';
-import { bufferDelayBetween, lagBetween, lagSampleFrom, type LagSample } from '../../observability/wallAlignment.js';
+import { logResilienceEvent } from '../../observability/resilienceLog.js';
+import {
+  bufferDelayBetween,
+  lagBetween,
+  lagSampleFrom,
+  missingLagFieldIn,
+  type LagSample,
+} from '../../observability/wallAlignment.js';
 import { useWhepSession } from './useWhepSession.js';
 import type { CameraViewerStatus } from './useWhepSession.js';
 
@@ -98,6 +106,30 @@ export function CameraViewer({
     getToken,
   });
 
+  // Spec 095 FR-001/FR-003: a read that fails names the counter it could not
+  // read, once per counter for the life of this mounted tile.
+  //
+  // ONE ref shared by both samplers, keyed by field name. They read the same
+  // inbound video stat at different cadences, so a receiver omitting
+  // `totalProcessingDelay` would otherwise say so twice — once from each — for
+  // a single fact about the engine. A browser does not grow a statistics field
+  // halfway through a session.
+  //
+  // A ref rather than state (a write here would re-render a wall of live video
+  // to record something nobody displays — the reason `useWallAlignment` holds
+  // lags in a ref), and at component scope rather than inside either effect: the
+  // effects are keyed on `status`, so a tile flapping through the night would
+  // report the same permanent fact on every recovery.
+  const reportedMissingFieldsRef = useRef<Set<string>>(new Set());
+  const reportMissingStatsField = useCallback(
+    (field: string | null) => {
+      if (field === null || reportedMissingFieldsRef.current.has(field)) return;
+      reportedMissingFieldsRef.current.add(field);
+      logResilienceEvent('stream', 'stats-field-missing', { cameraIdentifier, field });
+    },
+    [cameraIdentifier],
+  );
+
   // Spec 040: the receive-to-decoded fragment of the SFU → kiosk decode leg.
   //
   // A FRAGMENT, not the leg — the budget spans SFU-sends → kiosk-decoded, and a
@@ -121,7 +153,11 @@ export function CameraViewer({
         if (report === null) return;
 
         const current = decodeSampleFrom(report as unknown as Map<string, unknown>);
-        if (current === null) return;
+        if (current === null) {
+          // The sample is still dropped — only the silence changes (FR-006).
+          reportMissingStatsField(missingDecodeFieldIn(report as unknown as Map<string, unknown>));
+          return;
+        }
 
         if (previous !== null) {
           const elapsed = decodeElapsedBetween(previous, current);
@@ -136,7 +172,7 @@ export function CameraViewer({
     }, DECODE_SAMPLE_INTERVAL_MS);
 
     return () => window.clearInterval(timer);
-  }, [status, stats, cameraIdentifier, getToken]);
+  }, [status, stats, cameraIdentifier, getToken, reportMissingStatsField]);
 
   // Spec 045: this tile's lag, so the wall can align against it.
   //
@@ -167,7 +203,11 @@ export function CameraViewer({
         if (report === null) return;
 
         const current = lagSampleFrom(report as unknown as Map<string, unknown>);
-        if (current === null) return;
+        if (current === null) {
+          // The sample is still dropped — only the silence changes (FR-006).
+          reportMissingStatsField(missingLagFieldIn(report as unknown as Map<string, unknown>));
+          return;
+        }
 
         if (previous !== null) {
           // Two figures from one pair of samples, and deliberately not the
@@ -205,7 +245,7 @@ export function CameraViewer({
     }, LAG_SAMPLE_INTERVAL_MS);
 
     return () => window.clearInterval(timer);
-  }, [status, stats, cameraIdentifier, sampleLag, getToken]);
+  }, [status, stats, cameraIdentifier, sampleLag, getToken, reportMissingStatsField]);
 
   // Apply the wall's decision. Undefined and null both mean "leave this tile
   // alone", which is what a single-camera page and an unconverged wall both
