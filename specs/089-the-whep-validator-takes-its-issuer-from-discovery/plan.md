@@ -104,7 +104,7 @@ uncaught out of `ValidateAsync` and `AuthorizeWhepCommandHandler.HandleAsync`,
 giving MediaMTX a 500 rather than a 401. Pre-existing: the same await already
 existed for `SigningKeys` before this change, so this diff neither introduces
 nor worsens it. Access is still refused, so it is an availability gap, not an
-authorization one. Out of scope here; follow-up issue recommended.
+authorization one. Out of scope here; filed as **#2160**.
 
 **`Ensure.That`** (ADR-0105) is already on the constructor's `options` and is
 unchanged. The signature carrying `CancellationToken` last (ADR-0049) is
