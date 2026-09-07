@@ -530,6 +530,16 @@ object that await already returned. No new fetch, no new cache, no new lock.
 - **Making the nine REST APIs set `ValidateIssuerSigningKey = true`** (D2). The
   correct resolution of that asymmetry, on nine surfaces instead of one.
   Follow-up issue recommended.
+- **`WhepAuthValidator` never calls `ConfigurationManager.RequestRefresh()`.**
+  `JwtBearerHandler` sets `RefreshOnIssuerKeyNotFound` (default on) and calls
+  `RequestRefresh()` on a signature-key-not-found failure, so the bearer
+  pipeline re-reads discovery within its 5-minute refresh floor
+  (measured: `AutomaticRefreshInterval = 12:00:00`,
+  `RefreshInterval = 00:05:00`); WHEP waits out the full 12-hour automatic
+  interval instead. Pre-existing for signing keys; this spec's discovery-fill
+  extends the same staleness to the issuer, so a realm signing-key rotation
+  now also leaves WHEP 401ing for up to 12 hours after the nine REST APIs have
+  recovered. Follow-up issue recommended (number pending).
 - **Unifying the authority derivation** between `BindWhepAuthOptions` and
   `AddBearerAuthentication` (spec 071 D5, restated as D5).
 - **The Mosquitto plugin's suffix-match issuer check** and its missing `aud`
