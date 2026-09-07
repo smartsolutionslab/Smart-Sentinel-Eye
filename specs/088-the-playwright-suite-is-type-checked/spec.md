@@ -350,9 +350,9 @@ in the suite's shape.
 Stated plainly, because a new CI check changes the meaning of green.
 
 - **New:** any type error under `e2e/` fails the `frontend` job. That job already
-  gates `e2e-full-stack` (`needs: [backend, frontend]`), so a type error in the
-  Playwright suite now also prevents the 40-minute stack job from starting — a
-  saving, not a cost.
+  gates `e2e` (display name "e2e (Playwright, full stack)"; `needs: [backend,
+  frontend]`), so a type error in the Playwright suite now also prevents the
+  40-minute stack job from starting — a saving, not a cost.
 - **Fails on existing code:** **yes — 7 errors in 5 files**, until they are fixed
   in this same PR. After the fixes, `develop` is green.
 - **US2 adds:** `pnpm format:check` covering `e2e/` — 3 files, reformatted here.
@@ -360,6 +360,22 @@ Stated plainly, because a new CI check changes the meaning of green.
   added. The seven fixes are guards and type annotations; explicitly **no
   `@ts-expect-error`, no `any`, no `!` and no `as`** may be used to reach green
   (see `plan.md`).
+
+---
+
+## Scope note (phase 6)
+
+`playwright.config.ts` was the one `.ts` file in the repository the P1 diff did
+not plan for: it sits outside `apps/*/tsconfig.json` and outside
+`e2e/tsconfig.json` (rooted at `e2e/`), and the format glob `{apps,e2e}/**`
+missed it too. Its own comment (lines 24-30) records that a missing
+`testIgnore` once ran the wall specs against the management app — the same
+"a config error is caught by nothing" failure AS-4 guards for `include`, just
+one file up. Fixed by adding `../playwright.config.ts` to `e2e/tsconfig.json`'s
+`include` and appending `playwright.config.ts` to both format globs in
+`package.json`. So *"the Playwright suite is type-checked"* was not true of its
+own config until this fix — recorded here because the P1 diff's file list
+undercounted by one.
 
 ---
 
