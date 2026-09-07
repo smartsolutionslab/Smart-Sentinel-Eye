@@ -247,6 +247,13 @@ export function CameraViewer({
     return () => window.clearInterval(timer);
   }, [status, stats, cameraIdentifier, sampleLag, getToken, reportMissingStatsField]);
 
+  // Spec 095 FR-004: an engine that cannot hold a playout target says so once.
+  //
+  // At component scope for the same reason as the field ref above — this effect
+  // is keyed on `status` too, so a flapping tile would otherwise report on every
+  // recovery.
+  const reportedNoPlayoutRef = useRef(false);
+
   // Apply the wall's decision. Undefined and null both mean "leave this tile
   // alone", which is what a single-camera page and an unconverged wall both
   // want — and neither is the same as a target of zero.
@@ -259,12 +266,28 @@ export function CameraViewer({
     // without `getReceivers`, a torn-down connection — and an exception here
     // would take the render effect with it. A tile that cannot be aligned must
     // carry on showing video (FR-013).
+    let applied = false;
     try {
-      setPlayoutTarget(playoutTargetMilliseconds);
+      applied = setPlayoutTarget(playoutTargetMilliseconds);
     } catch {
-      // Swallowed for the reason above.
+      // Still swallowed, for the reason above. A throw is not an application,
+      // so it falls into the report below rather than out of this effect.
     }
-  }, [status, playoutTargetMilliseconds, setPlayoutTarget]);
+
+    // The answer is no longer discarded. `setPlayoutTarget` reports false when
+    // no video receiver carries `jitterBufferTarget` — Firefox, Safari, pre-115
+    // Chromium — and nothing in the tree read that. A wall on such an engine
+    // shows a spread that never closes, which is what an unconverged wall looks
+    // like too; the first is permanent and the second happens on every startup.
+    //
+    // Guarded on `status === 'live'` by the effect above, so the transient
+    // `useWhepSession` answers between mount and connect is not reported here
+    // (FR-005) — that would put a line on every tile on every mount.
+    if (!applied && !reportedNoPlayoutRef.current) {
+      reportedNoPlayoutRef.current = true;
+      logResilienceEvent('stream', 'playout-target-unsupported', { cameraIdentifier });
+    }
+  }, [status, playoutTargetMilliseconds, setPlayoutTarget, cameraIdentifier]);
 
   return (
     <div className={clsx('relative aspect-video w-full overflow-hidden rounded-md bg-black', className)}>
