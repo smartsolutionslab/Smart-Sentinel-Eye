@@ -46,6 +46,18 @@ namespace SmartSentinelEye.StreamDistribution.Infrastructure.Tests.Auth;
 /// checks — that caused #2090. <see cref="WhepValidatorAudienceTests"/> closes it by
 /// driving the real <c>ValidateAsync</c>; keep the two files together.
 /// </para>
+///
+/// <para>
+/// <b>The same limit applies to the issuer parity below</b> (spec 089, #2095).
+/// <see cref="The_whep_hook_leaves_the_issuer_to_discovery_exactly_as_the_bearer_pipeline_does"/>
+/// binds the <em>factory</em> and nothing more: it cannot see the clone
+/// <c>ValidateAsync</c> hands the handler, so it would stay green if the issuer were
+/// re-hardcoded onto that clone, and it says nothing about which issuer a token is
+/// actually checked against. <see cref="WhepValidatorIssuerTests"/> is its runtime
+/// half, driving the real <c>ValidateAsync</c> with the dialled URL and the realm's
+/// issuer deliberately split. Neither stands alone — that pairing is #2093's whole
+/// lesson, and it now spans three files rather than two.
+/// </para>
 /// </summary>
 public class WhepAudienceTests
 {
@@ -110,6 +122,56 @@ public class WhepAudienceTests
             customMessage: "the WHEP hook and the nine APIs must name the same API. Read the "
             + "audience off the constant the bearer pipeline reads, so this hook cannot accept "
             + "a token they would refuse (spec 071 FR-002).");
+    }
+
+    /// <summary>
+    /// Parity on where the issuer comes from (spec 089 FR-006). The bearer pipeline
+    /// sets neither property and lets <c>JwtBearerHandler</c> fill them per request
+    /// from the discovery document's <c>issuer</c>; the WHEP factory must leave the
+    /// same two slots in the same state, so the request path is the only thing that
+    /// decides which issuer a token is checked against.
+    ///
+    /// <para>
+    /// <b>Both sides are read, neither is asserted as a <c>null</c> literal.</b> A
+    /// constant asserted against itself passes whatever it is later changed to
+    /// (spec 069's finding); comparing means a future edit that re-hardcodes the
+    /// authority into <c>CreateParameters</c> fails here, and so does the bearer side
+    /// starting to configure an issuer of its own. Materialised through a
+    /// null-coalesce for the same reason the audience parity above is: an unset
+    /// collection arrives as <b>null</b>, and letting Shouldly dereference it reports
+    /// an <c>ArgumentNullException</c> instead of the difference.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>It binds the factory, not the runtime object</b>, and does not stand alone —
+    /// see the class doc comment and <see cref="WhepValidatorIssuerTests"/>, which
+    /// drives the real <c>ValidateAsync</c>. This case cannot see the clone, so on its
+    /// own it would be exactly the proof-of-nothing #2093 was filed about.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void The_whep_hook_leaves_the_issuer_to_discovery_exactly_as_the_bearer_pipeline_does()
+    {
+        TokenValidationParameters whep = WhepAuthValidator.CreateParameters(Authority);
+        TokenValidationParameters bearer = BearerOptions().TokenValidationParameters;
+
+        whep.ValidIssuer.ShouldBe(
+            bearer.ValidIssuer,
+            customMessage: "the WHEP hook pins an issuer the bearer pipeline leaves to discovery. "
+            + "The configured authority is the URL the service dials Keycloak on; behind an "
+            + "ingress that is not the issuer the realm mints, so every WHEP open 401s while the "
+            + "nine REST APIs keep working (#2095 FR-001/FR-006).");
+
+        IReadOnlyCollection<string> whepIssuers = [.. whep.ValidIssuers ?? []];
+        IReadOnlyCollection<string> bearerIssuers = [.. bearer.ValidIssuers ?? []];
+
+        whepIssuers.ShouldBe(
+            bearerIssuers,
+            ignoreOrder: true,
+            customMessage: "the WHEP hook and the nine APIs must enter the request path with the "
+            + "same set of pre-configured issuers. JwtBearerHandler concatenates the discovery "
+            + "issuer onto this collection, so anything left here is accepted in addition to it "
+            + "(#2095 FR-002).");
     }
 
     /// <summary>
