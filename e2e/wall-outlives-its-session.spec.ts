@@ -27,6 +27,9 @@ async function signInAsWallDisplay(page: Page): Promise<void> {
 /** Claims of a grant, read without verifying — this is a test, not a validator. */
 function claimsOf(token: string): Record<string, unknown> {
   const [, payload] = token.split('.');
+  if (payload === undefined) {
+    throw new Error('a grant should have a payload segment');
+  }
   return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>;
 }
 

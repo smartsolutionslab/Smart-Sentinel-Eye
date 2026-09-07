@@ -63,6 +63,9 @@ export async function readKioskAccessToken(page: Page): Promise<KioskTokenClaims
       return null;
     }
     const [, claims] = accessToken.split('.');
+    if (claims === undefined) {
+      return null;
+    }
     return JSON.parse(atob(claims.replace(/-/g, '+').replace(/_/g, '/'))) as unknown;
   });
 

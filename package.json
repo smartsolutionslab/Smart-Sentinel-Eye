@@ -11,7 +11,8 @@
     "build": "pnpm -r --filter \"./apps/**\" build",
     "lint": "pnpm -r --filter \"./apps/**\" lint",
     "test": "pnpm -r --filter \"./apps/**\" test",
-    "typecheck": "pnpm -r --filter \"./apps/**\" typecheck",
+    "typecheck": "pnpm -r --filter \"./apps/**\" typecheck && pnpm typecheck:e2e",
+    "typecheck:e2e": "tsc -p e2e/tsconfig.json --noEmit",
     "format": "prettier --write \"apps/**/*.{ts,tsx,js,jsx,json,css,md,yaml,yml}\"",
     "format:check": "prettier --check \"apps/**/*.{ts,tsx,js,jsx,json,css,md,yaml,yml}\"",
     "test:e2e": "playwright test",
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
+    "@types/node": "^22.20.1",
     "prettier": "3.9.6",
     "typescript": "6.0.3"
   }

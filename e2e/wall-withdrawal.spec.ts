@@ -67,6 +67,9 @@ async function signIn(page: Page): Promise<string> {
 /** Claims of a grant, read without verifying — this is a test, not a validator. */
 function claimsOf(token: string): Record<string, string> {
   const [, payload] = token.split('.');
+  if (payload === undefined) {
+    throw new Error('a grant should have a payload segment');
+  }
   return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, string>;
 }
 
@@ -84,7 +87,9 @@ function claimsOf(token: string): Record<string, string> {
  */
 function issuerOf(token: string): string {
   const issuer = claimsOf(token)['iss'];
-  expect(issuer, 'a grant should name its issuer').toBeTruthy();
+  if (issuer === undefined) {
+    throw new Error('a grant should name its issuer');
+  }
   return issuer;
 }
 
