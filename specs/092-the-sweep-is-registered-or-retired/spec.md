@@ -277,6 +277,17 @@ Run against the Aspire stack, by hand, without reading any source file:
    — there is nothing left to do.
 10. Delete both probe clients.
 
+> **Step 9's second half is wrong, and phase 5 found it by running it.** Step 6
+> holds; the line **is** logged again, `1 of 1`, from the next boot. The guard
+> is on `kiosks.Count > 0`, and the residue client still exists and is still
+> stamped — the probes are not deleted until step 10. `SweptKioskPrivileges`
+> counts kiosks *reached*, not accounts that lost something, and the strip
+> returns early on an account with no direct mappings. So a realm with any
+> enrolled kiosk in it reports "stripped N of N" on every start whether or not
+> it stripped anything, which is most of what the silence in T008 was bought
+> for. Recorded in `verification.md` §4 with the log; not fixed here, because
+> it is a behaviour change owing its own red.
+
 **Step 4 and step 7 are the ones that matter.** A sweep whose idea of "a kiosk"
 matched everything would pass steps 6 and 8 on the way past.
 
