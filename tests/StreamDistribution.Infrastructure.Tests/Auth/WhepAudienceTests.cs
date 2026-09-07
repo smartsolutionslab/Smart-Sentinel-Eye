@@ -62,12 +62,6 @@ namespace SmartSentinelEye.StreamDistribution.Infrastructure.Tests.Auth;
 public class WhepAudienceTests
 {
     /// <summary>
-    /// Any well-formed authority; the parameters are inspected, never used to fetch
-    /// metadata, so nothing resolves this host.
-    /// </summary>
-    private const string Authority = "https://keycloak.invalid/realms/smart-sentinel-eye";
-
-    /// <summary>
     /// <b>The refusal itself, as a pure function.</b> Calls the same
     /// <see cref="Validators.ValidateAudience"/> the bearer handler calls, exactly as
     /// spec 069's <c>BearerAudienceTests.A_token_minted_for_another_api_is_refused</c>
@@ -81,7 +75,7 @@ public class WhepAudienceTests
             Validators.ValidateAudience(
                 ["some-other-api"],
                 securityToken: null,
-                WhepAuthValidator.CreateParameters(Authority)));
+                WhepAuthValidator.CreateParameters()));
     }
 
     /// <summary>
@@ -91,7 +85,7 @@ public class WhepAudienceTests
     [Fact]
     public void The_whep_hook_validates_the_audience_exactly_as_the_bearer_pipeline_does()
     {
-        TokenValidationParameters whep = WhepAuthValidator.CreateParameters(Authority);
+        TokenValidationParameters whep = WhepAuthValidator.CreateParameters();
         TokenValidationParameters bearer = BearerOptions().TokenValidationParameters;
 
         whep.ValidateAudience.ShouldBe(
@@ -112,7 +106,7 @@ public class WhepAudienceTests
     public void The_whep_hook_names_the_same_api_as_the_bearer_pipeline()
     {
         IReadOnlyCollection<string> whep =
-            [.. WhepAuthValidator.CreateParameters(Authority).ValidAudiences ?? []];
+            [.. WhepAuthValidator.CreateParameters().ValidAudiences ?? []];
         IReadOnlyCollection<string> bearer =
             [.. BearerOptions().TokenValidationParameters.ValidAudiences ?? []];
 
@@ -152,7 +146,7 @@ public class WhepAudienceTests
     [Fact]
     public void The_whep_hook_leaves_the_issuer_to_discovery_exactly_as_the_bearer_pipeline_does()
     {
-        TokenValidationParameters whep = WhepAuthValidator.CreateParameters(Authority);
+        TokenValidationParameters whep = WhepAuthValidator.CreateParameters();
         TokenValidationParameters bearer = BearerOptions().TokenValidationParameters;
 
         whep.ValidIssuer.ShouldBe(
@@ -188,7 +182,7 @@ public class WhepAudienceTests
             Validators.ValidateAudience(
                 [AuthenticationDefaults.ApiAudience],
                 securityToken: null,
-                WhepAuthValidator.CreateParameters(Authority)));
+                WhepAuthValidator.CreateParameters()));
     }
 
     /// <summary>
