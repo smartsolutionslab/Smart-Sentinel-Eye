@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using SmartSentinelEye.Identity.Infrastructure;
+using SmartSentinelEye.Identity.Infrastructure.KeycloakAdmin;
 using SmartSentinelEye.Integration.Tests.Fixtures;
 
 namespace SmartSentinelEye.Integration.Tests.Identity;
@@ -197,9 +198,14 @@ public class KioskPrivilegeSweepStartupIntegrationTests(AspireFixture aspire)
             .Select(descriptor => descriptor.ImplementationType!)
             .ToArray();
 
-        startupServices.ShouldNotBeEmpty(
-            "AddIdentityInfrastructure registers no startup service of Identity's own, so nothing "
-            + "drives KioskPrivilegeSweep when the Identity API starts and a residue kiosk keeps "
+        // ShouldContain, not ShouldNotBeEmpty: a message about
+        // KioskPrivilegeSweep must be checked against the type it names, or a
+        // second startup service in this assembly keeps it green with the
+        // registration deleted.
+        startupServices.ShouldContain(
+            typeof(KioskPrivilegeSweepHostedService),
+            "AddIdentityInfrastructure registers no startup service that drives KioskPrivilegeSweep "
+            + "when the Identity API starts, so a residue kiosk keeps "
             + "offline_access for as long as the realm lives (#2132). The class has existed since "
             + "spec 052 and has never been composed by anything.");
 
