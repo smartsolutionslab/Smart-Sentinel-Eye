@@ -57,10 +57,11 @@ there would race the migration it exists to perform. This is the single most
 consequential placement decision in the change and the easiest to get wrong,
 because `AddKeycloakAdminClient` is where every other Keycloak thing already is.
 
-**Scoping.** `IKeycloakAdminClient` is `AddScoped`
-(`IdentityInfrastructureModule.cs:150`). `KioskPrivilegeSweep` therefore
-registers `AddScoped` too, and the hosted service — a singleton — resolves it
-through `IServiceScopeFactory.CreateAsyncScope()`. Injecting a Scoped service
+**Scoping.** `IKeycloakAdminClient` is `AddScoped` at the end of
+`AddKeycloakAdminClient` (`IdentityInfrastructureModule.cs:161`).
+`KioskPrivilegeSweep` therefore registers `AddScoped` too, and the hosted
+service — a singleton — resolves it through
+`IServiceScopeFactory.CreateAsyncScope()`. Injecting a Scoped service
 into a hosted service constructor throws at container validation; that is the
 failure `StreamFabAttributionService` already routes around.
 
@@ -98,7 +99,8 @@ discarded.
 Today the enumeration is outside the `try`:
 
 ```csharp
-IReadOnlyList<string> kiosks = await keycloak.GetEnrolledKioskClientIdsAsync(cancellationToken);   // line 44 — unguarded
+// KioskPrivilegeSweep.cs:56 — the first statement of SweepAsync, unguarded
+IReadOnlyList<string> kiosks = await keycloak.GetEnrolledKioskClientIdsAsync(cancellationToken);
 ```
 
 An unreachable or refusing provider throws out of `SweepAsync`. Registered as
@@ -136,8 +138,9 @@ plant the residue first.
 
 The class currently justifies itself with "every kiosk enrolled before this
 existed is still holding a privilege". That population is empty and provably so
-(spec §"The verdict"). The live reason is the half-enrolment residue that
-`HttpKeycloakAdminClient.cs:364` delegates here by name.
+(spec §"The verdict"). The live reason is the half-enrolment residue that the
+best-effort comment in `TryDeleteClientAsync` (`HttpKeycloakAdminClient.cs:363`)
+delegates here by name.
 
 Replace the "why a sweep" paragraph with the backstop reason and a pointer to
 that call site. **Comments say why** (ADR-0036), and this one currently says a

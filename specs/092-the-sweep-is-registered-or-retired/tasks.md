@@ -94,8 +94,8 @@ ADR-0139, ADR-0144.
   not stop the host. Drive the startup service, not `SweepAsync`; use a
   hand-written provider that refuses every call and counts the enumeration, so a
   service that survives by never asking is not mistaken for one that survived the
-  failure. Red today because
-  `KioskPrivilegeSweep.cs:44` sits outside the try and no wrapper exists.
+  failure. Red today because the enumeration that opens `SweepAsync`
+  (`KioskPrivilegeSweep.cs:56`) sits outside the try and no wrapper exists.
 
   > **Corrected at phase 4a. The home this task named was impossible.** It said
   > `tests/Identity.Application.Tests/`, but the wrapper the plan puts the catch

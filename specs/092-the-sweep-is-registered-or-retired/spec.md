@@ -55,7 +55,8 @@ strips inside the create (spec 052 T001/T002), and a failed strip deletes the
 client (T003). A kiosk cannot be *enrolled* holding the privilege.
 
 **But one path leaves one behind, and the code says the sweep is what catches
-it.** `src/Identity/Infrastructure/KeycloakAdmin/HttpKeycloakAdminClient.cs:353`:
+it.** The best-effort comment in `TryDeleteClientAsync`
+(`src/Identity/Infrastructure/KeycloakAdmin/HttpKeycloakAdminClient.cs:363`):
 
 ```csharp
 catch (Exception exception) when (exception is not OperationCanceledException)
@@ -185,11 +186,11 @@ Then the failure is logged
   And the next start tries again
 ```
 
-*This is the case the sweep as written gets wrong: the enumeration call at
-`KioskPrivilegeSweep.cs:44` sits **outside** its try, so an unreachable provider
-throws out of `SweepAsync`. Registered as an `IHostedService` that stops the host
-— the Identity API would fail to boot whenever Keycloak is slow. Identity must
-not require Keycloak to be up in order to start.*
+*This is the case the sweep as written gets wrong: the enumeration that opens
+`SweepAsync` (`KioskPrivilegeSweep.cs:56`) sits **outside** its try, so an
+unreachable provider throws out of the pass. Registered as an `IHostedService`
+that stops the host — the Identity API would fail to boot whenever Keycloak is
+slow. Identity must not require Keycloak to be up in order to start.*
 
 ### US1 — one kiosk unreachable, the rest still swept
 
@@ -275,7 +276,8 @@ matched everything would pass steps 6 and 8 on the way past.
   `ReverseIndexSeederHostedService` and `RuleCacheSeederHostedService` are the
   four existing one-pass-at-start services and all four are `IHostedService`.
 - **`IServiceScopeFactory`** — `IKeycloakAdminClient` is registered `AddScoped`
-  (`IdentityInfrastructureModule.cs:150`); a hosted service is a singleton and
+  at the end of `AddKeycloakAdminClient`
+  (`IdentityInfrastructureModule.cs:161`); a hosted service is a singleton and
   cannot take it directly. `StreamFabAttributionService` is the pattern to
   mirror exactly.
 - **Registration in `AddIdentityInfrastructure`** (ADR-0051), **not** in
@@ -312,10 +314,10 @@ Three corrections, none of which change the verdict:
 2. **"If the sweep is still needed, registering it is small" understates it.**
    Three things are needed, and two are load-bearing: an `IHostedService`
    wrapper, an `IServiceScopeFactory` (the admin client is Scoped), and a catch
-   around the *whole* pass — because the enumeration at `KioskPrivilegeSweep.cs:44`
-   is outside the existing try, and a hosted service that throws in `StartAsync`
-   stops the host. Registering it as written makes the Identity API's boot depend
-   on Keycloak being reachable.
+   around the *whole* pass — because the enumeration that opens `SweepAsync`
+   (`KioskPrivilegeSweep.cs:56`) is outside the existing try, and a hosted
+   service that throws in `StartAsync` stops the host. Registering it as written
+   makes the Identity API's boot depend on Keycloak being reachable.
 
 3. **"The population needing a backfill may be smaller, or empty"** — it is
    empty, everywhere, and it can never refill from the direction spec 052 was
@@ -326,7 +328,7 @@ Three corrections, none of which change the verdict:
 **Two related defects found, both out of scope here** (smallest change —
 ADR-0036), both worth their own issue:
 
-- `TryDeleteClientAsync` (`HttpKeycloakAdminClient.cs:356-360`) never inspects
+- `TryDeleteClientAsync` (`HttpKeycloakAdminClient.cs:353-368`) never inspects
   the response. A DELETE answering 404, 409 or 500 leaves the client behind
   **with no log line at all** — only a thrown exception is logged. So the residue
   population this spec covers can be created silently.
@@ -466,7 +468,8 @@ spec exists to repair.
 
 **Red C — the unreachable-provider case.** A unit test that the pass does not
 propagate when the *enumeration* fails, not only when a per-kiosk strip fails.
-Red today: the enumeration at line 44 sits outside the try, so it throws.
+Red today: the enumeration that opens `SweepAsync`
+(`KioskPrivilegeSweep.cs:56`) sits outside the try, so it throws.
 `FakeKeycloakAdminClient.FailNextCall` already provides the seam.
 
 **US2 discharges phase 4a differently and says so.** Correcting a tick in
