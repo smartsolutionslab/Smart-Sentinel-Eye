@@ -119,13 +119,19 @@ Both are documented in `census.md` §D5 and both produce the *same* wrong count,
    `<c>[Collection(AspireCollection.Name)]</c>` in its doc-comment, and the
    census's unanchored `grep` credited it.
 
-   **What refuses it here is the line anchor, not the comment stripping** —
-   proved by counterfactual during phase 4a: with `StripComments` neutered the
-   guard still reports 4 classes / 34 tests, because that `[` sits behind
-   `/// <c>` and never begins its line. An earlier draft of this section, and
-   of `tasks.md` T003, said the guard would be *green* on `RunModeDriverTests`
-   without stripping. That holds for the census's shell `grep` and not for the
-   line-anchored attribute match specified above.
+   **This shape is refused twice over, independently.** With `StripComments`
+   neutered, the guard still reports 4 classes / 34 tests — proved by
+   counterfactual during phase 4a — because that `[` sits behind `/// <c>` and
+   never begins its line: the anchor alone refuses it. But the anchor is not
+   what does the work in the guard as built either: `StripComments` deletes the
+   whole `///` line, anchor or no, before either match runs. Removing just the
+   anchor still reddens correctly for the same reason. Neither mechanism is
+   individually *necessary* here — the counterfactual establishes that
+   stripping is not *sufficient credit* for this case, not that the anchor is
+   the sole cause. An earlier draft of this section, and of `tasks.md` T003,
+   said the guard would be *green* on `RunModeDriverTests` without stripping.
+   That holds for the census's shell `grep` and not for the guard as built,
+   which refuses this shape by either mechanism on its own.
 
    **Stripping stays load-bearing, for a different shape:** an attribute
    commented out inside a `/* … */` block *does* begin its own line, so the
