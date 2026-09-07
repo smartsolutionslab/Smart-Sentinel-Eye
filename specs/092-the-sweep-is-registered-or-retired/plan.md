@@ -14,9 +14,16 @@ context needs to know it ran.
 | Layer | Change | File |
 |---|---|---|
 | `Identity.Application` | Guard the whole pass, not only the per-kiosk strip. Silence the steady-state log line. Correct the docstring's stated reason. | `KeycloakAdmin/KioskPrivilegeSweep.cs` |
-| `Identity.Application` | One log-level/condition change; no new message. | `Log.cs` |
 | `Identity.Infrastructure` | **New** — the `IHostedService` wrapper. | `KeycloakAdmin/KioskPrivilegeSweepHostedService.cs` |
 | `Identity.Infrastructure` | One `AddHostedService` line and one `AddScoped`. | `IdentityInfrastructureModule.cs` |
+| `Identity.Infrastructure` | **New message** — the pass failed. | `Log.cs` |
+
+> **Corrected at phase 6.** This table had a fourth row putting "one
+> log-level/condition change; no new message" in `Identity/Application/Log.cs`.
+> **Nothing changed in that file.** The condition change is in
+> `KioskPrivilegeSweep.cs` (row 1), and the one new message went to
+> `Identity/Infrastructure/Log.cs`, which §VII of this plan already named
+> correctly. The row above records what shipped.
 
 **Why the wrapper lives in Infrastructure, not Application.** Hosting is a
 framework concern and `IServiceScopeFactory` is a composition detail. Every
@@ -217,3 +224,17 @@ latency legs (ADR-0117), and this change is on no leg.
 - **Does not add an architecture test.** A guard that reads the container is the
   weak evidence the spec already labels as such; adding a second one does not
   make it stronger.
+
+  > **Corrected — superseded at phase 3, not at 4a.** The branch *does* add
+  > `tests/Architecture.Tests/KioskPrivilegeSweepRegistrationTests.cs`. This
+  > bullet was written against spec §"Phase 4a", which had already said Red B
+  > must assert the registration; phase 3 then gave that assertion a task (T003)
+  > and a home, and phase 4a added a third case to the same file — the
+  > `AddKeycloakAdminClient` placement fence. So the sentence was wrong when it
+  > was written, not overtaken later.
+  >
+  > **What it got right is the reason, and that survives**: the file reads a
+  > service collection and proves only that the registration is declared. It
+  > says so in its own docstring, and phase 5's log line is what shows the pass
+  > runs. Recorded rather than deleted, because a plan that quietly agrees with
+  > the branch teaches nothing.
