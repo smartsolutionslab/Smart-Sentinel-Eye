@@ -306,9 +306,27 @@ available.
 | Test framework | vitest + `@testing-library/react` + jsdom | `CameraViewerAlignment.test.tsx` |
 | Statistics doubles | the existing hand-written `WhepClient` class double | `CameraViewerAlignment.test.tsx:29-47` |
 
-`[resilience]` is a **stable observable contract** — `resilienceLog.ts:3-8` says
-Playwright asserts on it and kiosk remote-debug sessions grep for it. New
-transitions are additive and safe; the shape is not changed.
+`[resilience]` is a **stable observable contract**: new transitions are additive
+— nothing anywhere reads the *set* of transitions, so adding two changes no
+existing reader — and the shape is not changed.
+
+**Half the reason first given for that was false, and this spec quoted it rather
+than checking it.** `resilienceLog.ts:3-8` says *"Playwright asserts on it and
+kiosk remote-debug sessions grep for it"*, and the sentence above used to repeat
+it. **`grep -rn resilience e2e/` returns nothing** — not one of the 21 Playwright
+specs mentions the prefix. What actually asserts on `[resilience]` is vitest:
+`resilienceLog.test.ts`, `layoutHub.test.ts`, `WhepClient.test.ts`,
+`CellPage.test.tsx`, `CameraViewer.test.tsx` and this spec's own
+`CameraViewerAlignment.test.tsx`. The remote-debug half is unverifiable in either
+direction. The conclusion survives untouched — an additive transition is safe
+against every reader, asserted or hypothetical — but the premise was a record
+nobody re-checked, which is precisely the pattern this spec exists to close.
+Found in code review.
+
+The same claim in `resilienceLog.ts`'s own docstring is **left as found and
+reported as a finding**: it belongs to spec 011, this spec touches no other file
+outside its own list, and a one-line comment correction in a shared file the
+change never otherwise opens is a decision for a human rather than a drive-by.
 
 ---
 
@@ -440,6 +458,50 @@ transient the session layer already reports (`gateway.ts:76-113` logs
 `renew-start` / `renew-success` / `renew-failure` / `expired`), so a second
 line here would duplicate an existing signal at five measurements × N tiles ×
 every renewal. Fixing it would add noise to buy nothing.
+
+### → Accepted, recorded, not fixed: the `?? false` that can latch
+
+**Found in code review, and it is not one of #2109's nine.**
+`useWhepSession.ts:331-332` answers `false` whenever `clientRef.current` is null,
+and FR-005 leaves that alone. `status === 'live'` covers the report almost
+everywhere — but not on the branch where the connection effect returns early
+(`!whepUrl || !videoEl`, or `offlineMessage !== null`): the client is nulled in
+cleanup and not rebuilt, while `transitionTo('offline')` only moves `status` on
+the *next* render. If `playoutTargetMilliseconds` also changes in that commit,
+the playout effect reads a `false` meaning *"there is no client"* as one meaning
+*"the receiver refused"*, latches `reportedNoPlayoutRef`, and the tile claims for
+the rest of its life that its engine cannot hold a target.
+
+**Accepted rather than fixed, for three reasons.** It is narrow: it needs a
+target change inside the one render where the client is gone and `status` has
+not caught up. Its root is the same write-once latch FR-003 discusses, so
+patching it here would be a second and differently-shaped answer to one
+question. And the clean fix is a tri-state distinguishing *no client* from
+*receiver refused*, which lives in `useWhepSession.ts` — the file FR-005 keeps
+this spec out of entirely, and which #2157 (`agent:blocked`) and spec 094 both
+have claims on. **It belongs to #2157**, with item 7 above.
+
+The cost of leaving it is one false console line on one tile, on a transition
+that also produces an `offline` state the operator can see. The cost of taking
+it here is a change to a state machine two other specs are holding.
+
+### → Kept as it is, recorded: `inboundVideoStatIn` in both modules
+
+The three-line helper is duplicated verbatim in `wallAlignment.ts` and
+`kioskLatency.ts`, and the argument that hoisted `REQUIRED_*_FIELDS` — one
+declaration, so two readers cannot drift — does apply to *which stat to read*
+as well. It is not taken, deliberately.
+
+The `REQUIRED_*_FIELDS` hoist removed drift **within** a module, between a
+sampler and the predicate that must describe exactly it; it introduced no file
+and no dependency. Hoisting `inboundVideoStatIn` instead puts an import edge
+between two pure modules that are deliberately independent, or invents a third
+module for three lines — at phase 6, with no observed drift and no test pressure.
+The two legs of §IV are separately owned, and a selection rule that later differs
+by leg (a specific SSRC, say) is a change either copy can make alone.
+
+Recorded rather than left silent, because "defensible house shape" and "nobody
+noticed" are indistinguishable after the fact.
 
 ### → Not in scope at all: item 7 and #2108
 
