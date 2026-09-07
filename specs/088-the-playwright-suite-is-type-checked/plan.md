@@ -59,7 +59,7 @@ correct, and now demonstrated rather than asserted.
 
 ### The globals trap, and how this plan avoids it
 
-`apps/shared/eslint.config.js` pins **26 named globals** with `MediaStream`
+`apps/shared/eslint.config.js` pins **27 named globals** with `MediaStream`
 present and `MediaStreamTrack` absent; #2108 worked around exactly that. The trap
 is inheriting that list by accident.
 

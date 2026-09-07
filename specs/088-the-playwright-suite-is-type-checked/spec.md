@@ -46,7 +46,7 @@ rather than asserted — see *The counterfactual* below.
 
 **Holds: `apps/shared/eslint.config.js` pins an explicit globals allowlist with
 `MediaStream` present and `MediaStreamTrack` absent.** Verified at
-`apps/shared/eslint.config.js:31` — 26 named globals, `MediaStream` on line 31,
+`apps/shared/eslint.config.js:28` — 27 named globals, `MediaStream` on line 28,
 no `MediaStreamTrack` anywhere in the file.
 
 **Wrong in mechanism: "`lint`, `typecheck`, `test` and `format` scripts are all
