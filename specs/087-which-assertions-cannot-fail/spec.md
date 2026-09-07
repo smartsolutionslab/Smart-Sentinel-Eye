@@ -280,10 +280,14 @@ count is worse than none.**
 1. A first pass keyed on "mentions `AspireFixture`" and **missed
    `RunModeDriverTests`** (11 facts), which names the fixture in reflection code
    and doc-comments precisely because its job is to assert the class does *not*
-   acquire it. Count would have been 3 classes / 23 tests.
+   acquire it. Count would have been 3 classes / 23 tests. (This is **Trap 2**
+   in the guard's own naming — `plan.md` §"The two traps",
+   `Naming_the_fixture_in_code_is_not_a_declaration` — the numbering here
+   follows the order these passes were tried, not the guard's trap IDs.)
 2. A second pass keyed on `[Collection(AspireCollection.Name)]` **also missed
    it** — the literal string appears inside its `<c>…</c>` doc-comment. Comments
-   must be stripped before matching. Count would again have been 23.
+   must be stripped before matching. Count would again have been 23. (**Trap 1**
+   in the guard's naming — `A_doc_comment_naming_the_collection_attribute_is_not_a_declaration`.)
 
 The correct count is **4 classes / 34 test methods**, from a comment-stripped
 scan.
@@ -391,9 +395,11 @@ to decide whether a class *really* needs Docker. It checks that the class has
 3. **It covers `tests/Integration.Tests` only.** Other test projects have no
    Docker/no-Docker split and no category filter, so the rule has no meaning
    there.
-4. **A commented-out `[Collection]` reads as absent** — which is the safe
-   direction (the class is then required to declare a category), and is
-   asserted rather than assumed.
+4. **A commented-out `[Trait("Category", …)]` reads as absent** — which is the
+   safe direction (the class is then required to declare one of the two
+   legitimate declarations again), and is asserted rather than assumed
+   (`IntegrationTestSelectionTests.cs`'s
+   `A_commented_out_declaration_is_not_a_declaration`).
 5. **It reasons per *file*, not per class**, though this document and `plan.md`
    say "class" throughout. The two coincide today: no file under
    `tests/Integration.Tests` declares more than one top-level type except

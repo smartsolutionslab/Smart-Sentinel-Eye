@@ -110,9 +110,9 @@ to redo.
 
 ### Follow-up issues — filed, not fixed
 
-- [ ] **T007** File the findings this spec deliberately does not fix. One issue
+- [X] **T007** File the findings this spec deliberately does not fix. One issue
   each, or grouped where the fix is shared; each cites `specs/087-…/spec.md`'s
-  findings table. **No code changes.**
+  findings table. **No code changes.** → #2148–#2152.
   - **F1** `WhepHandshakeLatencyTests` ~60× — *still live*, contrary to #2141;
     spec 077 already filed it as a P2 human decision (`specs/077-…/spec.md:252-262`).
   - **F2** `RunModeVariableResidueSweep` — excluded from CI *and* read nowhere;
@@ -136,7 +136,7 @@ to redo.
   - Depends on: nothing. May run in parallel with T003–T006 **[P]** — it touches
     no file in the repository.
 
-- [ ] **T008** Add the feature issue (#2141) to Project #13 — the Phase 3 gate.
+- [X] **T008** Add the feature issue (#2141) to Project #13 — the Phase 3 gate.
   ```sh
   gh project item-add 13 --owner smartsolutionslab --url <issue-url>
   ```

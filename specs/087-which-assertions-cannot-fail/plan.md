@@ -254,7 +254,7 @@ narrowed, no suppression is added. The only change to what CI blocks on is
 | ADR-0139 — rules fail the build, not the review | the whole point: four classes documented their own Docker-freedom and nothing read it |
 | ADR-0103 — Aspire fixture, no Testcontainers | untouched; the guard reduces reliance on the Docker job rather than adding to it |
 | ADR-0036 — smallest change | one file + four attributes; the category rename is deliberately declined |
-| ADR-0084 — ≤ 300 LOC/file, ≤ 30 LOC/method | one `[Fact]` plus two helpers; comfortably inside |
+| ADR-0084 — ≤ 300 LOC/file, ≤ 30 LOC/method | the file exceeds 300 lines (412, after phase 6's fixes and discriminators); the rule does not bind here — `Directory.Build.props:108` puts `S104` in `NoWarn` for test projects — so this is recorded accurately rather than claimed as comfortable |
 | ADR-0065 — coverage gates | unaffected; both projects are outside the covered set |
 | ADR-0052 — xUnit + Shouldly | as the neighbouring guards |
 | ADR-0144 — no ADR, no weakened gate | none written; nothing weakened |
