@@ -20,6 +20,7 @@ namespace SmartSentinelEye.Integration.Tests.EventIngestion;
 /// connection, so there is no <see cref="AspireCollection"/> / Docker dependency.
 /// </para>
 /// </summary>
+[Trait("Category", "FixtureLogic")]
 public sealed class ListEventsTranslationTests
 {
     private static EventIngestionDbContext NewContext()

@@ -14,6 +14,7 @@ namespace SmartSentinelEye.Integration.Tests.AuditObservability;
 /// the numbers.
 /// </para>
 /// </summary>
+[Trait("Category", "FixtureLogic")]
 public class RunModeDriverTests
 {
     /// <summary>
