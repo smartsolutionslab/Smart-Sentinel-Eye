@@ -15,6 +15,12 @@
 // validated here and either grants (MOSQ_ERR_SUCCESS) or rejects
 // (MOSQ_ERR_AUTH); it never falls through to the password file.
 //
+// What a JWT-shaped password must satisfy: an RS256 signature from the
+// realm JWKS, an exp, an aud naming smart-sentinel-eye-api — the same
+// audience the nine HTTP APIs and the WHEP hook require (spec 090
+// FR-001) — an azp equal to the MQTT username, and an iss ending in the
+// realm path.
+//
 // The mosquitto_plugin_* entry points are defined in mosquitto_glue.c
 // with the const-correct signatures the headers require (cgo cannot
 // emit `const`, so those symbols cannot be //export'd from Go). They
@@ -46,6 +52,12 @@ import (
 )
 
 const defaultRealmPath = "/realms/smart-sentinel-eye"
+
+// The API every token in this realm is minted for, put on the token by
+// the sse-audience client scope. A fourth spelling of a literal
+// AuthenticationDefaults.ApiAudience, RealmAudienceTests and
+// BearerAudienceTests already carry — Go cannot import a C# constant.
+const apiAudience = "smart-sentinel-eye-api"
 
 var (
 	mutex     sync.RWMutex
@@ -153,6 +165,13 @@ func sseOnBasicAuth(event C.int, eventData unsafe.Pointer, userData unsafe.Point
 		set.Keyfunc,
 		jwt.WithValidMethods([]string{"RS256"}),
 		jwt.WithExpirationRequired(),
+		// Any-of, and the claim becomes required once an expected
+		// audience is configured — so a token carrying no aud at all
+		// fails here rather than passing. Any-of is what is wanted:
+		// Keycloak client_credentials tokens routinely carry "account"
+		// alongside the mapper audience, and requiring all of them
+		// would refuse every real token.
+		jwt.WithAudience(apiAudience),
 	)
 	if err != nil || !token.Valid {
 		return C.MOSQ_ERR_AUTH
