@@ -3,6 +3,7 @@ import {
   bufferDelayBetween,
   lagBetween,
   lagSampleFrom,
+  missingLagFieldIn,
   skewAcross,
   wallTargetFrom,
   PRESENTATION_BUFFER_BUDGET_MS,
@@ -67,6 +68,59 @@ describe('lagSampleFrom', () => {
   /** A partial report is not a tile with no lag. */
   it('Reads nothing when a counter is missing', () => {
     expect(lagSampleFrom(report({ jitterBufferDelay: 2.5, framesDecoded: 200 }))).toBeNull();
+  });
+});
+
+/**
+ * Spec 095 T002 / FR-001, FR-007. **A read that fails names the field it could
+ * not read.**
+ *
+ * <p>
+ * `lagSampleFrom` answers null for a report it cannot use, and that null is
+ * indistinguishable from a wall with nothing to say — which is the whole of
+ * issue #2109 item 3. This predicate is the other half: the same field list,
+ * read for the name rather than the value, so the caller can say which counter
+ * was absent. It stays pure and it does no logging (FR-007) — the caller
+ * reports.
+ * </p>
+ *
+ * <p>
+ * <b>The key is deleted, never set to null.</b> An engine that does not
+ * implement a statistic omits the property; a null is a different shape and
+ * would exercise a different branch. This repository has never observed
+ * `totalProcessingDelay` absent — spec 095 assumption A1 — and #1889, the one
+ * real observation it has, found all three fields present and numeric. These
+ * cover the case if it ever occurs; they are not evidence that it has.
+ * </p>
+ */
+describe('missingLagFieldIn', () => {
+  const complete = (): Record<string, unknown> => ({
+    jitterBufferDelay: 2.5,
+    jitterBufferEmittedCount: 200,
+    totalProcessingDelay: 1.25,
+    framesDecoded: 200,
+  });
+
+  it('Names the counter an inbound video stat leaves out', () => {
+    const stat = complete();
+    delete stat['totalProcessingDelay'];
+
+    expect(missingLagFieldIn(report(stat))).toBe('totalProcessingDelay');
+  });
+
+  it('Names nothing when every counter reads', () => {
+    expect(missingLagFieldIn(report(complete()))).toBeNull();
+  });
+
+  /**
+   * A session that has not started producing is not a defect, and it happens on
+   * every mount. Naming a field here would put a line on the console every two
+   * seconds for the normal case (FR-002).
+   */
+  it('Names nothing when the report carries no inbound video stat at all', () => {
+    const audioOnly = new Map<string, unknown>([['a', { type: 'inbound-rtp', kind: 'audio', framesDecoded: 200 }]]);
+
+    expect(missingLagFieldIn(audioOnly)).toBeNull();
   });
 });
 

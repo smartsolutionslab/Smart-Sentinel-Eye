@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { decodeElapsedBetween, decodeSampleFrom, reportKioskLatency, type DecodeSample } from './kioskLatency.js';
+import {
+  decodeElapsedBetween,
+  decodeSampleFrom,
+  missingDecodeFieldIn,
+  reportKioskLatency,
+  type DecodeSample,
+} from './kioskLatency.js';
 
 /**
  * Spec 040. The guards and the shape of a report.
@@ -136,5 +142,50 @@ describe('the decode fragment', () => {
   /** A counter that went backwards is a restarted session, not a fast one. */
   it('Reports nothing when the counters went backwards', () => {
     expect(decodeElapsedBetween(sample(100, 2, 0.5), sample(110, 1, 0.2))).toBeNull();
+  });
+});
+
+/**
+ * Spec 095 T003 / FR-001, FR-007. **The decode twin of `missingLagFieldIn`.**
+ *
+ * <p>
+ * `decodeSampleFrom` reads the same `totalProcessingDelay` as
+ * `lagSampleFrom`, with the same bare null, on a different leg of §IV —
+ * SFU → kiosk decode. Issue #2109 lists `wallAlignment.ts` and stops; fixing
+ * one and not the other would leave the identical silence one file over, on the
+ * leg whose instrument has already gone quiet once (#1889).
+ * </p>
+ *
+ * <p>
+ * The key is deleted, never set to null, for the reason
+ * `missingLagFieldIn`'s suite gives.
+ * </p>
+ */
+describe('missingDecodeFieldIn', () => {
+  const complete = (): Record<string, unknown> => ({
+    framesDecoded: 100,
+    totalProcessingDelay: 2,
+    totalDecodeTime: 0.5,
+  });
+
+  const report = (stat: Record<string, unknown>): Map<string, unknown> =>
+    new Map<string, unknown>([['v', { type: 'inbound-rtp', kind: 'video', ...stat }]]);
+
+  it('Names the counter an inbound video stat leaves out', () => {
+    const stat = complete();
+    delete stat['totalProcessingDelay'];
+
+    expect(missingDecodeFieldIn(report(stat))).toBe('totalProcessingDelay');
+  });
+
+  it('Names nothing when every counter reads', () => {
+    expect(missingDecodeFieldIn(report(complete()))).toBeNull();
+  });
+
+  /** Not-yet-producing is not absent, and it happens on every mount (FR-002). */
+  it('Names nothing when the report carries no inbound video stat at all', () => {
+    const audioOnly = new Map<string, unknown>([['a', { type: 'inbound-rtp', kind: 'audio', framesDecoded: 100 }]]);
+
+    expect(missingDecodeFieldIn(audioOnly)).toBeNull();
   });
 });

@@ -59,6 +59,31 @@ export interface LagSample {
 }
 
 /**
+ * The counters a lag reading needs, in the order a missing one is named.
+ *
+ * <p>
+ * Declared once because {@link lagSampleFrom} and {@link missingLagFieldIn} must
+ * not drift: a predicate naming a field the sampler does not require, or silent
+ * about one it does, is a worse instrument than the bare null it replaces.
+ * </p>
+ */
+const REQUIRED_LAG_FIELDS = [
+  'jitterBufferDelay',
+  'jitterBufferEmittedCount',
+  'totalProcessingDelay',
+  'framesDecoded',
+] as const;
+
+/** The first inbound video stat of a report, or null when it carries none. */
+function inboundVideoStatIn(report: Map<string, unknown>): Record<string, unknown> | null {
+  for (const value of report.values()) {
+    const stat = value as Record<string, unknown>;
+    if (stat['type'] === 'inbound-rtp' && stat['kind'] === 'video') return stat;
+  }
+  return null;
+}
+
+/**
  * Reads a tile's lag counters from its receiver statistics, or null when the
  * report carries nothing usable.
  *
@@ -68,31 +93,52 @@ export interface LagSample {
  * </p>
  */
 export function lagSampleFrom(report: Map<string, unknown>): LagSample | null {
-  for (const value of report.values()) {
-    const stat = value as Record<string, unknown>;
-    if (stat['type'] !== 'inbound-rtp' || stat['kind'] !== 'video') continue;
+  const stat = inboundVideoStatIn(report);
+  if (stat === null) return null;
+  if (REQUIRED_LAG_FIELDS.some((field) => typeof stat[field] !== 'number')) return null;
 
-    const jitterBufferDelay = stat['jitterBufferDelay'];
-    const jitterBufferEmittedCount = stat['jitterBufferEmittedCount'];
-    const processingDelay = stat['totalProcessingDelay'];
-    const framesDecoded = stat['framesDecoded'];
-    if (
-      typeof jitterBufferDelay !== 'number' ||
-      typeof jitterBufferEmittedCount !== 'number' ||
-      typeof processingDelay !== 'number' ||
-      typeof framesDecoded !== 'number'
-    ) {
-      return null;
-    }
+  // Narrowed by the guard immediately above, which TypeScript cannot follow
+  // through an array predicate. The guard is the one the predicate reads, so
+  // the two cannot disagree about which counters are required.
+  const { jitterBufferDelay, jitterBufferEmittedCount, totalProcessingDelay, framesDecoded } = stat as Record<
+    (typeof REQUIRED_LAG_FIELDS)[number],
+    number
+  >;
 
-    return {
-      jitterBufferDelaySeconds: jitterBufferDelay,
-      jitterBufferEmittedCount,
-      processingDelaySeconds: processingDelay,
-      framesDecoded,
-    };
-  }
-  return null;
+  return {
+    jitterBufferDelaySeconds: jitterBufferDelay,
+    jitterBufferEmittedCount,
+    processingDelaySeconds: totalProcessingDelay,
+    framesDecoded,
+  };
+}
+
+/**
+ * Names the first counter {@link lagSampleFrom} could not read, or null.
+ *
+ * <p>
+ * The other half of that null. A report the sampler cannot use is
+ * indistinguishable today from a tile with nothing to say, so a wall whose
+ * receiver omits one counter looks byte-identical to a wall that is perfectly
+ * aligned (issue #2109 item 3).
+ * </p>
+ *
+ * <p>
+ * <b>Null for a report carrying no inbound video stat at all</b>, not a field
+ * name: that is a session which has not started producing, it happens on every
+ * mount, and reporting it would put a line on the console every two seconds for
+ * the normal case (spec 095 FR-002).
+ * </p>
+ *
+ * <p>
+ * Pure, and it logs nothing (spec 095 FR-007). The caller decides whether a
+ * name is worth saying out loud, and how often.
+ * </p>
+ */
+export function missingLagFieldIn(report: Map<string, unknown>): string | null {
+  const stat = inboundVideoStatIn(report);
+  if (stat === null) return null;
+  return REQUIRED_LAG_FIELDS.find((field) => typeof stat[field] !== 'number') ?? null;
 }
 
 /**
