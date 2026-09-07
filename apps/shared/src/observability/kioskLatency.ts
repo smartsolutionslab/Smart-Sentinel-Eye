@@ -149,6 +149,27 @@ export interface DecodeSample {
 }
 
 /**
+ * The counters a decode reading needs, in the order a missing one is named.
+ *
+ * <p>
+ * Declared once because {@link decodeSampleFrom} and {@link missingDecodeFieldIn}
+ * must not drift: a predicate naming a field the sampler does not require, or
+ * silent about one it does, is a worse instrument than the bare null it
+ * replaces.
+ * </p>
+ */
+const REQUIRED_DECODE_FIELDS = ['framesDecoded', 'totalProcessingDelay', 'totalDecodeTime'] as const;
+
+/** The first inbound video stat of a report, or null when it carries none. */
+function inboundVideoStatIn(report: Map<string, unknown>): Record<string, unknown> | null {
+  for (const value of report.values()) {
+    const stat = value as Record<string, unknown>;
+    if (stat['type'] === 'inbound-rtp' && stat['kind'] === 'video') return stat;
+  }
+  return null;
+}
+
+/**
  * Times the receive-to-decoded fragment: the first packet of a frame arriving
  * through to that frame being decoded.
  *
@@ -168,24 +189,46 @@ export interface DecodeSample {
  * </p>
  */
 export function decodeSampleFrom(report: Map<string, unknown>): DecodeSample | null {
-  for (const value of report.values()) {
-    const stat = value as Record<string, unknown>;
-    if (stat['type'] !== 'inbound-rtp' || stat['kind'] !== 'video') continue;
+  const stat = inboundVideoStatIn(report);
+  if (stat === null) return null;
+  if (REQUIRED_DECODE_FIELDS.some((field) => typeof stat[field] !== 'number')) return null;
 
-    const framesDecoded = stat['framesDecoded'];
-    const processingDelay = stat['totalProcessingDelay'];
-    const decodeTime = stat['totalDecodeTime'];
-    if (typeof framesDecoded !== 'number' || typeof processingDelay !== 'number' || typeof decodeTime !== 'number') {
-      return null;
-    }
+  // Narrowed by the guard immediately above, which TypeScript cannot follow
+  // through an array predicate. The guard is the one the predicate reads, so
+  // the two cannot disagree about which counters are required.
+  const { framesDecoded, totalProcessingDelay, totalDecodeTime } = stat as Record<
+    (typeof REQUIRED_DECODE_FIELDS)[number],
+    number
+  >;
 
-    return {
-      processingDelaySeconds: processingDelay,
-      decodeTimeSeconds: decodeTime,
-      framesDecoded,
-    };
-  }
-  return null;
+  return {
+    processingDelaySeconds: totalProcessingDelay,
+    decodeTimeSeconds: totalDecodeTime,
+    framesDecoded,
+  };
+}
+
+/**
+ * Names the first counter {@link decodeSampleFrom} could not read, or null.
+ *
+ * <p>
+ * The decode twin of <c>missingLagFieldIn</c>, on a different leg of §IV. This
+ * sampler reads the same <c>totalProcessingDelay</c> with the same bare null,
+ * and the instrument on this leg has already gone quiet once without saying so
+ * (#1889). Issue #2109 lists only the alignment half; fixing one and not the
+ * other would leave the identical silence one file over.
+ * </p>
+ *
+ * <p>
+ * <b>Null for a report carrying no inbound video stat at all</b> — a session
+ * that has not started producing, which happens on every mount (spec 095
+ * FR-002). Pure, and it logs nothing (FR-007).
+ * </p>
+ */
+export function missingDecodeFieldIn(report: Map<string, unknown>): string | null {
+  const stat = inboundVideoStatIn(report);
+  if (stat === null) return null;
+  return REQUIRED_DECODE_FIELDS.find((field) => typeof stat[field] !== 'number') ?? null;
 }
 
 /**
