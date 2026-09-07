@@ -138,7 +138,7 @@ Listed so nobody adds them mid-flight:
 
 - No `Api` or `Application` change. Both endpoints already declare `409`, and
   `UniqueConstraintExceptionHandler` matches SQLSTATE `23505` generically
-  (verified, `UniqueConstraintExceptionHandler.cs:118-124`) — the new indexes
+  (verified, `UniqueConstraintExceptionHandler.cs:124-130`) — the new indexes
   need no registration.
 - No `Shared.Contracts`, no domain or integration event, no Wolverine change.
 - No OpenAPI change.
