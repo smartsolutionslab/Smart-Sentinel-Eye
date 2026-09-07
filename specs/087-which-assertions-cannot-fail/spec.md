@@ -353,9 +353,13 @@ four one-line edits), and it touches one file plus four test classes.
 - **FR-002** The guard MUST derive its population from source on disk, not from
   a hand-maintained list, so that a newly added class is covered without anyone
   remembering to register it.
-- **FR-003** The guard MUST ignore attribute occurrences inside comments —
-  both `//` line comments and XML doc-comments. (Trap 2 above; without this the
-  guard is green on a class it should fail.)
+- **FR-003** The guard MUST strip `/* … */` block comments before matching
+  attributes. That is the shape stripping is load-bearing for: an attribute
+  commented out inside a block comment begins its own line exactly as a live
+  one does, and only stripping tells the two apart. `//` line comments are
+  stripped too, but incidentally — the line-anchored attribute match already
+  refuses a `[Collection(…)]` named inside a `///` doc-comment, because the
+  `[` there sits behind `/// <c>` and never begins its line.
 - **FR-004** The guard MUST report offending classes with `/` separators
   regardless of host platform, so a failure message is identical on Windows and
   on Linux CI.
