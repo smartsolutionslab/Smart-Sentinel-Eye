@@ -51,6 +51,7 @@ public static partial class OverlayEndpoints
             .WithSummary("Read one overlay chain by its identifier. Required scope: sse.overlays.read")
             .Produces<OverlayDto>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
         group.MapGet("/", List)

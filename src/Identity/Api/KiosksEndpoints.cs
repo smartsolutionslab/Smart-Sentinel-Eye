@@ -51,6 +51,7 @@ public static class KiosksEndpoints
             .WithName("DisableKiosk")
             .WithSummary("Disable an enrolled kiosk. Required scope: sse.identity.kiosks.write")
             .Produces<Guid>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict);

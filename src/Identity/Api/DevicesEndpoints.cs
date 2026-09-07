@@ -51,6 +51,7 @@ public static class DevicesEndpoints
             .WithName("DisableDevice")
             .WithSummary("Disable a registered device. Required scope: sse.identity.devices.write")
             .Produces<Guid>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict);

@@ -56,10 +56,10 @@ namespace SmartSentinelEye.Architecture.Tests;
 /// <para>
 /// <b>There is deliberately no 400 mirror.</b> 428 is answered from exactly one
 /// place in the product, so declaring it without reading the header is always
-/// wrong. 400 is not: forty-four chains declare one, at most one declaration
-/// each, and only twelve of those also read <c>If-Match</c> — a malformed body,
-/// an unparseable route value and a rejected filter all answer 400 too. A
-/// mirror there would fail on the other thirty-two, every one of them correct,
+/// wrong. 400 is not: fifty-five chains declare one, at most one declaration
+/// each, and only seventeen of those also read <c>If-Match</c> — a malformed
+/// body, an unparseable route value and a rejected filter all answer 400 too. A
+/// mirror there would fail on the other thirty-eight, every one of them correct,
 /// so the rule runs one way only.
 /// </para>
 ///
@@ -83,7 +83,7 @@ namespace SmartSentinelEye.Architecture.Tests;
 /// only in chains, because nothing here writes a 428 by hand;
 /// <c>Status400BadRequest</c> appears fifty-seven further times inside handler
 /// bodies, in the <c>Results.Problem(statusCode: ...)</c> calls that return one.
-/// Sweeping the bare name would compare 101 against 44 and fail on the first
+/// Sweeping the bare name would compare 112 against 55 and fail on the first
 /// run.
 /// </para>
 ///
@@ -537,8 +537,8 @@ public class PreconditionDeclarationTests
 
         swept.ShouldBeGreaterThan(
             0,
-            "no 400 declaration was found anywhere under src/*/Api. Forty-four chains declared one when "
-            + "this assertion was written, so zero means the sweep is reading nothing — most likely the "
+            "no 400 declaration was found anywhere under src/*/Api. Fifty-five chains declared one when "
+            + "this figure was last measured, so zero means the sweep is reading nothing — most likely the "
             + "declaration shape it matches has been spelled some other way.");
 
         walked.ShouldBe(
