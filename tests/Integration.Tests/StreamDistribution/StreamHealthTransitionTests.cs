@@ -39,10 +39,19 @@ namespace SmartSentinelEye.Integration.Tests.StreamDistribution;
 /// <b>Blast radius is one path this test created.</b> Each fact registers its
 /// own camera under a fresh <see cref="Guid"/>, so <c>cam-{guid}</c> belongs to
 /// no other test and xUnit's unordered execution within the collection cannot
-/// matter. No shared resource is disturbed — <c>fixture-video</c> keeps serving
-/// and no Aspire resource is stopped, which is also why this class needs no
+/// matter. <b>Nothing is stopped</b> — <c>fixture-video</c> keeps serving and
+/// <c>mediamtx</c> keeps running, which is why this class needs no
 /// <c>[Trait("Category", "Disruptive")]</c> and therefore runs in CI's
 /// integration job rather than being excluded from it.
+/// </para>
+///
+/// <para>
+/// Shared state <em>is</em> mutated, and saying otherwise would be false:
+/// <see cref="InitializeAsync"/> runs the same three resets
+/// <see cref="RtspTestSourceHealthTests"/> does, and the first of them deletes
+/// <em>every</em> SFU path while the other two wipe two databases. That is the
+/// sibling class's behaviour inherited unchanged — and it is also what makes a
+/// failed restore in AS-1's <c>finally</c> below inconsequential.
 /// </para>
 /// </summary>
 [Collection(AspireCollection.Name)]
@@ -111,7 +120,22 @@ public class StreamHealthTransitionTests(AspireFixture aspire, ITestOutputHelper
         finally
         {
             sinceOutage.Stop();
-            await aspire.RepointMediaMtxPathAsync(path, AspireFixture.RtspTestSourceUrl);
+            try
+            {
+                await aspire.RepointMediaMtxPathAsync(path, AspireFixture.RtspTestSourceUrl);
+            }
+            catch (HttpRequestException restoreFailed)
+            {
+                // Reported rather than thrown, because an exception leaving a
+                // finally *replaces* the one in flight - and the one in flight
+                // here is the TimeoutException naming the last state observed,
+                // which is the whole diagnostic this class exists to produce.
+                // Nothing downstream depends on the restore: the next class's
+                // InitializeAsync calls ResetMediaMtxAsync, which deletes every
+                // SFU path (AspireFixture.Db.cs:215).
+                output.WriteLine(
+                    $"Restoring '{path}' to the fixture source failed: {restoreFailed.Message}");
+            }
         }
 
         output.WriteLine(
@@ -119,6 +143,12 @@ public class StreamHealthTransitionTests(AspireFixture aspire, ITestOutputHelper
             + $"(budget {TransitionTimeout.TotalSeconds:F0}s).");
 
         state.ShouldBe("Degraded");
+
+        // The printed figure is the asserted one. Without this the enforced
+        // quantity was the repoint call plus WaitForStateAsync's own 15 s
+        // deadline, so a transition printing "15.6s (budget 15s)" passed green
+        // and plan.md's "budget breached => finding" rule never bit.
+        sinceOutage.Elapsed.ShouldBeLessThan(TransitionTimeout);
     }
 
     /// <summary>
@@ -165,6 +195,7 @@ public class StreamHealthTransitionTests(AspireFixture aspire, ITestOutputHelper
             + $"(budget {TransitionTimeout.TotalSeconds:F0}s).");
 
         state.ShouldBe("Healthy");
+        sinceRestore.Elapsed.ShouldBeLessThan(TransitionTimeout);
     }
 
     private static async Task<Guid> RegisterAsync(HttpClient client, string name, string rtspUrl)

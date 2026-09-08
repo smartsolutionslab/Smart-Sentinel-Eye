@@ -5,6 +5,7 @@ using SmartSentinelEye.CameraCatalog.Infrastructure.Persistence;
 using SmartSentinelEye.EventIngestion.Infrastructure.Persistence;
 using SmartSentinelEye.LayoutComposition.Infrastructure.Persistence;
 using SmartSentinelEye.OverlayDesigner.Infrastructure.Persistence;
+using SmartSentinelEye.Shared.Kernel;
 using SmartSentinelEye.StreamDistribution.Infrastructure.Persistence;
 using SmartSentinelEye.SystemVariables.Infrastructure.Persistence;
 
@@ -273,6 +274,9 @@ public sealed partial class AspireFixture
     public async Task RepointMediaMtxPathAsync(
         string pathName, string rtspSourceUrl, CancellationToken cancellationToken = default)
     {
+        Ensure.That(pathName).IsNotNull().IsNotNullOrWhiteSpace();
+        Ensure.That(rtspSourceUrl).IsNotNull().IsNotNullOrWhiteSpace();
+
         using HttpClient client = App.CreateHttpClient("mediamtx", "api");
 
         using HttpResponseMessage response = await SendMediaMtxWithRetryAsync(
