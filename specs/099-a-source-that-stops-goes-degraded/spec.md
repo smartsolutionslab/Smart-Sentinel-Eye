@@ -120,18 +120,45 @@ When the SFU path "cam-{camera}" is repointed back to AspireFixture.RtspTestSour
 Then the stream reports "Healthy" within 15 seconds
 ```
 
-### AS-3 — the control that gives AS-1 and AS-2 their meaning
+### AS-3 — the control that gives AS-1 its meaning
 
 ```gherkin
 Given the production handler is mutated to return early when the stream is already "Healthy"
 When the StreamDistribution integration tests are run
 Then RtspTestSourceHealthTests still passes in both of its cases
-  And AS-1 is the only test that fails
+  And AS-1 fails
 ```
 
-AS-3 is not a shipped test. It is the **counterfactual** that stands in for a
-red — see *§ What red is available*, and T005 in `tasks.md`, which requires its
-verbatim output.
+**Correction (2026-09-08, phase 6).** This scenario read *"And AS-1 is the only
+test that fails"*, and the run disproved it: **both new tests failed.** AS-2
+failed at its *arrangement* — the wait for `Degraded` that has to succeed
+before recovery can be provoked — so the wait for `Healthy` after the restore,
+the only line that asserts recovery, never executed. (Those were `:149` and
+`:160` in the file as committed at `798f2d44`; phase 6's fixes moved them to
+`:179` and `:190`.) The mutation therefore exercised the `Healthy → Degraded`
+half twice and the recovery half not at all, and this spec claimed an outcome
+it had not got. The recovery edge gets its own control, below.
+
+### AS-3b — the control that gives AS-2 its meaning
+
+```gherkin
+Given Stream.ReportHealthy is mutated to return immediately when the stream is already "Degraded"
+When the StreamDistribution integration tests are run
+Then RtspTestSourceHealthTests still passes in both of its cases
+  And AS-1 still passes
+  And AS-2 fails at its recovery assertion, not at its arrangement
+```
+
+Run in phase 6 and observed exactly so: `Failed: 1, Passed: 3, Total: 4`, the
+failure at the recovery wait — `StreamHealthTransitionTests.cs:line 160` in the
+output, the file as it then stood — with *"did not reach 'Healthy' within 15s.
+Last observed state: 'Degraded'"*. `verification.md` carries the run verbatim.
+`tasks.md` T005 wrote this mutation as *optional*; the AS-3 run above is why it
+is not.
+
+Neither AS-3 nor AS-3b is a shipped test. They are the **counterfactuals** that
+stand in for a red — see *§ What red is available*, and T005 in `tasks.md`,
+which requires their verbatim output.
 
 ### AS-4 — degenerate input
 
@@ -164,8 +191,10 @@ network and is unauthenticated by design; the fixture already calls it
 Docker required.
 
 1. `dotnet test tests/Integration.Tests/SmartSentinelEye.Integration.Tests.csproj --filter "FullyQualifiedName~StreamHealthTransition"` — both new tests pass against an unmodified tree.
-2. Apply the AS-3 mutation to `ReportStreamHealthCommandHandler`; re-run the StreamDistribution integration tests; observe AS-1 red and `RtspTestSourceHealthTests` green. Quote both.
+2. Apply the AS-3 mutation to `ReportStreamHealthCommandHandler`; re-run the StreamDistribution integration tests; observe AS-1 red and `RtspTestSourceHealthTests` green. Quote both. (AS-2 goes red too, at its arrangement — see AS-3.)
 3. Revert the mutation; re-run; all green.
+4. Apply the AS-3b mutation to `Stream.ReportHealthy`; re-run; observe AS-2 red **at `StreamHealthTransitionTests.cs:160`**, AS-1 and `RtspTestSourceHealthTests` green. Quote both.
+5. Revert; re-run; all green.
 
 ---
 
@@ -216,17 +245,25 @@ test**: *"a prelude is required wherever the test names a symbol the previous
 commit lacks"* — and the remedy there was to add the prelude, not to accept the
 compile error as evidence.
 
-So the evidence is a **counterfactual against production code** (AS-3): mutate
-`ReportStreamHealthCommandHandler` to return early when the stream is already
-`Healthy`, and show that AS-1 is the only thing in the suite that goes red. That
-proves the exact claim the issue makes — *"a watcher that latched `Healthy`
-forever would pass every test now on `develop`"* — and it proves the new test is
-what closes it. The mutation is reverted; it never appears in a commit.
+So the evidence is a pair of **counterfactuals against production code**. AS-3
+mutates `ReportStreamHealthCommandHandler` to return early when the stream is
+already `Healthy`, and shows AS-1 going red while `RtspTestSourceHealthTests`
+stays green. That proves the exact claim the issue makes — *"a watcher that
+latched `Healthy` forever would pass every test now on `develop`"* — and it
+proves AS-1 is what closes it.
+
+**AS-3b is not decoration.** Under AS-3's mutation AS-2 dies at its arrangement,
+so the recovery assertion is never reached and AS-3 says nothing about it. AS-3b
+mutates `Stream.ReportHealthy` to refuse `Degraded → Healthy` and puts AS-2, and
+only AS-2, red at the recovery line. Two edges, two controls.
+
+Both mutations are reverted; neither appears in a commit.
 
 This makes the phase-4a colour **characterisation, observed green** (ADR-0144),
-with the counterfactual as the mandatory second half. A green-on-arrival test
+with the counterfactuals as the mandatory second half. A green-on-arrival test
 with no counterfactual is indistinguishable from one that asserts nothing, which
-is the failure this whole issue is about.
+is the failure this whole issue is about — and an *edge* with no counterfactual
+of its own is the same failure at half scale, which is what phase 6 found.
 
 ---
 
@@ -247,3 +284,44 @@ is the failure this whole issue is about.
   (`Stream.cs:202-227`) guards only against `Retired`; `Degraded → Healthy`
   raises the transition event normally. If phase 4 finds otherwise, that is a
   **finding and a bug issue**, not an assertion to soften.
+
+**A1's status, stated exactly (phase 6).** T002 asked for the SFU's own
+`GET /v3/paths/get/cam-{guid}` `ready` flag to be watched across the patch and
+timed. **That observation was never made.** What was measured is the
+end-to-end consequence — the stream's state as `/streams` reports it — which
+reached `Degraded` and returned to `Healthy` well inside the budget on every
+run. A1 is therefore **confirmed indirectly**: the outcome it predicts happened,
+by a mechanism nobody watched. The fallback in `plan.md` §Fallback was never
+needed and is untested. `verification.md` records this in the same words rather
+than letting a green run stand in for a reading.
+
+**A3 is confirmed twice over.** The recovery test passes, and AS-3b shows that
+removing the domain's permission — `Stream.ReportHealthy` returning early from
+`Degraded` — is exactly what makes it fail.
+
+---
+
+## Decided at phase 6 review, not overlooked
+
+Three review findings were decided rather than left open. Recorded so the next
+reader does not re-open them as oversights:
+
+- **`AspireFixture.RepointMediaMtxPathAsync` now guards its two arguments**
+  (ADR-0105), matching its production analogue
+  `MediaMtxRtspGateway.RepointPathAsync` (`:40-41`) line for line. The
+  counter-argument was that both call sites pass constants, so the guard is
+  speculative under ADR-0036. It was
+  added anyway: the method is public fixture API whose entire doc-comment stakes
+  its value on the arrangement not failing quietly, and a blank source is exactly
+  the argument that would repoint nothing while the assertion after it observed
+  an unchanged stream. `Ensure` is already used in this test project
+  (`FixtureHttpClients.cs:22`), so nothing new was introduced.
+- **The two tests share roughly 86 lines of shape** (register, settle, repoint,
+  wait, restore). Extracting a helper for two call sites that differ in *which
+  edge is the act* would hide the very difference the class exists to show. Left
+  duplicated.
+- **The private helpers take no `CancellationToken`.** `RegisterAsync` and
+  `WaitForStateAsync` mirror `RtspTestSourceHealthTests.cs:122-163`, which takes
+  none either, and diverging from the sibling here would buy nothing. ADR-0049's
+  rule is written for *public* async methods; both helpers are `private static`
+  with a single caller in the test method above them.
