@@ -8,7 +8,17 @@ public sealed class InMemoryEventRepository : IEventRepository
 {
     private readonly List<EventAggregate> _events = [];
 
+    private int committed;
+
     public IReadOnlyList<EventAggregate> Events => _events;
+
+    /// <summary>
+    /// When set, the next <see cref="SaveAsync"/> throws it and discards
+    /// everything added since the last successful save — the all-or-nothing
+    /// insert the batch handler is built around (spec 020 FR-010). Left null,
+    /// this fake behaves exactly as it always has.
+    /// </summary>
+    public Exception? SaveFailure { get; set; }
 
     public Task<Option<EventAggregate>> GetByIdentifierAsync(
         FabIdentifier fab, EventIdentifier identifier, CancellationToken cancellationToken)
@@ -37,6 +47,13 @@ public sealed class InMemoryEventRepository : IEventRepository
 
     public Task SaveAsync(CancellationToken cancellationToken)
     {
+        if (SaveFailure is not null)
+        {
+            _events.RemoveRange(committed, _events.Count - committed);
+            return Task.FromException(SaveFailure);
+        }
+
+        committed = _events.Count;
         foreach (EventAggregate e in _events)
         {
             e.ClearPendingEvents();
