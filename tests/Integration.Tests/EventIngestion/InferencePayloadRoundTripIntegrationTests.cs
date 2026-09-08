@@ -22,13 +22,24 @@ namespace SmartSentinelEye.Integration.Tests.EventIngestion;
 /// the stored payload together and names the path where they diverge; it is
 /// blind to anything that changes only the <em>encoding</em>, because
 /// <c>0.1000</c> and <c>0.1</c> compare equal as numbers. Half B compares the
-/// stored bytes to a reviewed literal on disk and catches exactly that; on its
+/// canonical string form of the payload <em>read back through the repository's
+/// converter</em> to a reviewed literal on disk and catches exactly that; on its
 /// own it would report "two 4 KB strings differ at offset 1183".
 /// </para>
 ///
 /// <para>
+/// <b>Half B does not see the raw stored bytes, and does not claim to.</b> The
+/// EF read converter is <c>value => Payload.From(value)</c>
+/// (<c>EventConfiguration.cs:73</c>), so the column's own <c>::text</c> output is
+/// re-parsed and re-written before this test can look at it — whitespace and
+/// string escaping differ from the raw bytes and are unobservable either way
+/// (spec 101 §2.3, §4). What Half B pins is the form a caller of
+/// <c>EventRepository.GetByIdentifierAsync</c> receives.
+/// </para>
+///
+/// <para>
 /// <b>Half A compares object keys as a set, on purpose.</b> The column is
-/// <c>jsonb</c> (<c>EventConfiguration.cs</c>), which re-sorts every object's
+/// <c>jsonb</c> (<c>EventConfiguration.cs:72</c>), which re-sorts every object's
 /// keys by (byte length, then bytewise) and would fail an order-sensitive
 /// assertion on perfectly correct code. What <c>jsonb</c> <em>does</em> preserve
 /// is array order and length at every depth — which is precisely the property
@@ -49,8 +60,12 @@ namespace SmartSentinelEye.Integration.Tests.EventIngestion;
 /// </para>
 ///
 /// <para>
-/// No <c>Category</c> trait: one would take the class out of the CI
-/// <c>integration</c> job's filter, which is a test CI never runs.
+/// No <c>Category</c> trait, and none of the four permitted ones would do. Three
+/// of them (<c>Measurement</c>, <c>Disruptive</c>, <c>Maintenance</c>) are excluded
+/// by the CI <c>integration</c> job's filter (<c>ci.yml:179</c>) — a test CI
+/// never runs. The fourth, <c>FixtureLogic</c>, would keep it there but also
+/// enrol it in the Docker-free step (<c>ci.yml:72</c>), where an Aspire test
+/// fails outright.
 /// </para>
 /// </summary>
 [Collection(AspireCollection.Name)]
@@ -89,12 +104,13 @@ public class InferencePayloadRoundTripIntegrationTests(AspireFixture aspire, ITe
         // Half A — the meaning survived, and a failure says where.
         AssertSameJson(sent.RootElement, readBack.RootElement, "$");
 
-        AssertStructureIsNotVacuous(readBack.RootElement, sent.RootElement);
+        AssertStructureIsNotVacuous(sent.RootElement, readBack.RootElement);
 
         // Half B — the encoding did not drift.
         stored.Value.ShouldBe(
             expectedCanonical,
-            "the stored payload no longer matches the reviewed canonical form in "
+            "the payload read back through the repository's converter no longer matches "
+            + "the reviewed canonical form in "
             + $"{ExpectedName}. That file is canonical({FixtureName}) with every object's keys "
             + "sorted by (UTF-8 byte length, then ordinal) and nothing else changed; a difference "
             + "means either the canonicaliser re-encoded a value or jsonb reshaped it.");
@@ -104,8 +120,22 @@ public class InferencePayloadRoundTripIntegrationTests(AspireFixture aspire, ITe
     /// Guards against a pass that means nothing: "some JSON came back" would
     /// satisfy a comparison of a payload with itself. These are literals, not
     /// derived from the fixture at runtime.
+    ///
+    /// <para>
+    /// It adds no independent power to <em>this</em> run: Half A has already
+    /// proved the two deeply equal by the time it is called, so every literal it
+    /// pins about <c>readBack</c> is equally true of <c>sent</c>. Its job is to
+    /// survive a future weakening of Half A, and to catch a fixture gutted down
+    /// to something a trivial round trip would satisfy.
+    /// </para>
+    ///
+    /// <para>
+    /// Parameters are <c>(sent, readBack)</c>, matching
+    /// <see cref="AssertSameJson"/> — same order, same types, so the two calls
+    /// cannot be "tidied" into a transposition.
+    /// </para>
     /// </summary>
-    private static void AssertStructureIsNotVacuous(JsonElement readBack, JsonElement sent)
+    private static void AssertStructureIsNotVacuous(JsonElement sent, JsonElement readBack)
     {
         readBack.GetRawText().ShouldNotBe("{}", "the stored payload is the empty object");
 
@@ -181,6 +211,14 @@ public class InferencePayloadRoundTripIntegrationTests(AspireFixture aspire, ITe
     /// nanosecond stamp and for the fixed-scale fractions alike;
     /// <see cref="NumberStyles.Float"/> so a re-encoded value that arrives in
     /// exponent form fails as a mismatch rather than as a parse error.
+    ///
+    /// <para>
+    /// A literal outside <c>decimal</c>'s range would throw
+    /// <see cref="OverflowException"/> here rather than fail as a Shouldly
+    /// mismatch naming the path. Every number in the fixture is well inside the
+    /// range; adding one that is not (a <c>1e40</c>) buys an undiagnosable throw
+    /// instead of the red it looks like.
+    /// </para>
     /// </summary>
     private static decimal AsNumber(JsonElement element) =>
         decimal.Parse(element.GetRawText(), NumberStyles.Float, CultureInfo.InvariantCulture);
