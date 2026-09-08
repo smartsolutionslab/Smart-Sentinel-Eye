@@ -124,7 +124,8 @@ public class FabEventIngestedV1HandlerTests
     {
         Guid overlay = Guid.CreateVersion7();
         InMemoryRuleCache cache = new();
-        // Distinct names, so the cache keeps both rather than replacing one.
+        // Both survive the upsert: InMemoryRuleCache removes by rule identifier,
+        // and Rule.Create mints a fresh one per Build. The names are only labels.
         cache.Upsert(ActiveHighlightRule("highlight-rule-a", overlay, 5_000, BaseMoment));
         cache.Upsert(ActiveHighlightRule(
             "highlight-rule-b", overlay, 12_000, BaseMoment.AddMinutes(5)));
