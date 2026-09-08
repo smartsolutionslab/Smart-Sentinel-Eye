@@ -93,7 +93,7 @@ public class TwoPlaceholdersInOneLabelTests(AspireFixture aspire) : IAsyncLifeti
         // second name still literal *is* the defect — and requiring it here
         // would bury that defect in a 30 s readiness timeout instead of letting
         // the assertion below print the expected and actual strings.
-        await WaitUntilResolvableAsync(variables, overlay, [first]);
+        await WaitUntilResolvableAsync(variables, overlay, first);
 
         using HttpResponseMessage snapshot = await SnapshotAsync(variables, overlay);
         string body = await snapshot.Content.ReadAsStringAsync();
@@ -141,7 +141,7 @@ public class TwoPlaceholdersInOneLabelTests(AspireFixture aspire) : IAsyncLifeti
 
         // Only the valued name can ever leave the text; the unset one is the
         // expected output, so it is not part of the readiness signal.
-        await WaitUntilResolvableAsync(variables, overlay, [valued]);
+        await WaitUntilResolvableAsync(variables, overlay, valued);
 
         using HttpResponseMessage snapshot = await SnapshotAsync(variables, overlay);
         string body = await snapshot.Content.ReadAsStringAsync();
@@ -197,10 +197,9 @@ public class TwoPlaceholdersInOneLabelTests(AspireFixture aspire) : IAsyncLifeti
         return overlay;
     }
 
-    /// <summary>
-    /// Polls until the snapshot answers 200 <b>and</b> none of
-    /// <paramref name="names"/> still renders as its literal placeholder. The
-    /// timeout names every variable and the overlay, and quotes the last text
+    /// Polls until the snapshot answers 200 <b>and</b>
+    /// <paramref name="name"/> no longer renders as its literal placeholder.
+    /// The timeout names the variable and the overlay, and quotes the last text
     /// seen, because an unbooted index and a snapshot loop that stopped early
     /// otherwise look identical from here.
     ///
@@ -213,16 +212,16 @@ public class TwoPlaceholdersInOneLabelTests(AspireFixture aspire) : IAsyncLifeti
     /// </para>
     /// </summary>
     private static async Task WaitUntilResolvableAsync(
-        HttpClient variables, Guid overlay, IReadOnlyList<string> names)
+        HttpClient variables, Guid overlay, string name)
     {
+        string literal = $"{{{{{name}}}}}";
         Stopwatch stopwatch = Stopwatch.StartNew();
         string? resolved = null;
 
         while (stopwatch.ElapsedMilliseconds < IndexReadinessCeilingMs)
         {
             resolved = await ResolvedTextAsync(variables, overlay);
-            if (resolved is not null &&
-                names.All(name => !resolved.Contains($"{{{{{name}}}}}", StringComparison.Ordinal)))
+            if (resolved is not null && !resolved.Contains(literal, StringComparison.Ordinal))
             {
                 return;
             }
@@ -231,10 +230,10 @@ public class TwoPlaceholdersInOneLabelTests(AspireFixture aspire) : IAsyncLifeti
         }
 
         throw new TimeoutException(
-            $"Overlay {overlay} never resolved all of [{string.Join(", ", names)}] within "
-            + $"{IndexReadinessCeilingMs} ms; the last snapshot was "
-            + $"{(resolved is null ? "not a 200" : $"'{resolved}'")}. Either the reverse index never "
-            + "picked the overlay up, or the snapshot loop never reached one of them.");
+            $"Overlay {overlay} never resolved '{name}' within {IndexReadinessCeilingMs} ms; "
+            + $"the last snapshot was {(resolved is null ? "not a 200" : $"'{resolved}'")}. "
+            + "Either the reverse index never picked the overlay up, or the snapshot loop "
+            + "never reached that name.");
     }
 
     /// <summary>
