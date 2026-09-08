@@ -21,9 +21,18 @@ green before mutating anything.
   `InitializeAsync() => aspire.ResetSystemVariablesAsync()`. Private helpers:
   `DefineAsync(client, name)`, `PublishOverlayReferencingAsync(overlays, nameA, nameB)`
   building `$"Line A: {{{{{nameA}}}}} / Line B: {{{{{nameB}}}}}"`,
-  `ResolvedTextAsync(variables, overlay)`, and
-  `WaitUntilBothResolvableAsync(...)` — the readiness wait must require **both**
-  literals gone (see `plan.md` § Messaging; a one-name wait races the bug).
+  `ResolvedTextAsync(variables, overlay)`, and a readiness wait.
+
+  **Delivered as `WaitUntilResolvableAsync(variables, overlay, IReadOnlyList<string> names)`
+  (`:187`), not `WaitUntilBothResolvableAsync`, and requiring a `200` rather
+  than both literals gone.** Recorded here rather than left describing code that
+  does not exist. Both deviations are corrections, not conveniences: the `200`
+  is load-bearing (the neighbour's wait returns while the overlay is still
+  404 — `plan.md` § Messaging), and requiring *both* literals gone would have
+  hidden the failure this file exists to produce behind a 30 s timeout instead
+  of an assertion diff. Each call site names the one variable whose literal
+  *must* disappear.
+
   Reuse `VariableRequests.SetValueAsync` for `If-Match` (ADR-0113) and
   `OverlayRequests.PostAsync` for the publish; add no new fixture helper.
   Class remark states what the file proves (the query handler's multi-name
@@ -31,28 +40,54 @@ green before mutating anything.
   covered by `VariableValueChangedPreCommitTests:128`).
 
 - [ ] **T002 [US1]** `Two_placeholders_in_one_label_both_resolve` — define two
-  Number variables, publish the two-placeholder overlay, wait for both to be
-  resolvable, set `82.5` and `91.5`, `GET /system-variables/snapshot`, and
+  Number variables, publish the two-placeholder overlay, set `82.5` and `91.5`,
+  wait until the snapshot answers `200` with the **first** literal gone,
+  `GET /system-variables/snapshot`, and
   assert `resolvedText.ShouldBe("Line A: 82.5 / Line B: 91.5")` — the **whole
   string**, not two `Contains` calls. Assert the `200` first, with the response
   body in the failure message (the neighbours' pattern). Depends on T001.
 
-- [ ] **T003 [US1]** `An_unset_second_variable_leaves_only_its_own_placeholder_literal`
-  — a **fresh pair**: `vC` set, `vD` defined but never set. Assert
-  `"Line A: 82.5 / Line B: {{vD}}"`. This is the control that stops T002 passing
-  against a resolver that writes one value into every placeholder. It is
-  deliberately **not** the test M1 is scored on — M1 leaves it green. Depends on
-  T001.
+- [ ] **T003 [US1]** `An_unset_first_variable_leaves_only_its_own_placeholder_literal`
+  — a **fresh pair**, with the unset one **first**: `vC` defined but never set,
+  `vD` set. Assert `"Line A: {{vC}} / Line B: 82.5"`.
+
+  It is **not** a control against "one value written into every placeholder" —
+  T002 catches that unaided, using two distinct values and asserting the whole
+  string. Its ground is that **mixed resolve/unset in one label over this
+  handler is covered nowhere** (`spec.md` § Partial resolution), and the unset
+  name being first makes it the one case showing a `continue` exit does not end
+  the loop. It is deliberately **not** the test M1 is scored on — M1's `break`
+  follows the write that only the last, valued name reaches, so M1 leaves it
+  green. Depends on T001.
 
 - [ ] **T004 [US1]** Run T002 and T003 against unmodified `develop` code and
   capture the **verbatim** output green (the characterisation baseline), then
   apply **M1** — `break;` after
   `src/SystemVariables/Application/Queries/Handlers/GetOverlaySnapshotQueryHandler.cs:63`
-  — and re-run **the whole backend + integration suite**, not just the new file.
-  Record which tests failed against the prediction table in `plan.md`.
-  **Revert M1 and confirm green before committing.** Depends on T002, T003.
+  — and re-run the backend suite in full plus a **named subset** of the
+  integration suite. Record which tests failed against the prediction table in
+  `plan.md`. **Revert M1 and confirm green before committing.** Depends on T002,
+  T003.
 
-  Prediction to score against: T002 fails; T003, all five
+  **The two runs, and the narrowing stated rather than implied.** The backend
+  half is the whole thing: every test project except `Integration.Tests`, 29
+  projects, **2348 tests**. The integration half is **not** the whole thing: CI's
+  `integration` job runs **450** cases (`ci.yml:179`; 463 discovered, 13 excluded
+  by category), and the M1 run selects **8** of them —
+
+  ```
+  --filter "Category!=Measurement&Category!=Disruptive&Category!=Maintenance&(FullyQualifiedName~TwoPlaceholdersInOneLabelTests|FullyQualifiedName~ResolvedTextReachesItsFabTests|FullyQualifiedName~NFR_VariableResolutionLatencyTests)"
+  ```
+
+  — the two new cases plus the six neighbours the prediction table names. The
+  narrowing is defensible because only these three files reach the mutated
+  handler over HTTP, and it costs about 34 s against roughly 30 minutes; but a
+  printed `Total: 8` must never be reported as if it were the suite. Any
+  figure quoted from this run states the filter alongside it.
+
+  Prediction to score against: T002 fails **on its `ShouldBe`**, with the
+  expected and actual strings printed, not on the readiness timeout — the wait
+  is on the first name precisely so that M1 surfaces as a diff; T003, all five
   `GetOverlaySnapshotQueryHandlerTests`, `NFR_VariableResolutionLatencyTests`,
   every `ResolvedTextReachesItsFabTests` case,
   `VariableValueChangedPreCommitTests:128`, `PlaceholderParserTests`,

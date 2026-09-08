@@ -133,20 +133,30 @@ The assertion is the **whole string**, not two `Contains` checks. A pair of
 `Contains` calls would pass against a resolver that dropped the separator,
 duplicated a substitution, or emitted the two in the wrong order.
 
-**Partial resolution — the control that stops the happy path passing for free**
+**Partial resolution — a resolved name and an unset one in one label**
 
 ```gherkin
 Given the same label shape and two variables defined in the caller's fab
-  And "vA" carries a value but "vB" has never been set
+  And "vA" has never been set but "vB" carries a value
  When the snapshot is fetched
- Then resolvedText is "Line A: 82.5 / Line B: {{vB}}"
+ Then resolvedText is "Line A: {{vA}} / Line B: 91.5"
 ```
 
-Included because it is the discriminator: a resolver that substituted *any*
-value into *every* placeholder would satisfy the happy path and fail here. It
-is the only place the two-variable case can distinguish "resolved both" from
-"resolved something twice". Existing coverage of this shape is unit-level only
-(`ResolverTests.cs:67-73`), never over HTTP.
+**Not** a control against "one value written into every placeholder" — the
+happy path already catches that on its own, because it uses two *distinct*
+values and asserts the whole string, so such a resolver yields
+`"Line A: 82.5 / Line B: 82.5"` and fails there. This case is included on a
+different ground: **mixed resolve/unset in one label, over the query path, is
+covered nowhere.** The handler's only two-name unit test,
+`GetOverlaySnapshotQueryHandlerTests.Skips_archived_and_unset_variables…`
+(`:54-73`), has *neither* name reach the write, and no test anywhere has one
+name that writes and one that `continue`s.
+
+The unset name goes **first** deliberately, so the resolved one is reached only
+on a second iteration: that makes this the one case showing a `continue` exit
+does not end the loop. Existing coverage of the mixed shape is unit-level only
+(`ResolverTests.cs:67-73`), against the resolver rather than this handler, and
+never over HTTP.
 
 **Bad request / auth — declared, not tested here**
 
