@@ -57,6 +57,10 @@ evidence that 15 s is the right number rather than an inherited guess.
 If `ready` never clears, switch to `plan.md` §Fallback (delete + re-add) and say
 so in the test's doc-comment. Depends on: T001.
 
+**Phase 6: this measurement was never taken.** A1 was confirmed one layer out,
+by the transition the tests observe at `/streams`, and `verification.md` records
+that distinction rather than ticking T002 off.
+
 ### T003 — [US1] Write `StreamHealthTransitionTests`
 
 `tests/Integration.Tests/StreamDistribution/StreamHealthTransitionTests.cs` — new.
@@ -106,14 +110,25 @@ The evidence that replaces a red. In the working tree only, never committed:
 2. Run the StreamDistribution integration tests.
 3. **Expected:** `Stopping_the_RTSP_source_transitions_to_Degraded_within_15_seconds`
    fails; both `RtspTestSourceHealthTests` cases still pass. That is the issue's
-   claim, demonstrated.
+   claim, demonstrated. **Observed additionally:** the recovery test fails too,
+   at its arrangement rather than its assertion — which is what makes the second
+   mutation below mandatory.
 4. `git checkout -- ` the handler. Confirm the tree is clean and re-run green.
 
 Quote steps 2 and 4's output in the PR body. **If the new test stays green under
 the mutation, it asserts nothing — block, do not ship.**
 
-Optionally repeat with `Stream.ReportHealthy` made a no-op from `Degraded`, to
-give the recovery test its own counterfactual.
+**Then repeat with `Stream.ReportHealthy` made a no-op when the stream is already
+`Degraded`** (spec `AS-3b`), to give the recovery test its own counterfactual.
+**Expected:** AS-2 fails at its *recovery* assertion — the wait for `Healthy`
+after the restore — while AS-1 and both `RtspTestSourceHealthTests` cases stay
+green. Revert and re-run green; quote both.
+
+**This step was written "optionally" and phase 6 made it mandatory.** Under the
+first mutation AS-2 fails at its *arrangement* — the wait for `Degraded` — so
+the recovery wait never executes: the first counterfactual exercises the
+`Degraded` half twice and the recovery half not at all. Without AS-3b the
+recovery assertion has no control at all.
 
 Depends on: T004.
 

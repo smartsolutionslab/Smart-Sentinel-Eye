@@ -105,14 +105,28 @@ Two independent guarantees, because ordering is not one of them.
    `RtspTestSourceHealthTests.cs:69` does, so `cam-{guid}` belongs to no other
    test. Repointing it away from the fixture source cannot affect
    `A_camera_pointed_at_the_fixture_source_reaches_Healthy`, which registers its
-   own camera and its own path. **No shared resource is mutated at all** —
-   `fixture-video` keeps serving, `mediamtx` keeps running, no Aspire resource is
-   stopped.
+   own camera and its own path. **No shared resource is *stopped*** —
+   `fixture-video` keeps serving and `mediamtx` keeps running.
+
+   **Correction (2026-09-08, phase 6).** This point read *"No shared resource is
+   mutated at all"*, and that was false: `InitializeAsync` mutates plenty. It
+   runs the same three resets as `RtspTestSourceHealthTests.cs:47-52` —
+   `ResetMediaMtxAsync` deletes **every** SFU path
+   (`AspireFixture.Db.cs:215`), `ResetStreamDistributionAsync` and
+   `ResetCameraCatalogAsync` wipe two databases. That behaviour is the sibling
+   class's, inherited unchanged and harmless because the collection runs tests
+   one at a time; the *claim* was the defect, and the paragraph at :137-142
+   below already said the opposite of it.
 2. **A `try`/`finally` restores the path regardless of the assertion.** The
    repoint-away happens inside a `try`; the `finally` repoints back to
-   `AspireFixture.RtspTestSourceUrl` and swallows nothing it should not. For AS-2
-   the restore *is* the act under test, so the `finally` is idempotent — a second
-   patch to the same source is a no-op the SFU accepts.
+   `AspireFixture.RtspTestSourceUrl`. For AS-2 the restore *is* the act under
+   test, so a failed restore throws there. For AS-1 it is cleanup only, and a
+   throwing cleanup would **replace** the in-flight `TimeoutException` — the one
+   carrying *"Last observed state: 'Healthy'"*, the latch this class exists to
+   name. So AS-1's `finally` catches a failed restore and reports it through
+   `ITestOutputHelper` instead. Nothing is swallowed that has consequences: the
+   next class's `InitializeAsync` calls `ResetMediaMtxAsync`, which deletes every
+   SFU path anyway.
 
 **xUnit does not order tests within a collection, and this plan does not ask it
 to.** That is precisely why guarantee 1 is stated first: correctness does not
@@ -162,5 +176,16 @@ Recorded up front so phase 4 does not quietly adjust:
   budget.
 - `Degraded → Healthy` never completes → **finding**, the watcher cannot recover;
   file a bug. `Stream.ReportHealthy` (`:202-227`) says it should.
-- The AS-3 counterfactual leaves the new test green → the test asserts nothing;
-  **block**, do not ship it.
+- The AS-3 counterfactual leaves AS-1 green → AS-1 asserts nothing; **block**,
+  do not ship it.
+- The AS-3b counterfactual leaves AS-2 green → AS-2 asserts nothing; **block**,
+  the same way. AS-3b was written as *optional* in `tasks.md` T005 and phase 6
+  made it mandatory: under AS-3 alone, AS-2 fails at its arrangement, so its
+  recovery assertion is never reached and the first counterfactual says nothing
+  about it.
+
+**The budget is asserted, not merely printed (added in phase 6).** Each test now
+ends with `ShouldBeLessThan(TransitionTimeout)` on the same `Stopwatch` whose
+figure it prints. Without it the enforced quantity was *repoint + 15 s* while the
+printed one was *repoint + wait*, so a transition printing `15.6s (budget 15s)`
+passed green and the first bullet above never bit.
