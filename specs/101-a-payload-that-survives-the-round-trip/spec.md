@@ -63,14 +63,14 @@ arrived":
 
 `EventRepository.GetByIdentifierAsync` (`EventRepository.cs:16-23`) is a plain EF
 query, and the EF value converter runs **`Payload.From(value)` on read**
-(`EventConfiguration.cs:74`). So `@event.Payload.Value` is
+(`EventConfiguration.cs:73`). So `@event.Payload.Value` is
 `Payload.From(<jsonb text output>)` — canonicalised a second time. A byte-level
 assertion *is* possible through this API; it just is not an assertion about the
 raw stored bytes.
 
 ### 2.4 `jsonb` or `json`? — **`jsonb`. This invalidates #588 as written.**
 
-`EventConfiguration.cs:73` — `.HasColumnType("jsonb")`, matching the migration.
+`EventConfiguration.cs:72` — `.HasColumnType("jsonb")`, matching the migration.
 
 Measured against PostgreSQL 17 (throwaway container, since retired):
 
@@ -89,6 +89,13 @@ Worked example, measured end-to-end on a realistic fragment:
 input canonical : {"schemaVersion":…,"model":{"name","revision","classes"},"capturedAtNanos":…,"detections":[…],"iou":1.10,…}
 after jsonb     : {"iou":…,"line":…,"model":{"name","classes","revision"},"snapshot":…,"detections":[…],"schemaVersion":…,"capturedAtNanos":…}
 ```
+
+This fragment is an **earlier draft**, not the shipped fixture: it carries an
+`iou` of `1.10` at the top level, where the fixture has `thresholds.iou: 0.4500`
+and `camera.lensCorrection: 1.10`. Left as measured rather than rewritten — it is
+a recorded PostgreSQL output, and editing its literals would falsify a
+measurement. §9's prediction, which *did* describe the fixture, is corrected
+there.
 
 Every object's keys moved — the top level *and* nested `model` and each
 `detections[i]`. Every array (`classes`, `bbox`, `history`, `detections`) kept its
@@ -158,10 +165,17 @@ And   whose canonical string form equals the checked-in expected canonical form
 **Structure is not merely "some JSON"** (guards a vacuous pass)
 ```gherkin
 Given the payload read back
-Then  detections has exactly 2 elements in the fixture's order
+Then  detections has exactly 11 elements in the fixture's order
 And   detections[0].track.history is [[110,46],[111,47],[112,48]] in that order
 And   the stored payload is not the empty object
 ```
+
+> **Corrected during phase 6 (2026-09-08).** This scenario said **2** elements
+> while the fixture carries **11** and the shipped test asserts 11. The fixture
+> is right: §5 requires ~4 KB filled with *plausible* detections rather than
+> filler, and two realistic detections cannot reach 4 KB. Recorded rather than
+> silently edited — a committed acceptance scenario the shipped test contradicts
+> is the defect class this repo keeps having to correct.
 
 **Bad request** — covered by existing tests on `develop`
 ```gherkin
@@ -242,8 +256,12 @@ reduces to **exactly one transformation**, verified against an independent oracl
 
 Numbers, escaping, whitespace and array order all pass through untouched, because
 §5 constrains the fixture to `jsonb` fixed points. A reviewer checks the file by
-walking each object and confirming its keys are in that order — by eye, per
-object, no tooling.
+walking each object and confirming its keys are in that order. The **check is
+mandatory** (SC-003); "by eye" is optimistic for one 4011-character line across
+40 objects, and in practice a reviewer re-derives the file with a throwaway
+script and diffs it. Either way the rule being confirmed is the single one
+above — script-assisted review is still review, and skipping it is not an
+option.
 
 ### Rejected alternatives
 
@@ -329,7 +347,7 @@ touches no ADR-0109 contention file.
 2. **`jsonb`'s consequences are recorded nowhere.** No ADR states that
    `events.payload` is `jsonb` and therefore does not preserve object key order,
    duplicate keys, or exponent notation. The choice is only visible in
-   `EventConfiguration.cs:73`. See §9.
+   `EventConfiguration.cs:72`. See §9.
 3. **Five near-verbatim copies of the MQTT publish helper** exist; `PlantFloor.cs:22-27`
    already records that they should collapse onto it.
 
@@ -367,13 +385,28 @@ fail proves nothing.
 
 | Test | Prediction | Why |
 |---|---|---|
-| **New test, Half B (byte)** | **RED** | expected `"iou":1.10`, `"threshold":0.1000`, `"capturedAtNanos":1757318400123456789`; actual `1.1`, `0.1`, `1757318400123456800` |
+| **New test, Half B (byte)** | **RED** | expected `"lensCorrection":1.10`, `"confidence":0.1000`, `"capturedAtNanos":1757318400123456789`; actual `1.1`, `0.1`, `1757318400123456800` — and ten further fixed-scale decimals with it |
 | **New test, Half A (semantic)** | **RED**, on `capturedAtNanos` only | `1757318400123456789` ≠ `1757318400123456800` as `decimal`; `1.10` vs `1.1` and `0.1000` vs `0.1` compare numerically **equal** and pass — which is precisely why Half B exists |
 | `EventIngestion.Domain.Tests/Event/PayloadTests.cs` (all 6) | **GREEN** | measured: `{"a":1}`, `{"cycleId":"abc"}`, `{"a":1,"b":[true,false]}` are byte-identical under the mutation |
 | `EventIngestion.Domain.Tests/Event/EventTests.cs:24` | **GREEN** | payload `{"cycleId":"abc"}` — no numbers |
 | `OutageRecoveryIntegrationTests`, `RestartLosesNothingIntegrationTests`, `MqttResubscribe…`, `PoisonDeliveryEscape…` | **GREEN** | assert row counts; payloads are `{"note":"…"}`; counts are unaffected regardless |
 | `IngestThroughputMeasurementTests` | **GREEN** | `payload->>'sequence'` is a small integer, unchanged by a `double` round trip (and CI-excluded) |
 | `EventIngestedDomainEventHandlerTests:46`, `DtoSmokeTests:28`, `FabEventIngestedV1Tests:36` | **GREEN** | payloads `{"cycleId":"abc"}` / `{}` |
+
+> **Corrected during phase 6 (2026-09-08).** The Half B row above named
+> `"iou":1.10` and `"threshold":0.1000`. **The shipped fixture contains
+> neither** — it has `camera.lensCorrection: 1.10`, `thresholds.confidence:
+> 0.1000` and `thresholds.iou: 0.4500`, and no `threshold` key at all. The
+> fixture is right and the prediction was wrong: a 1.10 IoU is not plausible
+> detector output, and §5 required realism.
+>
+> The mutation's reach was **re-derived, not re-run** — each of the fixture's
+> **171 number literals** compared against its shortest round-trippable `double`
+> rendering, which is what `WriteNumberValue(element.GetDouble())` emits.
+> **13 differ:** the 19-digit `capturedAtNanos`, plus **12 decimals whose
+> written scale a `double` drops** — `0.0`, `24.0`, `12.00`, `1.10`, `2.10`,
+> `3.20`, `18.40`, `23.70`, `184.50`, `0.1000`, `0.4200`, `0.4500`. The Half B
+> row names two of those twelve; the other ten redden with them.
 
 **The claim under test:** the new test reddens and *nothing else does*. If any
 other test also reddens, the mutation proves less than it appears to and a
