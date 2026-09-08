@@ -23,15 +23,20 @@ green before mutating anything.
   building `$"Line A: {{{{{nameA}}}}} / Line B: {{{{{nameB}}}}}"`,
   `ResolvedTextAsync(variables, overlay)`, and a readiness wait.
 
-  **Delivered as `WaitUntilResolvableAsync(variables, overlay, IReadOnlyList<string> names)`
-  (`:187`), not `WaitUntilBothResolvableAsync`, and requiring a `200` rather
+  **Delivered as `WaitUntilResolvableAsync(variables, overlay, string name)`
+  (`:214`), not `WaitUntilBothResolvableAsync`, and requiring a `200` rather
   than both literals gone.** Recorded here rather than left describing code that
   does not exist. Both deviations are corrections, not conveniences: the `200`
   is load-bearing (the neighbour's wait returns while the overlay is still
   404 — `plan.md` § Messaging), and requiring *both* literals gone would have
   hidden the failure this file exists to produce behind a 30 s timeout instead
-  of an assertion diff. Each call site names the one variable whose literal
-  *must* disappear.
+  of an assertion diff.
+
+  The parameter is a **single name**, not a list. It was a list first, which is
+  generality with no user once readiness became the first name only — both call
+  sites pass exactly one, and ADR-0036 rules that out. The timeout message
+  reads better for it: it names the one variable that had to resolve rather
+  than formatting a list of one.
 
   Reuse `VariableRequests.SetValueAsync` for `If-Match` (ADR-0113) and
   `OverlayRequests.PostAsync` for the publish; add no new fixture helper.
