@@ -678,8 +678,19 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
 
         // The rest of the resources that reached an end state — disjoint from
         // `died` by `!ExitedNonZero`, so nothing is named twice.
+        //
+        // Rebuilders are excluded here and nowhere else. `IsHealthy` exempts
+        // them only in `NotStarted`, so one that ends stays in the failure
+        // section — #1918 wanted their logs kept — but naming a dev-time helper
+        // nothing waits for is that same issue's "real failure buried under
+        // idle rebuilders", re-entering through the one line #2061 built to be
+        // trusted. Narrower than `IsHealthy`'s exemption on purpose: this drops
+        // a rebuilder from the *sentence*, not from the report. `died` keeps
+        // them, because #2061's rule is that an exemption ends where a non-zero
+        // exit begins.
         string[] ended = UnhealthyResources(states, exitCodes)
             .Where(name => !ExitedNonZero(name, exitCodes)
+                && !name.EndsWith("-rebuilder", StringComparison.Ordinal)
                 && EndedStates.Contains(states[name], StringComparer.OrdinalIgnoreCase))
             .ToArray();
 
@@ -694,9 +705,16 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
         if (ended.Length > 0)
         {
             string named = string.Join("; ", ended.Select(name => DescribeEnd(name, states[name], exitCodes)));
+            // Not "a long-running resource that ends…". Nothing on this path
+            // establishes that: `IsHealthy` only spells the one-shot exemption
+            // for `Finished`, so a `migrations` sitting in `Exited` with code 0
+            // arrives here and would be told it is long-running when it is the
+            // one resource in the stack known not to be. The sentence asserts
+            // only what the predicate above checked — the resource ended, and
+            // the boot had not stopped waiting for it.
             sentences.Add(
-                $"{named} — a long-running resource that ends during startup is a failed boot, "
-                + "not a clean finish.");
+                $"{named} — a resource that ends while the boot is still waiting for it "
+                + "is a failed boot, not a clean finish.");
         }
 
         return sentences.Count == 0
