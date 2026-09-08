@@ -61,6 +61,11 @@ public sealed class IngestEventCommandHandler(
         events.Add(@event);
         await events.SaveAsync(cancellationToken);
 
+        // After the commit (spec 103 FR-006). The two early returns above are
+        // what keeps a redelivery and a future-skew refusal out of the count,
+        // so no branch is added here.
+        IngestVolume.Record(envelope.Source);
+
         return Success(@event.Id);
     }
 }
