@@ -138,6 +138,40 @@ public class RuleEvaluatorTests
     }
 
     [Fact]
+    public void Two_highlight_actions_on_the_same_overlay_both_yield_an_effect()
+    {
+        Guid overlay = Guid.CreateVersion7();
+        InMemoryRuleCache cache = new();
+        cache.Upsert(ActiveRule(
+            "rule-a",
+            RuleAction.HighlightOverlay.From(overlay, 5_000),
+            BaseMoment));
+        cache.Upsert(ActiveRule(
+            "rule-b",
+            RuleAction.HighlightOverlay.From(overlay, 12_000),
+            BaseMoment.AddMinutes(5)));
+
+        RuleEvaluator evaluator = new(cache, NullLogger<RuleEvaluator>.Instance);
+        IReadOnlyList<RuleActionEffect> effects = evaluator.Evaluate(
+            FabIdentifier.From("munich"),
+            "plc", "PlcCycleStart", Context(PlcCycleStartContext));
+
+        effects.Count.ShouldBe(2);
+        // Nothing dedupes by overlay, deliberately. The kiosk resolves an
+        // overlap by later expiry (CellPage.test.tsx:491), so the producer
+        // hands it both windows rather than picking one; the durations
+        // differ so there is something to discriminate.
+        RuleActionEffect.HighlightOverlay first =
+            effects[0].ShouldBeOfType<RuleActionEffect.HighlightOverlay>();
+        first.Overlay.ShouldBe(overlay);
+        first.DurationMs.ShouldBe(5_000);
+        RuleActionEffect.HighlightOverlay second =
+            effects[1].ShouldBeOfType<RuleActionEffect.HighlightOverlay>();
+        second.Overlay.ShouldBe(overlay);
+        second.DurationMs.ShouldBe(12_000);
+    }
+
+    [Fact]
     public void Independent_two_rules_writing_different_variables_both_fire()
     {
         InMemoryRuleCache cache = new();
