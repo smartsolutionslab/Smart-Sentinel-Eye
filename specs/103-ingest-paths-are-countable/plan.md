@@ -110,9 +110,16 @@ foreach ((Source source, long stored) in storedBySource)
 }
 ```
 
-Two entries at most in practice. Watch ADR-0084's 30-LOC method limit — if
-`HandleAsync` trips it, extract this loop into a private method rather than
-shortening a guard or a comment to buy the lines back.
+Two entries at most in practice. Put the loop in a private `RecordVolume` so the
+FR-005/FR-006 reasoning — one measurement per source, and only after the commit
+— lives in one place instead of being a comment in the middle of the build loop.
+
+**Not for line count.** An earlier draft framed the extraction as buying room
+under ADR-0084's 30-LOC method limit; measured, `HandleAsync` is 34 code lines
+before this slice and 37 after, and inlining the loop would make it ~39. The
+extraction does not bring it under 30 and was never going to. If the limit is
+tripped, that is a separate finding about a method that was already over — never
+a reason to shorten a guard or a comment to buy the lines back.
 
 ### Why after the save, and why two sites suffice
 
@@ -243,10 +250,22 @@ exists) and fail on **assertions about counts**.
    inflated by every retry.
 3. Drop the `count <= 0` guard → *"a batch that stored nothing records nothing"*
    must fail.
-4. Remove the `.AddMeter` line → **no unit test fails.** That is not a defect in
-   the tests; it is why `spec.md` §5 exists and why phase 5 may not be skipped.
-   Record this counterfactual's *failure to fail* explicitly in the verification
-   note, rather than letting a green suite imply a registered meter.
+4. Remove the `.AddMeter` line → **`IngestVolumeRegistrationTests` must fail**,
+   with a Shouldly assertion naming the missing metric.
+
+   This plan first predicted the opposite — *"no unit test fails … that is why
+   `spec.md` §5 exists"* — and phase 6 disproved it by writing the test: it
+   composes the real `AddEventIngestionInfrastructure` and reads the
+   `MeterProvider` through a `BaseExporter<Metric>`, in under a second, with no
+   new package. The prediction, not the code, was wrong; it is corrected here
+   because **#625 adds two more instruments and would otherwise inherit a false
+   constraint verbatim**.
+
+   What still fails to fail is the *export* leg — nothing in the unit suite
+   proves the OTLP exporter ships the figure or that the dashboard renders it.
+   That is what `spec.md` §5 covers and why phase 5 may not be skipped; record
+   it in the verification note in those terms rather than as "unit tests cannot
+   see the meter".
 
 ---
 
@@ -297,7 +316,10 @@ possible way to learn it.
 
 - Application ≥ 80% (ADR-0065): `IngestVolume` is small and fully exercised by
   `IngestVolumeTests`; both handlers gain covered lines.
-- ADR-0084: `IngestVolume.cs` is well under 300 LOC. Watch
-  `IngestEventBatchCommandHandler.HandleAsync`, which is close to the 30-LOC
-  method limit — extract the grouped recording into a private method if it trips,
-  and do **not** buy the lines back by deleting comments or guards.
+- ADR-0084: `IngestVolume.cs` is well under 300 LOC.
+  `IngestEventBatchCommandHandler.HandleAsync` is **34 code lines before this
+  slice and 37 after** — already past 30, and extracting `RecordVolume` does not
+  change that (inlined it would be ~39). The extraction is for locality of the
+  FR-005/FR-006 reasoning, not for the limit; the pre-existing overrun is a
+  separate matter and is **not** to be bought back by deleting comments or
+  guards.
