@@ -11,10 +11,20 @@ namespace SmartSentinelEye.Integration.Tests.EventIngestion;
 /// <para>
 /// The gap is narrow and old. Specs 013, 018 and 021 hardened this context
 /// repeatedly — who may read which plant's events, who may file one against
-/// which plant, whether a revoked webhook integration still works — and every
-/// one of those tests authenticates first. They answer "which fab may this
-/// operator touch", never "must there be an operator at all". A regression that
-/// dropped the authentication requirement would leave all of them green.
+/// which plant — and every one of those tests authenticates first. They answer
+/// "which fab may this operator touch", never "must there be an operator at
+/// all". A regression that dropped the authentication requirement would leave
+/// all of them green.
+/// </para>
+///
+/// <para>
+/// This list used to name a third item, "whether a revoked webhook integration
+/// still works". <b>Those specs did not cover it.</b> Nothing anywhere revoked
+/// an integration and then attempted a delivery through it until spec 102
+/// (#603), whose <c>WebhookRevocationRefusesDeliveryIntegrationTests</c> is both
+/// the disproof of the claim and the coverage it asserted. Corrected here rather
+/// than filed, because a reader meeting the claim would conclude the area was
+/// already covered — this repo's named failure mode.
 /// </para>
 ///
 /// <para>
