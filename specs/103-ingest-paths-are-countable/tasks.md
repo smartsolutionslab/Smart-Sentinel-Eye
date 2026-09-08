@@ -84,6 +84,14 @@ Listeners filter on **both** `instrument.Meter.Name == IngestVolume.MeterName`
   repository fake must be able to throw from `SaveAsync` — extend it if it cannot,
   in the test project, not in `src/`.
 
+  **A fourteenth case was written, deliberately, and is kept:**
+  `The_retry_after_a_failed_batch_counts_each_event_exactly_once`. It is
+  scenario 11 in full — the failed batch *and* the singly-stored retry that
+  follows it, one assertion over the total — where cases 13 and 9 only pin the
+  two halves separately. `tasks.md` under-decomposed scenario 11; the test-writer
+  did not. Covered by `plan.md` §5's standing allowance — *"If the count differs
+  from 13 … that is fine and the actual number is reported."*
+
 - [ ] **T002d [US1]** **Run them and quote the output.**
   **Predicted:** build clean (0 errors, 0 warnings), **13 failing cases**, every
   message a Shouldly assertion about a recorded measurement
@@ -118,7 +126,10 @@ Listeners filter on **both** `instrument.Meter.Name == IngestVolume.MeterName`
   - `IngestEventBatchCommandHandler.HandleAsync`: accumulate a
     `Dictionary<Source, long>` where `events.Add(built.Value)` already happens,
     then record it once **after** `await events.SaveAsync(...)` (`plan.md` §3).
-    Extract to a private method if ADR-0084's 30-LOC limit trips.
+    Put the recording loop in a private `RecordVolume` so the FR-005/FR-006
+    reasoning sits in one place — **not** to buy lines under ADR-0084's 30-LOC
+    limit: `HandleAsync` is 34 code lines before and 37 after, and the
+    extraction does not bring it under 30 (`plan.md` §8).
 
 - [ ] **T005 [P] [US1]** `src/EventIngestion/Infrastructure/EventIngestionInfrastructureModule.cs`
   — register the meter beside the "Bounded channel + ingress" block:
@@ -143,16 +154,40 @@ Listeners filter on **both** `instrument.Meter.Name == IngestVolume.MeterName`
 - [ ] **T007 [US1]** Execute `spec.md` §5 against a booted stack and write
   `verification.md`. Boot with the anonymous-dashboard flag; one Aspire stack per
   machine; mint the token from the **proxied** Keycloak endpoint.
-  **This step is not optional and not skippable**: unit tests cannot detect an
-  unregistered meter, which fails silently by construction (FR-004). If step 5 of
-  §5 shows no `sse.ingest.events` instrument, assumption **A1** is false — apply
-  the fallback in `spec.md` §8 and re-verify.
+  **This step is not optional and not skippable**: the unit suite now reaches as
+  far as the `MeterProvider` (T009) and no further — nothing in it proves the
+  OTLP exporter ships the figure or that the dashboard renders the series. If
+  step 5 of §5 shows no `sse.ingest.events` instrument while T009 is green,
+  assumption **A1** is false — apply the fallback in `spec.md` §8 and re-verify.
 
 - [ ] **T008 [US1]** Record the four counterfactuals from `plan.md` §5 in the
-  verification note, **including #4** — removing `.AddMeter` fails **no** unit
-  test. Write that down rather than letting a green suite imply a registered meter.
+  verification note, **including #4** — removing `.AddMeter` must turn
+  `IngestVolumeRegistrationTests` red, and the note quotes that failure. What is
+  still unprovable by unit test is the **export** leg; say that, rather than
+  letting a green suite imply a readable figure.
   Note that the latency-budget table in constitution §IV is **unchanged**; this
-  slice moves no leg.
+  slice moves no leg — but the note **cites the ≤ 200 ms `event → overlay state`
+  leg** with `spec.md` §6's reasoning. `N/A` contradicts the spec.
+
+---
+
+## Phase E — Review remediation (phase 6)
+
+- [ ] **T009 [US1]**
+  `tests/EventIngestion.Infrastructure.Tests/IngestVolumeRegistrationTests.cs` —
+  `The_ingest_volume_meter_is_registered_with_the_meter_provider`. Composes the
+  real `AddEventIngestionInfrastructure` over an in-memory config, resolves
+  `MeterProvider`, records one measurement and reads it back through a
+  `BaseExporter<Metric>`. **No new package** (FR-008 holds): `BaseExporter<T>`,
+  `BaseExportingMetricReader` and `MeterProvider` are public SDK types already
+  flowing in via `ServiceDefaults`.
+
+  Added because phase 6 disproved the constraint T007/T008 and `plan.md` §5 #4
+  were written around. Beyond the thirteen below, and covered by `plan.md` §5's
+  standing allowance — *"If the count differs from 13 … that is fine and the
+  actual number is reported."*
+
+  *Commit:* `test(event-ingestion): the ingest-volume meter's registration is a unit test`
 
 ---
 

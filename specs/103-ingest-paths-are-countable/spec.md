@@ -167,8 +167,15 @@ pins.
 
 An engineer looking at the `event-ingestion` service in the Aspire dashboard can
 read a running count of accepted events broken down by `source`
-(`plc | inference | manual | webhook`). A path that has gone silent shows a flat
-line instead of being indistinguishable from a path that is merely quiet.
+(`plc | inference | manual | webhook`). A path that has gone **fleet-wide**
+silent shows a flat line instead of being indistinguishable from a path that is
+merely quiet.
+
+**Fleet-wide, and the word is load-bearing.** `event-ingestion` is one instance
+serving many fabs and this counter carries no `fab` tag, so the figure blends
+every plant: one fab's `plc` path can die while another keeps the series
+climbing. That is a real limit of this slice, not a rounding of the story —
+FR-003 owns the trade.
 
 **Why P1, and why it is the whole slice:** it is the smallest thing that is both
 independently shippable and independently observable, and #625 (the backpressure
@@ -212,11 +219,19 @@ them now would instrument a behaviour this slice does not touch.
 ### Conflict — a duplicate is not a second event
 
 5. **Given** event `E` has already been stored for fab `F`,
-   **when** `E` is re-delivered (an MQTT redelivery after an interrupted run, or
-   a retried `POST`),
+   **when** `E` is re-delivered — **an MQTT redelivery after an interrupted
+   run**, which is the case that carries the identifier the broker already sent,
    **then** `IngestEventCommandHandler` returns `EventAlreadyIngested` and
    `sse.ingest.events` **does not increment**. A redelivered event is the same
    event; counting it twice reports a burst that never happened.
+
+   **A retried `POST` is not this case**, and an earlier draft of this spec said
+   it was. `EventsEndpoints.Writes.cs` mints `EventIdentifier.New()` server-side,
+   so an unkeyed retry is a genuinely new event and is counted — correctly. The
+   `POST` that does not increment is an **`Idempotency-Key` replay**, and that
+   short-circuits inside `IdempotentRequest.ExecuteCreateAsync` **above** the
+   handler: it never reaches the `EventAlreadyIngested` branch at all. Two
+   mechanisms, one outcome; only the first is what this scenario pins.
 
 6. **Given** a batch contains the same identifier twice,
    **when** the batch commits,
@@ -269,15 +284,35 @@ them now would instrument a behaviour this slice does not touch.
   accepted **into the ingestion store**.
 - **FR-002** It carries exactly one tag, `source`, whose value is `Source.Value`
   — `plc | inference | manual | webhook`.
-- **FR-003** It carries **no other dimension**. In particular it carries no
-  `fab`: nothing in this slice asked for per-fab volume, and `LatencyBudget`'s
-  precedent is that a dimension is added when a spec names the need for it
-  (`camera`, #1931) rather than because the value happens to be in scope.
+- **FR-003** It carries **no other dimension** — in particular no `fab`. This is
+  a trade, not a settled point, and it is worth stating both halves because a
+  tag set is a public interface and this is the cheap moment to change it.
+
+  **Against:** `event-ingestion` is one instance serving many fabs, so
+  `sse.ingest.events` is a **fleet-wide** figure. US1's benefit — a silent path
+  showing as a flat line — therefore does not hold *per fab*: fab A's `plc` path
+  can die while fab B keeps the series climbing. Cardinality is not the
+  objection; fabs number in the tens.
+
+  **For:** nothing in this slice asked for per-fab volume, and ADR-0036 forbids
+  building for a need that does not exist yet. The dimension is one line to add
+  the day a spec names the need.
+
+  **The `camera` precedent (#1931) does not settle it, and this spec previously
+  claimed it did.** That tag's own rationale is *"one blended figure hides the
+  single tile that is out"* — the identical failure mode, resolved the **other**
+  way. It is cited here as a live counter-argument, not as support.
 - **FR-004** The instrument lives on its own meter, `SmartSentinelEye.IngestVolume`,
   registered with the OpenTelemetry meter provider. **A meter nobody registers
   records into nothing and raises no error** — all three existing instrument
-  files say exactly that, and it is why §5's procedure is not optional.
+  files say exactly that. `IngestVolumeRegistrationTests` is what turns that
+  silent failure into a named one; §5 covers the leg beyond it, from the
+  provider to the sink.
 - **FR-005** A batch records **one measurement carrying N**, not N measurements.
+  **Unit-tested only.** The dashboard shows a total, not the measurement count
+  behind it, so §5's procedure cannot distinguish one measurement of 200 from
+  200 of 1. Phase 5 recorded this as an explicit limit rather than claiming
+  FR-005 verified end-to-end.
 - **FR-006** The count is taken **after the store commits**, never before.
 - **FR-007** A non-positive count records nothing, following `WallSkew` and
   `LabelDelay`, which drop an impossible value rather than throwing — a broken
@@ -294,10 +329,18 @@ them now would instrument a behaviour this slice does not touch.
 
 ## 5. Independent end-to-end test procedure
 
-Unit tests can prove the instrument records and that the handlers call it. They
-**cannot** prove the meter is registered — that failure is silent by
-construction. So registration is proved by asking the running system once, which
-is also the only readout ADR-0118 §4 says exists:
+Unit tests prove the instrument records, that the handlers call it, **and that
+the meter reaches the `MeterProvider`**: `IngestVolumeRegistrationTests`
+composes the real `AddEventIngestionInfrastructure` against an in-memory
+`BaseExporter<Metric>`, and fails with a Shouldly assertion when the
+`.AddMeter` line is removed. This spec first asserted that was impossible. It is
+not — no Docker, no fixture, no new package — and the assertion is corrected
+here rather than left for the next slice to inherit.
+
+What a unit test still cannot prove is that the figure is **readable in the
+sink**: that the OTLP exporter ships it and the dashboard renders the series
+with their tag values. That is what this procedure is for, and it is also the
+only readout ADR-0118 §4 says exists:
 
 > *"the latency histogram is emitted but cannot be read from outside the process
 > that records it… there is no programmatic readout."*
@@ -310,13 +353,20 @@ is also the only readout ADR-0118 §4 says exists:
 5. In the Aspire dashboard open **Metrics → `event-ingestion`** and select
    `sse.ingest.events`. Expect three series — `source=manual`, `source=webhook`,
    `source=plc` — each at 1.
-6. Re-`POST` the manual event with the **same** `eventId`. Expect `source=manual`
-   to stay at 1 (scenario 5).
+6. Re-`POST` the manual event with the **same `Idempotency-Key`**. Expect
+   `source=manual` to stay at 1. **Not `eventId`** — an earlier draft said so,
+   and `IngestManualEventRequest` is `(DeviceId, Kind, OccurredAt, Payload)`;
+   the identifier is minted server-side. Note what this step therefore proves
+   and does not: it exercises ADR-0142's replay, which returns above the
+   handler, **not** scenario 5's `EventAlreadyIngested` branch. That branch is
+   reachable only by MQTT redelivery and is pinned by
+   `A_duplicate_re_delivery_is_not_counted`.
 
-**If step 5 shows no instrument at all, the meter is not registered** — the
-failure mode FR-004 exists for, and the one thing green unit tests cannot rule
-out. Note that the Aspire MCP tools expose logs and traces but **no metrics
-tool**, so this step is read from the dashboard UI.
+**If step 5 shows no instrument at all**, either the meter is not registered —
+which `IngestVolumeRegistrationTests` would already have caught — or the export
+leg is broken, which only this procedure can see. Note that the Aspire MCP tools
+expose logs and traces but **no metrics tool**, so this step is read from the
+dashboard UI.
 
 ---
 
@@ -349,7 +399,7 @@ names.
 | Export | OTLP, one sink per environment; Aspire dashboard in dev/CI | ADR-0118, §VII |
 | Registration | `.AddMeter(...)` inside the context's own `AddEventIngestionInfrastructure` | ADR-0051 |
 | Guards | `Ensure.That(x).IsNotNull()` | ADR-0105 |
-| Tests | xUnit + Shouldly, `MeterListener`, sentence-style names | ADR-0052, ADR-0053 |
+| Tests | xUnit + Shouldly, `MeterListener` for the recordings and a `BaseExporter<Metric>` for the registration, sentence-style names | ADR-0052, ADR-0053 |
 | Phase 4a | **red** — see `plan.md` §5 | ADR-0139, ADR-0144 |
 
 ---
