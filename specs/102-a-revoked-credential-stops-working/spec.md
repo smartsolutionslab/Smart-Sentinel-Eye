@@ -69,11 +69,14 @@ registry state only:
 `e2e/` has **no webhook coverage of any kind** (21 specs, zero `revok`/`webhook`
 hits). The refusal is asserted **nowhere above the domain unit test**.
 
-**Drifted citation found.** `AnonymousIngestIsRefusedTests.cs:14` claims specs
-013/018/021 hardened, among other things, *"whether a revoked webhook
-integration still works"*. They did not — §2.1 is that claim's disproof. The
-sentence is a doc comment, so nothing red guards it. Reported, not fixed here
-(out of scope: §7.2).
+**Drifted citation found — and corrected here.**
+`AnonymousIngestIsRefusedTests.cs:14` claimed specs 013/018/021 hardened, among
+other things, *"whether a revoked webhook integration still works"*. They did
+not — §2.1 is that claim's disproof. The sentence is a doc comment, so nothing
+red guards it. Originally deferred as out of scope; **corrected in this slice**
+(phase 6, F4). The correcting evidence is this very PR, the file is inside the
+slice's blast radius, and a reader meeting the claim would conclude the area was
+already covered. Comment-only: no assertion in that file is touched.
 
 ### 2.2 What does a revoked integration receive today? — **A bare 401, empty body.**
 
@@ -93,10 +96,17 @@ Read from source, `EventsEndpoints.Writes.cs`:
   exceptions — a returned 401 is not one. So no `ProblemDetails` is produced.
 - **Headers:** no `WWW-Authenticate` challenge is invoked — the route is
   `.AllowAnonymous()` (`EventsEndpoints.cs:59`), so the authentication middleware
-  never challenges and `Results.Unauthorized()` does not add one. *This is
-  inferred from source, not observed at runtime*, which is why the test asserts
-  it **indirectly**, by byte-equality against the unknown-integration 401
-  (§3, scenario 2) rather than by naming a header.
+  never challenges and `Results.Unauthorized()` does not add one. **Read from
+  source, then observed at runtime** during phase 5 (`wwwAuthenticateCount: 0`
+  on both the revoked and the unknown refusal). The earlier justification for
+  leaving the header unasserted — that its absence *"was read from source before
+  it was observed and an assertion should not rest on that"* (commit `89e85e50`)
+  — is therefore **stale**, and phase 6 (F2) replaced it: the test now compares
+  the header **between the two responses**, alongside status and body. It still
+  carries no absolute, for a different and better reason — asserting the header
+  absent would over-pin something §7.1 may legitimately change, whereas
+  comparing the two names no requirement and extends the same
+  indistinguishability oracle to the third observable.
 - **Indistinguishable from an unknown integration.** `:211` collapses "no such
   integration" and "revoked integration" into the same `null`, and the summary at
   `:181-183` says so deliberately: *"Every failure path collapses to `null` so the
@@ -135,15 +145,36 @@ stopping the delivery — nothing else filters revoked rows on this path.)
 
 | Step | Principal | Source |
 |---|---|---|
-| Register, list, revoke | `admin`, scope `sse.webhooks.write`, group `/fabs/munich` | `aspire.CreateAdminClientAsync("event-ingestion")` |
+| Register, list, revoke | `admin`, scope **`sse.management`** (the legacy bundle), group `/fabs/munich` | `aspire.CreateAdminClientAsync("event-ingestion")` |
 | Deliver the webhook event | the integration's own bearer, **no OIDC** | the token captured in step 1, sent on `aspire.EventIngestion` (the unauthenticated client) |
 
-`/webhook-integrations` requires `Scope.Sse.Webhooks.Write`
-(`WebhookIntegrationsEndpoints.cs:31`); `/events/webhook/{integrationName}` is
-`.AllowAnonymous()` (`EventsEndpoints.cs:59`). `admin` holds `/fabs/munich` only,
-so the integration is registered without `?fabId=` (resolves to munich) and
-delivered with `?fabId=munich` — matching `WebhookBearerValidationIntegrationTests`'s
-`Fab` constant. **Established idioms, not invented ones:** register/revoke follow
+**Corrected in phase 6 (F3): this row previously said `sse.webhooks.write`, and
+that is wrong.** `CreateAdminClientAsync` → `CreateAuthenticatedClientAsync` →
+`GetAccessTokenAsync` → `FetchAccessTokenAsync(username, password, ClientId,
+"openid sse.management")` (`AspireFixture.Auth.cs:60-62, 73, 110-112`). The
+admin client mints the **legacy `sse.management` bundle** through
+`smart-sentinel-eye-web`, which grandfathers the granular `sse.*` scopes — so
+the register/revoke calls succeed, but not because the token carries the
+concrete scope the endpoint names.
+
+Two consequences, written down rather than assumed:
+
+- **This is not a scope test, and must not be described as one.** If
+  `/webhook-integrations`' `RequireAuthorization(Scope.Sse.Webhooks.Write)`
+  (`WebhookIntegrationsEndpoints.cs:31`) were swapped for any other catalogued
+  scope, all three `[Fact]`s stay green. Revocation is the variable here; scope
+  is not, and is covered elsewhere.
+- **The admin identity is over-broad** relative to a real `sse.webhooks.write`
+  operator. Accepted: it is the house fixture and every neighbour in this folder
+  uses it. Recorded so the breadth is a choice rather than an oversight.
+
+**The fab half of the claim is right, and it is the half the test leans on.**
+`/events/webhook/{integrationName}` is `.AllowAnonymous()`
+(`EventsEndpoints.cs:59`); `admin` holds `/fabs/munich` only, so the integration
+is registered without `?fabId=` (resolves to munich) and delivered with
+`?fabId=munich` — matching `WebhookBearerValidationIntegrationTests`'s `Fab`
+constant, and making the pre-revoke 201 an actual control. **Established idioms,
+not invented ones:** register/revoke follow
 `WebhookIntegrationConcurrencyIntegrationTests`, delivery follows
 `WebhookBearerValidationIntegrationTests`.
 
@@ -189,14 +220,29 @@ Scenario: The refusal is silent about which integrations exist
   Given a revoked webhook integration in munich
    When a delivery presents its token
     And a delivery presents the same token against a name never registered
-   Then both answer with the same status code
+   Then the revoked delivery answers 401 Unauthorized
+    And both answer with the same status code
     And both answer with the same response body
+    And both answer with the same WWW-Authenticate header
 ```
 
 This pins **today's** behaviour (§2.2) — the collapse at `:211`. It is asserted
 because a change to it should be a decision someone takes deliberately (§7.1),
 not one that drifts in. It is the assertion to strike if the open question is
 settled the other way; §7.1 says so explicitly.
+
+**Two amendments from phase 6, both about what "exactly" is worth:**
+
+- **The absolute comes first (F1).** Without `401` stated in its own right, this
+  scenario borrows its absolute from scenario 1 and detects only mutations that
+  move *one* side. A change moving **both** sides together — both permissive,
+  both 403, both 500 — would pass, and if scenario 1 were ever narrowed the
+  scenario would become a tautology with nothing announcing it.
+- **All three observables (F2).** Status and body were compared; the
+  `WWW-Authenticate` header was not, and it is the one place an ASP.NET
+  challenge would leak the distinction — the exact field phase 5 measured
+  (`wwwAuthenticateCount: 0`). Comparing it between the two responses (never
+  against an absolute) is what earns the word "exactly" in the prose.
 
 ```gherkin
 Scenario: Revocation refuses even when the delivery names the right plant
@@ -209,6 +255,49 @@ Already covered by scenario 1; stated so nobody "strengthens" the test by
 delivering to another fab, which would be refused a step later by the fab
 comparison (`IsIntegrationsOwnFab`, `:226`) and would prove nothing about
 revocation. **Not a separate `[Fact]`.**
+
+```gherkin
+Scenario: A rotated integration's JWT stops working once it is revoked
+  Given a webhook integration seeded in munich in Jwt validation mode
+        against the Keycloak client management-web
+    And an access token minted for that client with scope sse.events.write
+    And a delivery presenting that token has been accepted with 201 Created
+   When the integration is revoked with DELETE /webhook-integrations/{name}
+        carrying If-Match with the listed version
+   Then a second, otherwise identical delivery answers 401 Unauthorized
+```
+
+**Added in phase 6 (F5), and it is the one that matters most.** §8's original
+counterfactual only ever moved the whole clause; the security review found a
+*narrower* mutation that both existing `[Fact]`s survive — relocate the check
+into the `StaticHash` arm of the mode branch:
+
+```csharp
+bool authorized = integration.ValidationMode == BearerValidationMode.Jwt
+    ? await ValidateJwtAsync(request, integration, fabId)
+    : integration.TokenHash.Matches(token) && !integration.IsRevoked;   // and drop :211's clause
+```
+
+Every rotated integration then ignores revocation entirely while scenarios 1
+and 2 — both `StaticHash` — stay green. §5's earlier claim that JWT mode is
+"covered by construction" was reasoning about the code, not an assertion; this
+scenario is the assertion. §8.1 records the counterfactual run.
+
+**The JWT is minted from `management-web`, not through the real rotate path.** A
+credential minted by rotation carries no `groups` claim today, so
+`ValidateJwtAsync`'s final check refuses it — which makes the **pre-revoke 201
+control unreachable**, and without that control the closing 401 attributes to
+nothing. Filed as **#2206**, out of this slice. The seeding idiom
+(`WebhookBearerValidationIntegrationTests.SeedJwtIntegrationAsync`) sidesteps it
+by writing the JWT-mode row directly and presenting a `management-web` token,
+which does carry the claim. Not a workaround for a weak assertion: the assertion
+is the same 401 the other scenarios make, reached on the same line.
+
+**Observed: #2206 was not encountered.** The pre-revoke delivery answered **201
+Created** on the first run, so the `management-web` mint reaches
+`ValidateJwtAsync`'s group check with the claim present and the control holds.
+Had it 401'd instead, that would have been #2206 surfacing and a finding to
+report — not an assertion to relax.
 
 **Bad-request and auth scenarios:** already covered on this endpoint and
 deliberately not re-asserted — wrong bearer
@@ -231,7 +320,8 @@ Runnable by a human without reading the test code, against a booted AppHost:
    `If-Match: "<version>"` → **200**.
 5. Repeat step 2 verbatim → **401**, empty body.
 6. `POST /events/webhook/never-registered-xyz?fabId=munich` with the same token →
-   **401**, byte-identical response to step 5.
+   **401**, byte-identical response to step 5 — including the (absent)
+   `WWW-Authenticate` header.
 
 ---
 
@@ -252,12 +342,20 @@ Runnable by a human without reading the test code, against a booted AppHost:
 - Any production change — explicitly including a "fix" of the 401 collapse (§7.1).
 - The dedup half of #603: already true in effect (§2.0). Nothing to assert that
   `EventIdentifier.New()` at `:156` does not already state.
-- The false claim at `AnonymousIngestIsRefusedTests.cs:14` (§2.1) — a doc-comment
-  correction in a file this slice does not otherwise touch. File separately.
-- Revocation propagation to Keycloak for rotated (JWT-mode) integrations. A
-  revoked JWT-mode integration is refused at the same `:211` before the JWT
-  branch runs, so this slice covers the refusal by construction; whether Keycloak
-  also stops minting is a different question in a different context.
+- ~~The false claim at `AnonymousIngestIsRefusedTests.cs:14`~~ — **now in scope
+  and corrected** (§2.1, phase 6 F4). Comment-only; no assertion in that file is
+  touched.
+- Revocation propagation to Keycloak for rotated (JWT-mode) integrations —
+  whether Keycloak also stops minting is a different question in a different
+  context. **The refusal itself is now asserted**, not left to construction:
+  §3's fourth scenario revokes a JWT-mode integration and re-delivers (phase 6,
+  F5). The earlier wording here — "covered by construction" — was reasoning
+  about `:211` sitting above the mode branch, which is exactly the arrangement
+  the F5 mutation changes.
+- **#2206**, the broken `groups` claim on credentials minted through the real
+  rotate path. Encountered while writing the JWT scenario, sidestepped by the
+  established seeding idiom, filed separately; not fixed here and not worked
+  around by weakening any assertion.
 
 ---
 
@@ -314,11 +412,14 @@ operator can read and the attacker cannot.
 Settling this the other way means amending that one `[Fact]` — which is a
 feature, because it makes the change deliberate rather than silent.
 
-### 7.2 The false claim in `AnonymousIngestIsRefusedTests.cs:14`
+### 7.2 The false claim in `AnonymousIngestIsRefusedTests.cs:14` — **closed**
 
 A doc comment asserting coverage that does not exist (§2.1). Trivial, but it is
 this repo's named failure mode — a record nobody checked against what was
-actually happening.
+actually happening. **Not filed separately after all: corrected in this slice**
+(phase 6, F4), because this PR is the correcting evidence and a reviewer meeting
+the claim would conclude the area was already covered. The edit is one paragraph
+of comment; every assertion in that file is untouched.
 
 ---
 
@@ -367,6 +468,37 @@ still guards it.
 proves less than it appears to, and that must be reported in the PR body before
 it ships, not discovered later. Record the actual failing set either way.
 
+### 8.1 The second counterfactual — the narrow mutation (phase 6, F5)
+
+§8's change removes the clause outright, and any of the three `[Fact]`s catches
+it. The security review found one that is **narrower and survives both original
+tests**: leave `:211` guarding only `!found.HasValue`, and re-attach the
+revocation check to the `StaticHash` arm alone.
+
+```csharp
+// EventsEndpoints.Writes.cs:211
+if (!found.HasValue) { return null; }
+...
+// and at the mode branch
+bool authorized = integration.ValidationMode == BearerValidationMode.Jwt
+    ? await ValidateJwtAsync(request, integration, fabId)
+    : integration.TokenHash.Matches(token) && !integration.IsRevoked;
+```
+
+**Prediction:** scenarios 1 and 2 — both `StaticHash` — stay **green**, because
+the check still runs on their path. Only
+`A_rotated_integrations_token_stops_working_once_it_is_revoked` fails, and it
+fails on the closing delivery answering **201 Created** where 401 is asserted.
+That asymmetry is the whole point: a mutation that two of three facts survive is
+one a green suite would have shipped.
+
+**Outcome: the prediction held.** `Failed: 1, Passed: 2, Skipped: 0, Total: 3` —
+the failure being `A_rotated_integrations_token_stops_working_once_it_is_revoked`
+on *"refused.StatusCode should be HttpStatusCode.Unauthorized but was
+HttpStatusCode.Created"*. Both `StaticHash` facts **passed** with the mutation in
+place, which is exactly the asymmetry SC-005 asks for: without the JWT fact, a
+green suite would have shipped it. Verbatim output in the PR body.
+
 ---
 
 ## 9. Success criteria
@@ -379,19 +511,32 @@ it ships, not discovered later. Record the actual failing set either way.
 - **SC-003** — The new file carries **no** `[Trait("Category", …)]`, so
   `ci.yml:179`'s exclusion filter selects it. Confirmed by
   `dotnet test --filter "Category!=Measurement&Category!=Disruptive&Category!=Maintenance" --list-tests`
-  naming both `[Fact]`s.
+  naming all three `[Fact]`s.
 - **SC-004** — Green on a clean `develop`, and green again on a second run (a
   first-run-after-churn failure is not a verdict).
+- **SC-005** (phase 6) — With §8.1's narrow mutation applied, the JWT `[Fact]`
+  fails and the two `StaticHash` `[Fact]`s stay green. A run where all three
+  redden means the mutation was applied more broadly than §8.1 describes and the
+  asymmetry was not demonstrated; a run where none redden means the JWT `[Fact]`
+  does not reach the revocation clause at all.
 
 ## 10. Assumptions (unavoidable guesses, marked)
 
-- **A1** — The 401 body is empty and carries no `WWW-Authenticate`. Derived from
-  source (§2.2), **not observed at runtime**. The test does not assert either
-  directly; scenario 2's byte-equality holds whatever the body turns out to be.
-- **A2** — `admin`'s token carries `sse.webhooks.write`. Inferred from
-  `WebhookIntegrationConcurrencyIntegrationTests` registering and revoking
-  successfully with `CreateAdminClientAsync("event-ingestion")`. If it does not,
-  the register step 401s immediately and the cause is unambiguous.
+- **A1 — discharged, and the justification it carried is now stale.** The 401
+  body is empty and carries no `WWW-Authenticate`. Derived from source (§2.2)
+  and then **observed at runtime** in phase 5 (`wwwAuthenticateCount: 0`). Commit
+  `89e85e50`'s message still says the header was left unasserted because its
+  absence "was read from source before it was observed" — true when written,
+  false once A1 was observed, and superseded by phase 6 F2: the header is now
+  compared between the two responses. It is still not asserted **absent**, but
+  for §7.1's reason, not for A1's.
+- **A2 — wrong, corrected in phase 6 (F3).** This said `admin`'s token carries
+  `sse.webhooks.write`. It does not: `CreateAdminClientAsync` mints the legacy
+  `sse.management` bundle (`AspireFixture.Auth.cs:110-112`), which grandfathers
+  the granular `sse.*` scopes — which is why the inference from
+  `WebhookIntegrationConcurrencyIntegrationTests` succeeding looked sound and was
+  not. Nothing the tests assert depends on it (§2.4), but the slice must not be
+  described as scope coverage.
 - **A3** — munich's event storage is provisioned in the fixture, so the `Given`'s
   first delivery is 201 rather than 503. Inferred from
   `WebhookBearerValidationIntegrationTests.StaticHash_mode_accepts_the_matching_legacy_bearer`

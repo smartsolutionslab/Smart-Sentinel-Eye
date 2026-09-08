@@ -105,16 +105,52 @@ without — are captured for the PR (SC-001).
 
 **Depends on:** T002, T003.
 
+### [T005] [US1] Phase 6 remediation (added after review)
+
+Two reviews ran — backend (*merge after fixes*) and security (*merge, with
+items*). Five findings, all addressed in the same slice; none of them changes
+production code.
+
+- **F1** — scenario 2 had no absolute. It compared the revoked status to the
+  unknown one and borrowed its `401` from scenario 1, so any mutation moving
+  **both** sides together survived it. `ShouldBe(HttpStatusCode.Unauthorized)`
+  now precedes the comparison (spec §3).
+- **F2** — the prose said "exactly" while two of three observables were
+  compared. `WWW-Authenticate` is now compared **between the two responses**
+  (never against an absolute — that would over-pin §7.1). The stale
+  justification, that the header's absence was unobserved, is corrected in
+  spec §2.2 and §10 A1.
+- **F3** — the spec's principal claim was wrong: `CreateAdminClientAsync` mints
+  `sse.management`, not `sse.webhooks.write`. Corrected in §2.4 and A2, with the
+  two consequences written down — this is **not** a scope test, and the admin
+  identity is over-broad by choice.
+- **F4** — the false coverage claim in `AnonymousIngestIsRefusedTests.cs`
+  corrected in place. **Comment-only**; no assertion in that file is touched.
+- **F5** — a third `[Fact]` for the JWT branch, against the narrow mutation both
+  original tests survive (spec §3's fourth scenario, §8.1). Run as a second
+  counterfactual and reported verbatim.
+
+Nits taken: `FindAsync` states `?includeRevoked=false` rather than relying on the
+server default; `RevokeAsync` disposes its `HttpRequestMessage`, matching
+`PostWebhookAsync`.
+
+**Done when:** Release build clean, the full integration suite green under CI's
+filter, and §8.1's counterfactual output captured — the JWT `[Fact]` red, the two
+`StaticHash` ones green (SC-005).
+
+**Depends on:** T004.
+
 ---
 
 ## Dependency graph
 
 ```
 T001 ──┬── T002 ──┐
-       └── T003 ──┴── T004
+       └── T003 ──┴── T004 ── T005
 ```
 
-No task is `[P]`: T002 and T003 both need T001's file, and T004 needs both.
+No task is `[P]`: T002 and T003 both need T001's file, T004 needs both, and T005
+is the post-review pass over all of it.
 
 ---
 
@@ -140,9 +176,9 @@ the default 30.
    with two middle grounds. **This lane may not decide it** (ADR-0144). Note the
    dependency: settling it toward "distinguishable" amends scenario 2's `[Fact]`
    and nothing else.
-2. **A false coverage claim** — `AnonymousIngestIsRefusedTests.cs:14` states that
-   specs 013/018/021 tested "whether a revoked webhook integration still works".
-   They did not (spec §2.1). Doc-comment only, nothing red guards it.
+2. ~~**A false coverage claim** — `AnonymousIngestIsRefusedTests.cs:14`~~ —
+   **not filed; done in T005.** Comment-only correction, and this PR is the
+   evidence for it (spec §2.1, §7.2).
 3. **The stale half of #603** — the dedup/`eventId` half is already true in
    effect via `EventIdentifier.New()` at `Writes.cs:156`, and
    `IngestWebhookEventCommand` never existed. #603's title and body should be
