@@ -69,6 +69,7 @@ public sealed class IngestEventBatchCommandHandler(
         // duplicate the idempotency rule was supposed to absorb.
         HashSet<EventIdentifier> seen = [.. already];
         List<EventEnvelope> refused = [];
+        Dictionary<Source, long> storedBySource = [];
 
         foreach (EventEnvelope envelope in envelopes)
         {
@@ -82,6 +83,7 @@ public sealed class IngestEventBatchCommandHandler(
             if (built.HasValue)
             {
                 events.Add(built.Value);
+                storedBySource[envelope.Source] = storedBySource.GetValueOrDefault(envelope.Source) + 1;
             }
             else
             {
@@ -90,7 +92,35 @@ public sealed class IngestEventBatchCommandHandler(
         }
 
         await events.SaveAsync(cancellationToken);
+
+        RecordVolume(storedBySource);
         return new IngestEventBatchResult(refused);
+    }
+
+    /// <summary>
+    /// Counts what the commit actually stored (spec 103 FR-005/FR-006), one
+    /// measurement per source rather than one per envelope.
+    ///
+    /// <para>
+    /// Called only after <c>SaveAsync</c> has returned. The insert is
+    /// all-or-nothing, so a throwing save must contribute nothing before the
+    /// caller retries the same envelopes one at a time — and spec 020 made that
+    /// retry the ordinary way an interruption ends, so counting during the build
+    /// loop would inflate the common case rather than an edge one.
+    /// </para>
+    ///
+    /// <para>
+    /// Grouped by the envelope's own source because a drained batch routinely
+    /// mixes <c>plc</c> and <c>inference</c>; folding them into one bucket would
+    /// need an <c>mqtt</c> token <see cref="Source"/> does not have.
+    /// </para>
+    /// </summary>
+    private static void RecordVolume(Dictionary<Source, long> storedBySource)
+    {
+        foreach ((Source source, long stored) in storedBySource)
+        {
+            IngestVolume.Record(source, stored);
+        }
     }
 
     /// <summary>

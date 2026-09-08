@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using SmartSentinelEye.EventIngestion.Domain.Event;
 using SmartSentinelEye.Shared.Kernel;
 
@@ -47,6 +49,13 @@ public static class IngestVolume
     /// </summary>
     public const string SourceTag = "source";
 
+    private static readonly Meter Meter = new(MeterName);
+
+    private static readonly Counter<long> Ingested = Meter.CreateCounter<long>(
+        name: MetricName,
+        unit: "{event}",
+        description: "Events accepted into the ingestion store, by the source that sent them.");
+
     /// <summary>Records one accepted event against its source.</summary>
     public static void Record(Source source) => Record(source, 1);
 
@@ -58,5 +67,17 @@ public static class IngestVolume
     public static void Record(Source source, long count)
     {
         Ensure.That(source).IsNotNull();
+
+        // A count of zero is not an arrival of zero events — it would publish a
+        // series claiming the source is alive and idle — and a negative one can
+        // only mean the caller computed it wrongly. Dropped rather than thrown,
+        // following WallSkew and LabelDelay: a broken caller shows as missing
+        // data instead of as a counter that went backwards.
+        if (count <= 0)
+        {
+            return;
+        }
+
+        Ingested.Add(count, new TagList { { SourceTag, source.Value } });
     }
 }
