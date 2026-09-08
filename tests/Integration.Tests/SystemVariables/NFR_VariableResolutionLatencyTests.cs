@@ -8,7 +8,21 @@ namespace SmartSentinelEye.Integration.Tests.SystemVariables;
 
 /// <summary>
 /// Spec 014 T031 — a baseline for the leg the reverse-index rewrite touches.
-/// Closes the measurement half of #749.
+/// Measures <b>SystemVariables'</b> own part of it: a value change returning →
+/// the overlay's resolved text carrying it.
+///
+/// <para>
+/// <b>It does not close #749, and this file said it did until spec 106.</b> #749
+/// is spec 007's T099 — an <i>Automation</i> measurement, over
+/// <c>FabEventIngestedV1</c> consumed → action V1 published. Different context,
+/// different span; nothing here enters <c>FabEventIngestedV1Handler</c>. Closing
+/// #749 against this figure would have made the claim actively misleading. The
+/// Automation part is measured by
+/// <c>Automation/AcceptToDecideLatencyTests</c> — and even that is a proxy for
+/// NFR-001's own span, so read its remarks before quoting either figure. No
+/// assertion here changed: the measurement was always this one, only its label
+/// was wrong.
+/// </para>
 ///
 /// <para>
 /// Constitution §IV gives <c>event → overlay state</c> 200 ms of an 800 ms
@@ -107,7 +121,8 @@ public class NFR_VariableResolutionLatencyTests(AspireFixture aspire) : IAsyncLi
         // The artefact. Recorded in the test output so the figure survives the
         // run and T039 has something to compare against.
         Console.WriteLine(
-            $"[NFR #749] value-change -> resolved overlay text, GLOBAL-KEYED baseline: "
+            $"[NFR spec 014 T031] SystemVariables: value-change -> resolved overlay text, "
+            + $"GLOBAL-KEYED baseline: "
             + $"median {median} ms, worst {worst} ms, samples [{string.Join(", ", measured)}] ms "
             + $"(constitution §IV leg 4 budget: 200 ms)");
 
