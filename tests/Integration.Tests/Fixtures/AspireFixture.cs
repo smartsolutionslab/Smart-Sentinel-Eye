@@ -173,8 +173,23 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
     /// </para>
     ///
     /// <para>
-    /// <c>RuntimeUnhealthy</c> is absent for a different reason: it is a
-    /// container that is up and answering badly, not one that ended.
+    /// <c>RuntimeUnhealthy</c> is absent for a different reason, and it is a
+    /// judgement rather than a definition — saying it "is up and answering
+    /// badly, not one that ended" only restates the state's meaning. The
+    /// judgement: such a resource may still recover, and confidence is what a
+    /// "likely cause" sentence spends. It is not the free choice #2061 was:
+    /// that run's nine were all <c>FailedToStart</c> and it had no
+    /// <c>RuntimeUnhealthy</c> resource at all, so nothing there argues this
+    /// exclusion. The cost is real and is paid here — a <c>RuntimeUnhealthy</c>
+    /// resource reaches the failure section with no cause line above it, which
+    /// is structurally #1930's own complaint. <b>#2146 owns that case</b>: a
+    /// boot that watches for fatal states does not have to guess from a
+    /// snapshot taken after the timeout.
+    /// </para>
+    ///
+    /// <para>
+    /// <c>"Terminated"</c> is a string literal here for the reason
+    /// <see cref="FatalStartupStates"/> gives, which is not restated.
     /// </para>
     /// </summary>
     private static readonly string[] EndedStates =
@@ -657,11 +672,22 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
     ///
     /// <para>
     /// Two disjoint populations, because a non-zero exit was too narrow a
-    /// question (#1930): <c>automation</c> ended <c>Finished</c> with exit code
-    /// <c>0</c> — and, on the run that was actually observed, with no exit code
-    /// captured at all — while the boot was still waiting for it, and the
-    /// report offered no cause line whatsoever. Exit code 0 changes where a
-    /// reader looks next; it does not change what stopped the boot.
+    /// question (#1930): <c>automation</c> ended <c>Finished</c> while the boot
+    /// was still waiting for it. #1930 enumerates two exit codes for that —
+    /// <c>0</c> and none-recorded — and <b>neither was captured</b>. #1930 was
+    /// split from #1918 on 2026-08-26; the state list first printed
+    /// <c>(exit code N)</c> in <c>799a739c</c> on 2026-08-27, and this method
+    /// first existed in <c>5aa4fcbe</c> on 2026-09-04. So that report had no
+    /// field for a code and no cause sentence to omit: its silence is the
+    /// report's format, not an observation. Nothing in this repository holds a
+    /// capture of it.
+    /// </para>
+    ///
+    /// <para>
+    /// So the new arm turns on the <b>state</b> a resource reached, not on the
+    /// code it exited with — which is what makes it correct for both of #1930's
+    /// rows without having seen either. Exit code 0 changes where a reader looks
+    /// next; it does not change what stopped the boot.
     /// </para>
     /// </summary>
     internal static string FormatLikelyCause(
