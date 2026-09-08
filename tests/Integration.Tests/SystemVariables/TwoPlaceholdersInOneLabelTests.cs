@@ -29,6 +29,18 @@ namespace SmartSentinelEye.Integration.Tests.SystemVariables;
 /// </para>
 ///
 /// <para>
+/// <b>Which half carries which claim.</b> The happy path is the one the
+/// counterfactual in <c>plan.md</c> (M1 — <c>break;</c> after the snapshot
+/// write) turns red. The partial-resolution case stays green under M1 and
+/// <b>cannot</b> detect it: M1's <c>break</c> sits after the write, which only
+/// the valued name reaches, and that name is last. The control earns its place
+/// on a different ground — a label mixing a resolved and an unset name over the
+/// query path is covered nowhere else, at any level, and with the unset name
+/// first it is the only case that shows a <c>continue</c> exit does not end the
+/// loop.
+/// </para>
+///
+/// <para>
 /// <b>No <c>[Trait]</c>, deliberately.</b> The CI integration job filters
 /// <c>Category!=Measurement&amp;Category!=Disruptive&amp;Category!=Maintenance</c>
 /// and every file in this directory carries no trait at all. Adding one would
@@ -73,9 +85,15 @@ public class TwoPlaceholdersInOneLabelTests(AspireFixture aspire) : IAsyncLifeti
         (await VariableRequests.SetValueAsync(variables, first, "82.5")).EnsureSuccessStatusCode();
         (await VariableRequests.SetValueAsync(variables, second, "91.5")).EnsureSuccessStatusCode();
 
-        // Readiness is *both* literals gone. Waiting on one would race the very
-        // defect this file exists to catch and turn a real failure into a flake.
-        await WaitUntilResolvableAsync(variables, overlay, [first, second]);
+        // The *first* name only, and that is the point rather than a shortcut.
+        // There is no non-defect state in which the first placeholder resolves
+        // and the second lags: the label is written into the index in one
+        // atomic assignment (InMemoryReverseIndex:30), GetByNameAsync reads
+        // live from the DbContext, and both values are committed above. So a
+        // second name still literal *is* the defect — and requiring it here
+        // would bury that defect in a 30 s readiness timeout instead of letting
+        // the assertion below print the expected and actual strings.
+        await WaitUntilResolvableAsync(variables, overlay, [first]);
 
         using HttpResponseMessage snapshot = await SnapshotAsync(variables, overlay);
         string body = await snapshot.Content.ReadAsStringAsync();
@@ -85,29 +103,39 @@ public class TwoPlaceholdersInOneLabelTests(AspireFixture aspire) : IAsyncLifeti
     }
 
     /// <summary>
-    /// US1 partial resolution, and the control on the test above: a snapshot
-    /// that wrote one value into every placeholder would satisfy the happy path
-    /// and fail here.
+    /// US1 partial resolution: one label carrying an unset name and a resolved
+    /// one, read over the query path. It is <b>not</b> the control the happy
+    /// path needs against "one value written into every placeholder" — the
+    /// happy path uses two distinct values and asserts the whole string, so
+    /// such a resolver yields <c>"Line A: 82.5 / Line B: 82.5"</c> and fails
+    /// there directly.
     ///
     /// <para>
-    /// It is <b>not</b> evidence that the multi-name loop iterates — an unset
-    /// second variable renders as its literal whether the loop reached it or
-    /// stopped short, so this case cannot distinguish the two. The happy path
-    /// is the one that carries that claim.
+    /// It earns its place because mixed resolve/unset in one label over
+    /// <b>this</b> handler is covered nowhere else. The only two-name unit test
+    /// of the loop, <c>GetOverlaySnapshotQueryHandlerTests.Skips_archived_and_unset_variables…</c>
+    /// (<c>:54-73</c>), has neither name reach the write.
+    /// </para>
+    ///
+    /// <para>
+    /// The unset name is deliberately <b>first</b>. The valued one is then only
+    /// reached on a second iteration, which makes this the one case that shows
+    /// a <c>continue</c> exit does not end the loop. It still cannot detect M1,
+    /// whose <c>break</c> sits after the write that only the last name reaches.
     /// </para>
     /// </summary>
     [Fact]
-    public async Task An_unset_second_variable_leaves_only_its_own_placeholder_literal()
+    public async Task An_unset_first_variable_leaves_only_its_own_placeholder_literal()
     {
         using HttpClient variables = await aspire.CreateAdminClientAsync("system-variables");
         using HttpClient overlays = await aspire.CreateAdminClientAsync("overlay-designer");
 
-        string valued = UniqueVariableName();
         string unset = UniqueVariableName();
-        await DefineAsync(variables, valued);
+        string valued = UniqueVariableName();
         await DefineAsync(variables, unset);
+        await DefineAsync(variables, valued);
 
-        Guid overlay = await PublishOverlayReferencingAsync(overlays, valued, unset);
+        Guid overlay = await PublishOverlayReferencingAsync(overlays, unset, valued);
 
         (await VariableRequests.SetValueAsync(variables, valued, "82.5")).EnsureSuccessStatusCode();
 
@@ -119,7 +147,7 @@ public class TwoPlaceholdersInOneLabelTests(AspireFixture aspire) : IAsyncLifeti
         string body = await snapshot.Content.ReadAsStringAsync();
 
         snapshot.StatusCode.ShouldBe(HttpStatusCode.OK, body);
-        ResolvedTextIn(body).ShouldBe($"Line A: 82.5 / Line B: {{{{{unset}}}}}");
+        ResolvedTextIn(body).ShouldBe($"Line A: {{{{{unset}}}}} / Line B: 82.5");
     }
 
     /// <summary>
@@ -206,7 +234,7 @@ public class TwoPlaceholdersInOneLabelTests(AspireFixture aspire) : IAsyncLifeti
             $"Overlay {overlay} never resolved all of [{string.Join(", ", names)}] within "
             + $"{IndexReadinessCeilingMs} ms; the last snapshot was "
             + $"{(resolved is null ? "not a 200" : $"'{resolved}'")}. Either the reverse index never "
-            + "picked the overlay up, or the snapshot loop stopped before the last placeholder.");
+            + "picked the overlay up, or the snapshot loop never reached one of them.");
     }
 
     /// <summary>
