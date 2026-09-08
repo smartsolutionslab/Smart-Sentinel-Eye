@@ -2,6 +2,10 @@
 
 **Spec**: `specs/106-the-automation-leg-is-measured/spec.md` · **Issue**: #749 (spec 007 T099)
 
+**Amended 2026-09-09** at the phase-6 gate, in three places marked
+**[amended 2026-09-09]**: the file name, the class name, and the row filter. This plan
+prescribed a filter that matches nothing; see *Measure*.
+
 **Change class**: test-only. One new file under `tests/Integration.Tests/Automation/`.
 No `src/` change, no package addition, no migration, no Aspire resource, no contract
 change, no constitution edit.
@@ -65,14 +69,20 @@ Two reads, with different jobs, and conflating them is the mistake to avoid:
 
 ## File plan
 
-One file:
+One file — **[amended 2026-09-09]**:
 
 ```
-tests/Integration.Tests/Automation/NFR001_RuleEvaluationLatencyTests.cs
+tests/Integration.Tests/Automation/AcceptToDecideLatencyTests.cs
 ```
 
-Named exactly as spec 007 T099 and #749 name it, so the next `git grep
-RuleEvaluationLatency` finds a test rather than three prose files.
+This plan asked for `NFR001_RuleEvaluationLatencyTests.cs`, "named exactly as spec 007
+T099 and #749 name it, so the next `git grep RuleEvaluationLatency` finds a test rather
+than three prose files". **Phase 4 renamed it and was right to.** A class named for
+NFR-001's span would assert more than it can see — the span this file measures is
+accept→decide, which overshoots at the head and undershoots at the tail (spec, *What the
+measured span is not*). Making a `git grep` land on a test file is not worth a name that
+misdescribes the test; the grep would then find a file whose own remarks say it does not
+measure what the name claims.
 
 **No new fixture helper.** `PlantFloor`, `RuleRequests`, `VariableRequests` and
 `AspireFixture.CreateAuditObservabilityDbContextAsync` cover everything. The one candidate
@@ -87,7 +97,7 @@ with new work) says no. Recorded here so the duplication is a decision, not an o
 
 ```
 [Collection(AspireCollection.Name)]
-public class NFR001_RuleEvaluationLatencyTests(AspireFixture, ITestOutputHelper) : IAsyncLifetime
+public class AcceptToDecideLatencyTests(AspireFixture, ITestOutputHelper) : IAsyncLifetime
 ```
 
 - `IAsyncLifetime.DisposeAsync` archives the variables and the rule the run created
@@ -95,9 +105,9 @@ public class NFR001_RuleEvaluationLatencyTests(AspireFixture, ITestOutputHelper)
   measurement run that leaves residue is #2004's finding, and this one writes 120 values
   to a variable.
 - Two `[Fact]`s over one private `MeasureAsync(warmup, measured, budgetMs)` helper:
-  - `Rule_evaluation_p95_stays_within_the_automation_leg_budget` —
+  - `Accept_to_decide_p95_stays_within_the_automation_leg_budget` —
     `[Trait("Category", "Measurement")]`, `(20, 100, 100)`.
-  - `Rule_evaluation_has_not_regressed_by_an_order_of_magnitude` — no trait,
+  - `Accept_to_decide_has_not_regressed_by_an_order_of_magnitude` — no trait,
     `(3, 5, 400)`.
 - Constants named, not inlined: `WarmupIterations`, `MeasuredIterations`,
   `BudgetMilliseconds`, `GuardBudgetMilliseconds`, `EffectDeadline`, `PollIntervalMs`.
@@ -107,10 +117,15 @@ public class NFR001_RuleEvaluationLatencyTests(AspireFixture, ITestOutputHelper)
 1. Admin clients for `system-variables` and `automation`.
 2. Two variables: `warm{guid}` and `meas{guid}`, both `Number`, `initialValue = "0"`.
    **Two variables rather than one** is what keeps the warm-up out of the population by
-   construction (FR-003) — the SQL selects on `resource_identifier`, which for this event
-   is the variable `Name`, so warm-up rows are not merely skipped, they are never
-   selected. Trimming the first 20 rows afterwards would depend on an ordering the query
-   does not guarantee.
+   construction (FR-003) — the SQL selects on the measured variable's name, so warm-up
+   rows are not merely skipped, they are never selected. Trimming the first 20 rows
+   afterwards would depend on an ordering the query does not guarantee.
+   **[amended 2026-09-09]** this paragraph said the selection is on `resource_identifier`,
+   "which for this event is the variable `Name`". It is not; see *Measure*.
+
+   The `{guid}` suffix must be a **v4**, not a v7. A v7's leading hex digits are the top
+   bits of its millisecond timestamp, so two facts running seconds apart mint the same
+   rule name and the second fails in arrange with a 400. Observed on the second clean run.
 3. Two rules, one per variable, distinct `triggerKind` (`PlcWarm{n}` / `PlcMeas{n}`) so
    one event fires exactly one rule. Predicate `$.payload.cycleTime <= 30`, expression
    `100 - $.payload.cycleTime * 2` — the same rule the Automation integration tests
@@ -162,9 +177,21 @@ FROM (
     (payload->>'Value') = ANY({1}) AS value_expected
   FROM audit_events
   WHERE event_kind = 'SystemVariableValueRequestedV1'
-    AND resource_identifier = ANY({0})
+    AND payload->>'Name' = {0}
 ) samples
 ```
+
+**[amended 2026-09-09] That `WHERE` clause read `resource_identifier = ANY({0})` and
+matched nothing.** `V1ResourceMap.BuildConventionPicker`
+(`src/AuditObservability/Application/EventHandlers/V1ResourceMap.cs:158`) prefers the
+first `Guid`-typed property and only falls back to the `IdentifierPropertyNames`
+allow-list when there is none. `SystemVariableValueRequestedV1` has one `Guid`,
+`CausingEventIdentifier`, so `resource_identifier` holds the causing plant-floor event.
+
+The clause was copied from `IngestSpanMeasurement.cs:357`, whose event declares
+`Guid Variable` first — so **the sibling passes Guid identifiers into `= ANY(...)`, not
+names**. The two call sites read identically and mean different things, which is the whole
+reason this correction is written down twice: here and in the spec.
 
 Notes on the shape, each of which is a decision:
 

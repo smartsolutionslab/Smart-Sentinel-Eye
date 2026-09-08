@@ -4,7 +4,10 @@
 
 **Created**: 2026-09-08
 
-**Status**: Draft
+**Status**: Draft — phases 1–6 complete. Amended 2026-09-09 at the phase-6 gate so that
+this document describes what shipped: the class name, the row filter, and the shape of
+the value check. The amendments are marked **[amended 2026-09-09]** where they land,
+because a spec quietly corrected to match its code is not a record.
 
 **Input**: #749 — `[T099] NFR001_RuleEvaluationLatencyTests` integration test: warm 20
 iters + measure 100 iters; assert p95 ≤ 100 ms `FabEventIngestedV1` consume → action V1
@@ -73,9 +76,28 @@ to `SystemVariableValueRequestedV1`
 (`IntegrationEventAuditHandler.cs:53`) and writes `occurred_at` = Moment B plus the whole
 serialised message into the `payload` jsonb column, from which Moment A is read as
 `payload->'Metadata'->>'RootIngestedAt'`. No join, no second query, no cross-row
-correlation. `resource_identifier` for this event is the variable name
-(`V1ResourceMap.IdentifierPropertyNames` picks `Name`), which is how the run selects its
-own rows — the same filter `IngestSpanMeasurement` already uses.
+correlation.
+
+**[amended 2026-09-09] The run selects its rows on `payload->>'Name'`, and why it must is
+the most valuable thing this slice found.** Phases 1–3 of this document said
+`resource_identifier` for this event is the variable name, on the strength of
+`V1ResourceMap.IdentifierPropertyNames` containing `Name`. **That is wrong, and the SQL it
+prescribed matches nothing.** `V1ResourceMap.BuildConventionPicker`
+(`src/AuditObservability/Application/EventHandlers/V1ResourceMap.cs:158`) prefers *the
+first `Guid`-typed property* and reaches the name allow-list only when there is none.
+`SystemVariableValueRequestedV1` has one `Guid` — `CausingEventIdentifier` — so its
+`resource_identifier` column holds **the causing plant-floor event, not the variable**.
+Verified against a real `OverlayHighlightRequestedV1` row, which carries its
+`OverlayIdentifier` there for the same reason.
+
+The plan copied that filter from `IngestSpanMeasurement.cs:357`, whose event
+(`FabEventIngestedV1`) declares `Guid Variable` first — so the sibling is passing *Guid
+identifiers* into `= ANY(...)`, not names. The two call sites look identical and are not.
+
+**Why this belongs in the spec and not only in a code comment.** A later reader who trusts
+the original FR-005 reconstructs a query that returns zero rows, and reads the empty
+result as a broken pipeline — which is precisely the failure this feature's assertion
+ordering exists to prevent, re-introduced through the durable record.
 
 ### What the measured span is not
 
@@ -223,8 +245,17 @@ fact is selected and green.
 
 ### Functional
 
-- **FR-001** A new integration test class, `NFR001_RuleEvaluationLatencyTests`, under
-  `tests/Integration.Tests/Automation/`, in the `AspireCollection`.
+- **FR-001** *[amended 2026-09-09]* A new integration test class,
+  **`AcceptToDecideLatencyTests`**, under `tests/Integration.Tests/Automation/`, in the
+  `AspireCollection`.
+
+  Phases 1–3 named it `NFR001_RuleEvaluationLatencyTests`, after spec 007 T099 and #749.
+  **Phase 4 renamed it, and the rename is right**: NFR-001's span is *`FabEventIngestedV1`
+  consumed → action V1 on the bus*, and neither endpoint is observable from a test process
+  (see *The two observable moments*). A file named for a span it cannot see asserts more
+  than it measures, and a class name is the part of a test that travels furthest — into a
+  `git grep`, into a CI summary, into a quotation. So the class is named for the span it
+  actually brackets. **The spec was the wrong document here, not the test.**
 - **FR-002** It publishes plant-floor events through the existing `PlantFloor` fixture
   helper over MQTT — the same ingress every other Automation integration test uses. It
   does not post to an HTTP endpoint to enter the chain in the middle.
@@ -234,15 +265,32 @@ fact is selected and green.
 - **FR-004** Each iteration waits for its own effect before the next is published. The
   test measures single-event latency, not throughput under concurrency, and must not
   become a saturating burst.
-- **FR-005** The population is read in **one** SQL query against `audit_events`, filtered
-  on `event_kind = 'SystemVariableValueRequestedV1'` and `resource_identifier = ANY(...)`,
-  computing `percentile_cont` over
+- **FR-005** *[amended 2026-09-09]* The population is read in **one** SQL query against
+  `audit_events`, filtered on `event_kind = 'SystemVariableValueRequestedV1'` **and
+  `payload->>'Name' = {measuredVariable}`**, computing `percentile_cont` over
   `EXTRACT(EPOCH FROM (occurred_at - (payload->'Metadata'->>'RootIngestedAt')::timestamptz)) * 1000`.
+
+  This clause originally read `resource_identifier = ANY(...)`. **It matches nothing** —
+  for the reason set out under *The two observable moments*, that column holds
+  `CausingEventIdentifier`, not the variable name. Filtering on the payload's own `Name`
+  is what shipped and what the two recorded runs used.
 - **FR-006** The row count is asserted equal to the measured-iteration count **before**
   any percentile is asserted, with a failure message that names the count found.
-- **FR-007** The selection also requires the payload's `Value` to equal the value the
-  rule's expression yields for the event published, so a fan-out that produced the wrong
+- **FR-007** *[amended 2026-09-09]* The selection also requires the payload's `Value` to be
+  **one of the 30 distinct values** the rule's expression yields across the run
+  (`(payload->>'Value') = ANY({expectedValues})`), so a fan-out that produced the wrong
   effect reduces the count rather than improving the figure.
+
+  The original wording required each row's `Value` to *equal* the value that row's own
+  event should have produced. What shipped is **set membership plus the per-iteration
+  poll**, and the pair is at least as strong: `cycleTime` cycles `1..30`, so consecutive
+  iterations always expect a *different* value, and `WaitForValueAsync` blocks until the
+  variable actually carries iteration *n*'s value before iteration *n+1* is published. The
+  per-row check the original FR asked for is therefore performed **100 times, live, during
+  the run**, rather than once retrospectively in SQL; the SQL's set membership is the
+  backstop that survives into the stored rows. Row-level correlation in SQL would need the
+  event identifier carried from the publish into the query — a join this feature
+  deliberately does not have.
 - **FR-008** n, p50, p95, p99 and max are written to the test output with the span named
   in words, so the figure cannot be quoted without its definition.
 - **FR-009** The p95 assertion is **≤ 100 ms**, and its failure message states that the
@@ -278,8 +326,22 @@ fact is selected and green.
 
 - **SC-001** Two independent runs on an idle machine each produce a p95, and both are
   recorded in the verification note. One run is not a measurement.
-- **SC-002** The count assertion is demonstrated to fail on a stack with no Active rule
-  — verified by the counterfactual below, not by assertion in prose.
+- **SC-002** *[amended 2026-09-09 to what was observed]* A pipeline that fires but skips
+  the work is demonstrated to fail the test, and the demonstration names **which**
+  assertion caught it.
+
+  **Observed** (M1 — `RuleEvaluator` returning a hard-coded `"0"`): both facts failed at
+  the **per-iteration readiness poll**, at iteration 0 of the warm-up, ~120 s before any
+  SQL ran — `never reached '98' within 120 s; a 200 carrying '0'`. A throwaway probe with
+  that poll removed then showed the count assertions are the backstop behind it:
+  `totalRows=20 rowsWithExpectedValue=0 … p95=14,4 ms` and, printed by the probe itself,
+  *"a p95-only assertion at 100 ms would have PASSED"*.
+
+  The original wording predicted the counts would be what caught M1. They are the *second*
+  line of defence, not the first, and both were observed. The counterfactual for **no
+  Active rule** specifically was not run as a third mutation — `ActivateRuleAsync`'s
+  read-back of `state == "Active"` makes that state unreachable from inside the test. See
+  `verification.md`.
 - **SC-003** The CI integration job's selected-test count rises by exactly one (the P2
   guard) and the P1 fact does not appear in the trx.
 - **SC-004** `git diff --stat` for the merged change touches only `tests/` and `specs/`.

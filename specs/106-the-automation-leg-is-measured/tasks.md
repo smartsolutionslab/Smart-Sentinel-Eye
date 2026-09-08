@@ -93,7 +93,8 @@ run concurrently — the slice is one file deep on purpose.
 
 The independently-shippable slice. T001–T009 deliver it end to end.
 
-- [ ] **T001 [US1]** Create
+- [ ] **T001 [US1]** *[amended 2026-09-09: shipped as `AcceptToDecideLatencyTests.cs` —
+  spec FR-001]* Create
   `tests/Integration.Tests/Automation/NFR001_RuleEvaluationLatencyTests.cs` with the class
   skeleton: `[Collection(AspireCollection.Name)]`, primary constructor taking
   `AspireFixture` and `ITestOutputHelper`, `IAsyncLifetime`, and the named constants
@@ -158,7 +159,8 @@ Shippable on its own after US1. May be deferred at the phase-3 gate.
   it with `(20, 100, 100)`. Behaviour-preserving: the P1 fact's output must be unchanged.
   *Depends on: T009.*
 
-- [ ] **T011 [US2]** Add `Rule_evaluation_has_not_regressed_by_an_order_of_magnitude`,
+- [ ] **T011 [US2]** *[shipped as `Accept_to_decide_has_not_regressed_by_an_order_of_magnitude`]*
+  Add `Rule_evaluation_has_not_regressed_by_an_order_of_magnitude`,
   **no category trait**, calling `MeasureAsync(3, 5, 400)`. Remarks state that 400 ms is 4×
   the budget deliberately — the same reasoning
   `NFR_VariableResolutionLatencyTests.LegBudgetMs` gives — so it catches an
@@ -223,11 +225,32 @@ No `[P]` markers: single file (see *Declarations*).
 
 ## Definition of done
 
-- `NFR001_RuleEvaluationLatencyTests` exists, and `git grep -rln RuleEvaluationLatency`
-  returns a test file rather than three prose files.
+- **[restated 2026-09-09]** An integration test in `tests/Integration.Tests/Automation/`
+  asserts a p95 for a named span against a named budget, and prints `n`, min, p50, p95,
+  p99 and max beside the span's definition. Shipped as
+  `AcceptToDecideLatencyTests.Accept_to_decide_p95_stays_within_the_automation_leg_budget`.
+
+  This criterion read: *"`NFR001_RuleEvaluationLatencyTests` exists, and `git grep -rln
+  RuleEvaluationLatency` returns a test file rather than three prose files."* **It came
+  out green for the wrong reason** — the class was renamed (see spec FR-001) and the grep
+  matched only because the class remarks *mention* `NFR001_RuleEvaluationLatencyTests` in
+  prose while explaining why the file is not called that. A check satisfied by what a
+  comment says rather than by what the code does is this repository's recurring defect in
+  miniature, so it is replaced by something the code can actually satisfy.
 - Two p95 figures recorded from two runs (SC-001).
-- M1's prediction confirmed: the latency assertion passed and the **count** assertions
-  caught it (SC-002).
+- **[restated 2026-09-09 to what was observed]** M1 was caught, and by the **readiness
+  poll** — both facts failed at iteration 0 of the warm-up, ~120 s before any SQL ran
+  (`never reached '98' within 120 s; a 200 carrying '0'`). A throwaway probe with the poll
+  removed confirmed the counts are the backstop behind it: `totalRows=20
+  rowsWithExpectedValue=0 … p95=14,4 ms`, with the probe printing *"a p95-only assertion
+  at 100 ms would have PASSED"*.
+
+  This line read *"the latency assertion passed and the count assertions caught it"*.
+  **That is not what happened in the committed test**: M1 never reaches the latency
+  assertion or the counts, because the poll fails first. The counts-catching-M1 outcome was
+  shown only by the probe, which was never committed. Recorded as observed rather than as
+  predicted — writing the prediction down as the outcome is the failure mode a
+  counterfactual exists to prevent.
 - M2's prediction confirmed: the test failed and no existing test did.
 - `git diff --stat` touches only `tests/` and `specs/` (SC-004).
 - Phase 4a evidence quoted verbatim in the PR body (ADR-0139).
