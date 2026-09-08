@@ -142,6 +142,10 @@ public class RuleEvaluatorTests
     {
         Guid overlay = Guid.CreateVersion7();
         InMemoryRuleCache cache = new();
+        // The five-minute gap is load-bearing, not decoration: the cache orders
+        // the bucket with an unstable List.Sort on CreatedAt (FR-012), so equal
+        // moments would make the effects[0]/effects[1] assertions below
+        // non-deterministic.
         cache.Upsert(ActiveRule(
             "rule-a",
             RuleAction.HighlightOverlay.From(overlay, 5_000),

@@ -126,6 +126,9 @@ public class FabEventIngestedV1HandlerTests
         InMemoryRuleCache cache = new();
         // Both survive the upsert: InMemoryRuleCache removes by rule identifier,
         // and Rule.Create mints a fresh one per Build. The names are only labels.
+        // The five-minute gap is load-bearing, not decoration: the cache orders
+        // the bucket with an unstable List.Sort on CreatedAt (FR-012), so equal
+        // moments would make the sequence asserted below non-deterministic.
         cache.Upsert(ActiveHighlightRule("highlight-rule-a", overlay, 5_000, BaseMoment));
         cache.Upsert(ActiveHighlightRule(
             "highlight-rule-b", overlay, 12_000, BaseMoment.AddMinutes(5)));
