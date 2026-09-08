@@ -303,7 +303,10 @@ class, no Docker, no Aspire boot.
 
 #### Acceptance scenarios (Gherkin)
 
-**Happy path — the shape #1930 actually observed, exit code 0**
+**Happy path — the first of the two rows #1930 enumerates, exit code 0**
+
+Not *observed*: nothing in this repository holds a capture of #1930's run, and
+§11 A1 carries why. This is the row as the issue states it.
 
 ```gherkin
 Given a startup timeout report whose captured states include
@@ -312,9 +315,17 @@ Given a startup timeout report whose captured states include
  When the likely-cause line is formatted
  Then it names automation
   And it states that automation ended in Finished with exit code 0
-  And it states that a long-running resource that ends during startup is a
-      failed boot, not a clean finish
+  And it states that a resource that ends while the boot is still waiting for
+      it is a failed boot, not a clean finish
 ```
+
+**The closing clause is a phase-6 correction.** It read *"a long-running resource
+that ends during startup"*, and nothing on that path establishes long-running:
+`IsHealthy` spells the one-shot exemption for `Finished` only, so a `migrations`
+in `Exited` with code 0 reaches the sentence and is told it is long-running when
+it is the one resource in the stack known not to be. Plan §1 carries the detail,
+alongside the second phase-6 correction — rebuilders that *end* were eligible to
+be named as the cause, which is #1918's noise re-entering.
 
 **Happy path — no exit code was ever observed**
 
