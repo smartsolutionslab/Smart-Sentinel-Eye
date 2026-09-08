@@ -32,8 +32,14 @@ public class IngestWriteLimiterTests
     /// The scenario's "not left waiting" half has no assertion here on purpose:
     /// <c>TryAcquire</c> is synchronous, so the only way to express immediacy is
     /// a wall-clock bound, which is exactly the thread timing this file avoids.
-    /// A limiter that waited without a timeout would hang this test rather than
-    /// pass it.
+    /// The gap that leaves is real and unasserted, not covered by something
+    /// else: a nonzero timeout is invisible to this suite. Changing the gate to
+    /// <c>slots.Wait(50)</c> passes all four tests — in 368 ms rather than 58,
+    /// and a five-second wait would burn a thread per refused request under
+    /// exactly the overload the limiter exists for. The guarantee is therefore
+    /// structural rather than asserted: it is the literal <c>0</c> at
+    /// <c>IngestWriteLimiter.cs:37</c>. A wall-clock bound loose enough not to
+    /// flake in CI would not catch a small timeout anyway.
     /// </para>
     /// </summary>
     [Fact]
@@ -110,6 +116,9 @@ public class IngestWriteLimiterTests
 
         using IngestWriteLimiter limiter = new();
 
+        // Held to the end of the method and never disposed: the enclosing
+        // `using` disposes the semaphore first, so releasing a lease afterwards
+        // would throw ObjectDisposedException and read as a limiter defect.
         List<IngestWriteLease> held = [];
         for (int writer = 0; writer < IngestWriteLimiter.DefaultConcurrency; writer++)
         {
