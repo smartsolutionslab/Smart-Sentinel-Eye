@@ -35,11 +35,40 @@ carries, not by the first**, and each name resolves independently.
 No new domain or integration event. The test *rides* one — `OverlayRevisionPublishedV1`
 (`Shared.Contracts`) — which is asynchronous, so the test must wait for the
 index rather than assume it. `NFR_VariableResolutionLatencyTests.WaitUntilResolvableAsync`
-(`:144-162`) already solves this: it polls the snapshot until the literal
-placeholder disappears. **The new test needs a two-variable form of that wait**
-— readiness is when *both* literals are gone, not the first. A wait that
-checked only one name would race exactly the bug the test exists to catch, and
-would turn a real failure into a flake.
+(`:144-162`) already solves the index wait: it polls the snapshot until the
+literal placeholder disappears.
+
+**What the new test needs from that wait is the 200, not a second name.** The
+neighbour maps a non-200 to `string.Empty` (`:168-171`), and an empty string
+satisfies "no literal remains" trivially, so its wait returns on its first
+iteration while the overlay is still 404. Harmless where it stands — three
+warmup rounds (`:61`) precede the measured loop and `MeasureOneChangeAsync`'s
+own `Contains(expected)` poll (`:132-138`) cannot be satisfied by an empty
+string, so warmup round 0 absorbs the catch-up and its sample is discarded —
+but a correctness test that returned early would assert against a 404. **So the
+new wait requires `200` *and* the literal gone.**
+
+**Readiness is the *first* name only, and that is a decision rather than a
+shortcut.** There is no state, short of the defect itself, in which the snapshot
+answers 200 with the first placeholder resolved and the second lagging:
+
+- `VariableRepository.GetByNameAsync` (`:21-32`) reads live from the DbContext
+  — no projection, no cache.
+- Both `SetValueAsync` calls are awaited and `EnsureSuccessStatusCode`'d before
+  the wait starts, so both values are committed.
+- The only asynchronous part of indexing is
+  `labelByOverlay[overlayIdentifier] = labelText`
+  (`InMemoryReverseIndex.cs:30`) — **one atomic write of the whole label**, not
+  one per name; the query path never reads the per-name axis at all.
+- Only `apiGateway` is replicated (`AppHost.cs:455`), so there is no
+  per-replica index skew to race.
+
+A wait on *both* names would therefore not protect against a race; it would
+**swallow the very failure this file exists to produce**, turning a one-line
+`ShouldBe` diff into a 30 s readiness timeout. Waiting on the first name keeps
+the index-readiness guarantee and leaves the second placeholder to the
+assertion. A defect that left the *first* placeholder literal still fails — by
+timeout, equally red, just slower.
 
 ## Boundary rules
 
@@ -131,7 +160,7 @@ later one renders as its literal.
 | Outcome | Test | Why |
 |---|---|---|
 | **FAILS** | `TwoPlaceholdersInOneLabelTests` happy path | expects `"Line A: 82.5 / Line B: 91.5"`, gets `"Line A: 82.5 / Line B: {{vB}}"` |
-| GREEN | `TwoPlaceholdersInOneLabelTests` partial-resolution case | `vB` is unset, so its literal is expected either way — this half **cannot** detect M1, which is why it is not the test the counterfactual is scored on |
+| GREEN | `TwoPlaceholdersInOneLabelTests` partial-resolution case | the unset name is **first**, so it exits at `:60` via `continue` and never reaches the `break`; the valued name is last, so writing it and then breaking changes nothing. This half **cannot** detect M1, which is why it is not the test the counterfactual is scored on — what it does detect is a `continue` that ends the loop |
 | GREEN | all 5 `GetOverlaySnapshotQueryHandlerTests` | four bind one placeholder; `Skips_archived_and_unset_variables…` (`:53-73`) binds two but **neither reaches `:63`** (`shift` is Unset → `continue` at `:60`; `unknown` is absent → `continue` at `:49`), so `break` never executes |
 | GREEN | `NFR_VariableResolutionLatencyTests` | one placeholder (`:185`) |
 | GREEN | every test in `ResolvedTextReachesItsFabTests` | asserts the **push** path (`VariableValueChangedDomainEventHandler`), a different `BuildSnapshotAsync`; and its label carries one placeholder |
@@ -160,9 +189,12 @@ actually adds. Run M2 only if M1's result is ambiguous.
 
 ## Risks
 
-- **Flake on the async index.** Mitigated by the two-name readiness wait above.
-  The 30 s ceiling from `NFR_VariableResolutionLatencyTests:148` is the
-  precedent; a timeout must name both variables and the overlay in its message.
+- **Flake on the async index.** Mitigated by the `200`-plus-first-literal
+  readiness wait above. The 30 s ceiling from
+  `NFR_VariableResolutionLatencyTests:148` is the precedent; a timeout must name
+  the awaited variables and the overlay in its message, and quote the last text
+  seen, because an unbooted index and a snapshot loop that stopped early
+  otherwise look identical from the test.
 - **Docker required** (ADR-0103). The test cannot run in the `backend` job; it
   lands in `integration` and its cost is one more case on an already-booted
   fixture.
