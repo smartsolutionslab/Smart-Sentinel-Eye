@@ -74,8 +74,24 @@ claims.
 Resolution: **the issue's name is kept verbatim and moved to the file where it
 is true.** `Two_highlight_actions_on_the_same_overlay_both_publish` goes to
 `FabEventIngestedV1HandlerTests`; the evaluator gets a sibling named for what
-it actually returns. Two tests, because the two levels catch different
-mutations — not because two are nicer than one.
+it actually returns.
+
+**Two tests — but not because the two levels catch different mutations.**
+That reason was written here first and it is true in only one direction. By
+mutation detection the evaluator test is *strictly subsumed*: **M1** reddens
+both, **M2** reddens only the handler test (`plan.md`), and no plausible
+mutation — reversed effect order, a wrong duration, a wrong overlay mapping —
+reddens the evaluator test while the handler test stays green. The handler
+test is the one that earns its place on detection alone.
+
+The evaluator test earns its place by **symmetry**, which is the reason the
+docs originally omitted. The single-rule case is already asserted at both
+levels: `RuleEvaluatorTests.HighlightOverlay_action_yields_an_overlay_effect`
+beside
+`FabEventIngestedV1HandlerTests.HighlightOverlay_action_publishes_OverlayHighlightRequestedV1`.
+Adding the two-rule case at one level only would break a pairing that is
+already there. Mirroring the existing pattern is the argument — not that two
+are nicer than one.
 
 ## User story US1 — a producer that emits both highlights (P1)
 
