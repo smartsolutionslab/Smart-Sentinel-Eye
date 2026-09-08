@@ -488,12 +488,26 @@ recompiled by this change.
 
 - **A1 — `Finished` with exit code 0 is reachable for `automation`.** Unverified;
   it is one of the two branches #1930 itself enumerates. The change is correct
-  either way, because the null-exit-code row is *observed* (that is what
-  `A_resource_with_a_captured_null_exit_code_is_not_named_as_a_cause` was written
-  from) and takes the same new arm.
+  either way, because the null-exit-code row takes the same new arm.
+
+  **This bullet used to call that second row *observed*, and it is not.** The
+  test it cited as the observation —
+  `A_resource_with_a_captured_null_exit_code_is_not_named_as_a_cause`, now
+  inverted — was hand-built for **#1918**: the class it lives in opens by saying
+  so, and `StatesFromTheRunThatMotivatedThis` is run 33623647778's shape, not
+  #1930's. Nothing in this repository holds a capture of #1930's run. The row is
+  a *plausible* rendering of what #1930 reported, and the case for the new arm
+  rests on the state a resource reached, not on a code someone recorded.
+  Corrected at phase 4b (2026-09-08): a fixture written for one issue is not
+  evidence about another, and this spec is a diagnostic, so what it claims to
+  have seen is the whole of its value.
 - **A2 — the `Terminated` string literal stays reachable.** Inherited from
   `FatalStartupStates`, whose doc comment explains why it cannot be a constant.
-  This spec reuses that array rather than restating the set.
+  **It is copied, not reused**: `FatalStartupStates` carries `FailedToStart` and
+  `RuntimeUnhealthy`, and naming resources in those states is exactly the noise
+  #2061 removed, so the cause line needs its own shorter set (T002). An earlier
+  draft of this bullet said the array was reused; the two sets differ by the two
+  entries that decide the behaviour.
 - **A3 — no re-run has ever been needed to read a `.trx`.** §5 asserts the
   artifact survives a re-run from the workflow file, not from a retrieval that
   was performed. If a reviewer wants that proved, downloading attempt 1's

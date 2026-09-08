@@ -53,12 +53,14 @@ needed. No per-task issues — feature-level tracking since spec 028.
 ## Dependencies and parallelism
 
 ```
-T001 ──┬── T002 ─── T003 ─── T004 ─┬── T007 ─── T008 ─── T009
-       └── T005 ─── T006 ──────────┘
+T001 ──┬── T002 ─── T004 ─┬── T007 ─── T008 ─── T009
+       └── T005 ─── T006 ─┘
 ```
 
 - **T001 is foundational and blocks everything.** It is the red observation; the
   engineer's brief is its verbatim output.
+- **T003 was folded into T001** at phase 4a and no longer appears in the graph:
+  the assertion it wanted inverted *is* one of the two reds. See T003.
 - **T002–T004 (US1) and T005–T006 (US2) touch the same two files**, so they are
   **not** `[P]`. Marking them parallel would produce the merge conflicts ADR-0109
   exists to avoid.
@@ -86,11 +88,25 @@ Add two `[Fact]`s beside the existing cause-line tests, sentence-style names
   siblings so the ordinary case sits alongside it. Assert the returned string
   contains `automation`, contains `Finished`, contains `exit code 0`, and does
   **not** contain the phrase `a non-zero exit`.
-- `A_long_running_resource_that_ended_with_no_exit_code_is_named_as_a_cause`
+- `A_resource_with_a_captured_null_exit_code_is_named_without_inventing_one`
   — the same states with `["automation"] = null`. Assert it contains `automation`
   and says no exit code was recorded, and assert
-  `result.ShouldNotContain("exited with code \n")` — the empty-code rendering the
-  test being replaced in T003 was written to prevent.
+  `cause.ShouldNotContain("exited with code")` — the empty-code rendering the
+  inverted assertion was written to prevent.
+
+**Two corrections phase 4a made to this task, kept here so the next reader does
+not follow the version that was wrong:**
+
+1. **The prescribed assertion could not fail.** This task originally asked for
+   `ShouldNotContain("exited with code \n")`. `FormatLikelyCause` interpolates
+   the name *into a sentence*, so a null renders
+   `automation exited with code  — a non-zero exit…` — two spaces and an em
+   dash, never a newline. That assertion would have passed vacuously against the
+   very defect it names. `ShouldNotContain("exited with code")` is what holds the
+   finding.
+2. **This task's second test and T003's rewrite are the same test.** The
+   inverted assertion *is* the null-exit-code red, so writing both would have
+   produced two tests over one input. **Phase 4a produced two reds, not three.**
 
 Run **only** the trait, capture the output **verbatim**, do not fix anything:
 
@@ -130,7 +146,27 @@ file.
 red, rest green). Nothing calls the new member yet — this commit builds on its
 own (ADR-0087).
 
-### T003 [US1] Rewrite the one assertion that pins the old silence
+**Delivered inside T004's commit, not as its own** (phase 4b, 2026-09-08). A
+commit adding only `EndedStates` leaves a private member nothing reads, and
+`Directory.Build.props` sets `TreatWarningsAsErrors` for `Release` with
+`EnforceCodeStyleInBuild` — so the "builds on its own" this task invokes ADR-0087
+to protect is the thing splitting it would put at risk. The set and its one call
+site land together.
+
+`EndedDuringStartup` was **not** added: the set is consulted at its single call
+site inside `FormatLikelyCause`, and a named predicate wrapping one
+`Contains` at one call site is the indirection ADR-0036 asks not to add. The
+`OrdinalIgnoreCase` comparison this task specified is kept, at that call site.
+
+### T003 [US1] ~~Rewrite the one assertion that pins the old silence~~ — folded into T001, done
+
+**Superseded at phase 4a.** The rewrite this task describes and T001's second
+test are the *same test over the same input*, so keeping both would have meant
+two tests asserting one thing. The inversion landed in T001's commit
+(`09a1eb3d`), correctly named and with the finding kept as
+`ShouldNotContain("exited with code")`. Nothing is left to do here; the
+description below is retained because the PR body still owes a reader the
+inversion under its own heading.
 
 **File**: `tests/Integration.Tests/Fixtures/AspireFixtureReportSelectionTests.cs`
 
@@ -156,14 +192,15 @@ full diff.
 **File**: `tests/Integration.Tests/Fixtures/AspireFixture.cs`
 
 Per plan §1. Population A's predicate, wording and joining are **byte-identical**.
-Population B is `!IsHealthy(…) && !ExitedNonZero(…) && EndedDuringStartup(state)`,
-with its own sentence and its own closing clause. A's sentence first where both
-are non-empty. Extract the two sentence builders as private statics if
-`FormatLikelyCause` crosses 30 LOC or SonarAnalyzer's complexity limit (ADR-0084).
+Population B is `!IsHealthy(…) && !ExitedNonZero(…)` and the state is in
+`EndedStates`, with its own sentence and its own closing clause. A's sentence
+first where both are non-empty. Extract the two sentence builders as private
+statics if `FormatLikelyCause` crosses 30 LOC or SonarAnalyzer's complexity limit
+(ADR-0084).
 
 **Done when**:
 
-- The three tests from T001 and T003 are green.
+- The two tests from T001 are green.
 - **All five of these pass unmodified** — check by `git diff --stat` showing no
   change to their bodies:
   `No_cause_is_claimed_when_the_one_shot_exited_cleanly`,
@@ -179,7 +216,16 @@ over-reach signal, not a step to work through.
 
 ---
 
-## Phase 4c — US2: the section header agrees with the cause line (infra-engineer)
+## Phase 4a (US2) — the red for the header (**test-writer**)
+
+**This phase was assigned to `infra-engineer` and that was wrong.** T005 writes
+tests; ADR-0144 splits phase 4 in two precisely so the engineer who makes a test
+pass is not the one who wrote it — *"`test-writer` writes tests only… the
+engineer receives that output as its brief and may not edit the tests to pass."*
+An engineer holding both halves can reach green by moving the assertion, and
+nobody downstream can tell that it happened. Corrected at phase 4b (2026-09-08),
+which stopped after US1 for this reason; **route T005 to a `test-writer` and hand
+its verbatim output to the engineer who does T006.**
 
 ### T005 [US2] Write the two failing header tests and observe them red
 
@@ -197,6 +243,10 @@ already does):
 Run the trait; capture the two failures verbatim.
 
 **Done when**: both fail showing the current bare `Finished` header.
+
+---
+
+## Phase 4c — US2: the section header agrees with the cause line (infra-engineer)
 
 ### T006 [US2] Add the two `DescribeWhySelected` arms
 
@@ -298,8 +348,13 @@ PR body must carry, in this order:
 `Co-Authored-By` footer and no session trailer** (ADR-0086) — the PR *body* still
 carries the Claude Code line.
 
-Each commit builds on its own (ADR-0087): T002 adds an unused member, T003 and
-T005 add failing tests, T004 and T006 make them pass. Verify with
+Each commit builds on its own (ADR-0087). **Not the sequence this task first
+described** — "T002 adds an unused member" is the one arrangement that would have
+broken the rule it was written to keep: `Directory.Build.props` sets
+`TreatWarningsAsErrors` for `Release`, so a commit whose only change is a private
+member nothing reads does not build. As shipped: T001 adds the two failing tests,
+T002+T004 add the set and its call site together, T005 adds US2's failing tests,
+T006 makes them pass. Verify with
 `git rebase --exec 'dotnet build -c Release' origin/develop` before pushing —
 four specs broke this rule in the last day.
 

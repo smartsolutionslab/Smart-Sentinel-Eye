@@ -64,7 +64,8 @@ is byte-identical for the input it already handles.
 - **Population A (unchanged)**: `!IsHealthy(…) && ExitedNonZero(…)`
   → `"<name> exited with code <N>"`, joined by `"; "`, closed with
   `" — a non-zero exit is a failure, not a clean finish."`
-- **Population B (new)**: `!IsHealthy(…) && !ExitedNonZero(…) && EndedDuringStartup(state)`
+- **Population B (new)**: `!IsHealthy(…) && !ExitedNonZero(…)` and the state is
+  in `EndedStates`
   → `"<name> reached <state> with exit code 0"` or
   `"<name> reached <state> and no exit code was recorded"`, closed with
   `" — a long-running resource that ends during startup is a failed boot, not a clean finish."`
@@ -75,7 +76,13 @@ so a resource is named at most once and the ordering claim
 Where both populations are non-empty, A's sentence goes first — the non-zero exit
 is the stronger signal, and it is the sentence readers already recognise.
 
-### 2. `EndedDuringStartup` — the new predicate
+### 2. `EndedStates` — the narrower question
+
+**Shipped as the set, without the `EndedDuringStartup` wrapper this section
+named.** There is one call site, inside `FormatLikelyCause`, and a named
+predicate around a single `Contains` at a single call site is the indirection
+ADR-0036 asks not to add. Everything below still holds — the set, its exclusions,
+and the `OrdinalIgnoreCase` comparison — because none of that was the wrapper.
 
 ```
 Finished | Exited | Terminated   →  the process ran and ended   →  a cause
@@ -90,8 +97,12 @@ The cause line asks a narrower question: "did this resource *end*?" Naming nine
 `FailedToStart` dependents at the top of the report is exactly the noise #2061
 removed, and spec 084's `StatesFromTheRunThatMotivatedThis()` is nine of them.
 
-Two predicates over overlapping state sets is how a guard drifts — so the new one
-is defined **as a subset of the existing array**, not as a second literal list:
+Two predicates over overlapping state sets is how a guard drifts — so the new set
+is written as `FatalStartupStates` **minus** the two states that disqualify a
+resource from being a cause, with a doc comment saying so. It is a second array
+and not a computed subset: three entries spelled out read better than an
+`Except`, and the doc comment carries the relationship that the code would
+otherwise have to assert.
 
 ```csharp
 private static readonly string[] EndedStates =
@@ -126,7 +137,10 @@ running state") are byte-identical.
 
 ### 4. Nothing else
 
-No new field beyond `EndedStates`. No new method beyond `EndedDuringStartup`.
+No new field beyond `EndedStates`. Two new private statics, both extracted for
+ADR-0084's 30-LOC method limit rather than for reuse: `UnhealthyResources`, the
+`!IsHealthy` ordering both populations share, and `DescribeEnd`, population B's
+per-resource clause.
 No call site changes: `FormatTimeoutMessage` already calls `FormatLikelyCause`
 and `FormatFailedResourceReport` already calls `DescribeWhySelected`.
 
