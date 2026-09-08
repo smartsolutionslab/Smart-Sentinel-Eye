@@ -46,7 +46,12 @@ public sealed class PlantFloor(AspireFixture aspire)
         payload = new { cycleTime },
     });
 
-    public async Task PublishRawAsync(string payload)
+    /// <summary>
+    /// <paramref name="topic"/> defaults to the PLC station every caller before
+    /// spec 101 used. A parameter rather than a sixth copy of the
+    /// mint-connect-publish block for an inference topic (plan 101, task T002).
+    /// </summary>
+    public async Task PublishRawAsync(string payload, string? topic = null)
     {
         string jwt = await SimulatorTokenAsync();
 
@@ -64,7 +69,7 @@ public sealed class PlantFloor(AspireFixture aspire)
 
         MqttClientPublishResult published = await client.PublishAsync(
             new MqttApplicationMessageBuilder()
-                .WithTopic(Topic)
+                .WithTopic(topic ?? Topic)
                 .WithPayload(payload)
                 .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
                 .Build());

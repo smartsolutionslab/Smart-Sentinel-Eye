@@ -1,0 +1,192 @@
+{
+  "schemaVersion": "sse.inference.v2",
+  "capturedAtNanos": 1757318400123456789,
+  "capturedAtLocal": "2026-09-08T10:00:00.123+02:00",
+  "sequence": 481207,
+  "line": "Kühlmittel-Linie 3",
+  "site": {
+    "fab": "munich",
+    "hall": "B",
+    "cell": "B-14",
+    "shift": "B"
+  },
+  "camera": {
+    "id": "cam-0447",
+    "firmware": "4.11.2",
+    "resolution": [3840, 2160],
+    "fps": 24.0,
+    "exposureMicros": 4500,
+    "lensCorrection": 1.10
+  },
+  "model": {
+    "name": "yolo-v8m-fab",
+    "revision": "2026-07-14T09:22:11Z",
+    "quantisation": "int8",
+    "inputShape": [1, 3, 1280, 1280],
+    "classes": ["person", "forklift", "pallet", "spill", "helmet", "cart"]
+  },
+  "thresholds": {
+    "confidence": 0.1000,
+    "iou": 0.4500,
+    "nmsTopK": 300,
+    "minBoxArea": 512
+  },
+  "timings": {
+    "preprocessMillis": 3.20,
+    "inferMillis": 18.40,
+    "postprocessMillis": 2.10,
+    "totalMillis": 23.70
+  },
+  "detections": [
+    {
+      "class": "person",
+      "classIndex": 0,
+      "confidence": 0.9412,
+      "bbox": [812, 431, 274, 519],
+      "track": {
+        "id": "trk-0f3a91",
+        "ageFrames": 137,
+        "history": [[110, 46], [111, 47], [112, 48]]
+      },
+      "attributes": { "helmet": true, "vest": false, "facingCamera": true },
+      "zone": "Prüfstation-West"
+    },
+    {
+      "class": "forklift",
+      "classIndex": 1,
+      "confidence": 0.8867,
+      "bbox": [1904, 1122, 660, 402],
+      "track": {
+        "id": "trk-4b17c2",
+        "ageFrames": 912,
+        "history": [[1450, 980], [1436, 991], [1421, 1003], [1407, 1014]]
+      },
+      "attributes": { "loaded": true, "beaconOn": true, "speedMetresPerSecond": 1.35 },
+      "zone": "Fahrweg-Nord"
+    },
+    {
+      "class": "pallet",
+      "classIndex": 2,
+      "confidence": 0.7734,
+      "bbox": [268, 1740, 512, 288],
+      "track": {
+        "id": "trk-9ce004",
+        "ageFrames": 41,
+        "history": [[520, 1880], [520, 1881]]
+      },
+      "attributes": { "stackHeight": 3, "wrapped": false, "labelVisible": true },
+      "zone": "Pufferzone-Süd"
+    },
+    {
+      "class": "person",
+      "classIndex": 0,
+      "confidence": 0.6519,
+      "bbox": [3211, 604, 198, 471],
+      "track": {
+        "id": "trk-2ad8fe",
+        "ageFrames": 8,
+        "history": [[3300, 840], [3306, 838], [3312, 835]]
+      },
+      "attributes": { "helmet": false, "vest": true, "facingCamera": false },
+      "zone": "Kühlmittel-Linie 3"
+    },
+    {
+      "class": "spill",
+      "classIndex": 3,
+      "confidence": 0.5182,
+      "bbox": [1502, 1908, 344, 160],
+      "track": {
+        "id": "trk-77b310",
+        "ageFrames": 3,
+        "history": [[1670, 1990]]
+      },
+      "attributes": { "areaSquareMetres": 0.4200, "medium": "Kühlschmierstoff", "escalate": true },
+      "zone": "Kühlmittel-Linie 3"
+    },
+    {
+      "class": "cart",
+      "classIndex": 5,
+      "confidence": 0.4906,
+      "bbox": [948, 1301, 233, 197],
+      "track": {
+        "id": "trk-c51a68",
+        "ageFrames": 220,
+        "history": [[1060, 1400], [1052, 1404], [1044, 1409], [1035, 1413], [1027, 1418]]
+      },
+      "attributes": { "moving": false, "occluded": true, "dwellSeconds": 184.50 },
+      "zone": "Fahrweg-Nord"
+    },
+    {
+      "class": "helmet",
+      "classIndex": 4,
+      "confidence": 0.4413,
+      "bbox": [860, 438, 74, 62],
+      "track": {
+        "id": "trk-0f3a91-h",
+        "ageFrames": 137,
+        "history": [[897, 469], [898, 470]]
+      },
+      "attributes": { "colour": "weiß", "wornBy": "trk-0f3a91", "certified": true },
+      "zone": "Prüfstation-West"
+    },
+    {
+      "class": "person",
+      "classIndex": 0,
+      "confidence": 0.3078,
+      "bbox": [122, 706, 151, 388],
+      "track": {
+        "id": "trk-e60b45",
+        "ageFrames": 2,
+        "history": [[198, 900], [201, 897]]
+      },
+      "attributes": { "helmet": true, "vest": true, "facingCamera": false },
+      "zone": "Tor 7 & Rampe"
+    },
+    {
+      "class": "pallet",
+      "classIndex": 2,
+      "confidence": 0.2864,
+      "bbox": [2544, 1666, 470, 262],
+      "track": {
+        "id": "trk-31de07",
+        "ageFrames": 76,
+        "history": [[2780, 1800], [2776, 1802], [2771, 1805]]
+      },
+      "attributes": { "stackHeight": 1, "wrapped": true, "labelVisible": false },
+      "zone": "Pufferzone-Süd"
+    },
+    {
+      "class": "forklift",
+      "classIndex": 1,
+      "confidence": 0.2291,
+      "bbox": [3402, 1408, 398, 311],
+      "track": {
+        "id": "trk-8a2f60",
+        "ageFrames": 455,
+        "history": [[3600, 1560], [3588, 1566], [3575, 1571], [3561, 1577]]
+      },
+      "attributes": { "loaded": false, "beaconOn": false, "speedMetresPerSecond": 0.0 },
+      "zone": "Tor 7 & Rampe"
+    },
+    {
+      "class": "cart",
+      "classIndex": 5,
+      "confidence": 0.1907,
+      "bbox": [640, 1044, 188, 166],
+      "track": {
+        "id": "trk-bd9042",
+        "ageFrames": 31,
+        "history": [[730, 1120], [733, 1118], [737, 1115], [740, 1112]]
+      },
+      "attributes": { "moving": true, "occluded": false, "dwellSeconds": 12.00 },
+      "zone": "Fördergurt-Ost"
+    }
+  ],
+  "snapshot": {
+    "url": "s3://sse-inference-eu-central/munich/cam-0447/2026-09-08/frame-481207.jpg?versionId=Zt9kQr1LmA&response-content-type=image%2Fjpeg&x-amz-expires=900",
+    "bytes": 512344,
+    "sha256": "9f2c1d7ab340e5586c0b41f9d2ea7c93518d64af0c7b12e39d84a55fbc6103d7",
+    "retainDays": 30
+  },
+  "tags": ["shift-b", "line-3", "auto-review"]
+}
