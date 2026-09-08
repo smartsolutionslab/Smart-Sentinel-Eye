@@ -57,6 +57,10 @@ T001 ──┬── T002 ─── T004 ─┬── T007 ─── T008 ──
        └── T005 ─── T006 ─┘
 ```
 
+- **The lower leg did not run.** T005 and T006 (US2) are not in this PR, so
+  T007–T009 follow T004 alone. Phase 4b stopped after US1 because T005 needs a
+  `test-writer` (see that phase's note), and phase 6 confirmed the split rather
+  than closing it. US2 remains a task, not a shipped one.
 - **T001 is foundational and blocks everything.** It is the red observation; the
   engineer's brief is its verbatim output.
 - **T003 was folded into T001** at phase 4a and no longer appears in the graph:
@@ -333,7 +337,13 @@ recompiled.
 
 PR body must carry, in this order:
 
-1. T001's verbatim red block, and T005's.
+1. T001's verbatim red block. **Not T005's — this PR is US1 only.** T005 and
+   T006 were not done (`DescribeWhySelected` still has its two original arms),
+   so US2 produces no red here and there is nothing to quote. This item asked
+   for T005's block until phase 6 (2026-09-08); a PR body written against it
+   would have had to fabricate a block or silently drop a required item, and
+   the second is how a checklist stops being read. When US2 ships, it ships
+   with its own red, written by a `test-writer` per that phase's own note.
 2. The T003 assertion inversion, called out under its own heading, with the
    sentence *"this is a behaviour-changing slice; the assertion moved because the
    behaviour did"*.
@@ -343,6 +353,10 @@ PR body must carry, in this order:
 6. The two out-of-scope statements a reviewer will otherwise ask for: the fast
    fail is #2146's and needs an ADR (ADR-0144 forbids writing one here), and
    neither of #1930's two leads was changed because neither is supportable.
+7. The two phase-6 corrections to the shipped code, each with the counterfactual
+   that proved its test: rebuilders that *end* were eligible to be named as the
+   cause, and the closing clause asserted "long-running" about a resource the
+   predicate never checked. Plan §1 carries both.
 
 `gh pr create --base develop`. Conventional Commits (ADR-0030). **No
 `Co-Authored-By` footer and no session trailer** (ADR-0086) — the PR *body* still
@@ -352,9 +366,12 @@ Each commit builds on its own (ADR-0087). **Not the sequence this task first
 described** — "T002 adds an unused member" is the one arrangement that would have
 broken the rule it was written to keep: `Directory.Build.props` sets
 `TreatWarningsAsErrors` for `Release`, so a commit whose only change is a private
-member nothing reads does not build. As shipped: T001 adds the two failing tests,
-T002+T004 add the set and its call site together, T005 adds US2's failing tests,
-T006 makes them pass. Verify with
+member nothing reads does not build. As shipped, in order and none of them US2's:
+T001 adds the two failing tests; T002+T004 add the set and its call site
+together; phase 4b's docs commit; phase 6's code corrections with their three
+tests; phase 6's comment corrections; this artefact commit. **T005 and T006 are
+not in this PR** — the sequence here named them as shipped before they were,
+which is the defect the 4b docs commit exists to record. Verify with
 `git rebase --exec 'dotnet build -c Release' origin/develop` before pushing —
 four specs broke this rule in the last day.
 

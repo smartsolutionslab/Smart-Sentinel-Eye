@@ -64,11 +64,31 @@ is byte-identical for the input it already handles.
 - **Population A (unchanged)**: `!IsHealthy(…) && ExitedNonZero(…)`
   → `"<name> exited with code <N>"`, joined by `"; "`, closed with
   `" — a non-zero exit is a failure, not a clean finish."`
-- **Population B (new)**: `!IsHealthy(…) && !ExitedNonZero(…)` and the state is
-  in `EndedStates`
+- **Population B (new)**: `!IsHealthy(…) && !ExitedNonZero(…)`, the name is not a
+  `-rebuilder`, and the state is in `EndedStates`
   → `"<name> reached <state> with exit code 0"` or
   `"<name> reached <state> and no exit code was recorded"`, closed with
-  `" — a long-running resource that ends during startup is a failed boot, not a clean finish."`
+  `" — a resource that ends while the boot is still waiting for it is a failed boot, not a clean finish."`
+
+  **The rebuilder clause and that closing wording are phase-6 corrections, not
+  the shipped-first design.** Each removed a claim the predicate had not checked:
+
+  - **The rebuilder exclusion.** `IsHealthy` exempts rebuilders only in
+    `NotStarted`, so one that reaches `Finished` was eligible to be named — and
+    "automation-rebuilder reached Finished and no exit code was recorded" as the
+    report's first sentence is #1918's real failure buried under idle
+    rebuilders, arriving through the one line #2061 built to be trusted.
+    `The_real_failure_is_not_buried_under_idle_rebuilders` covers `NotStarted`
+    only and does not catch it. Population **A** deliberately keeps rebuilders:
+    #2061's rule is that an exemption ends where a non-zero exit begins. And the
+    exclusion is narrower than `IsHealthy`'s on purpose — it drops a rebuilder
+    from the *sentence*, not from the failure section, which #1918 wanted kept.
+  - **The closing clause.** `IsHealthy` spells the one-shot exemption for
+    `Finished` only, while `EndedStates` also carries `Exited` — so `migrations`
+    in `Exited` with code 0 reached this sentence and was told it was
+    long-running, the one thing known about it that is false. Naming it stays
+    right; the unverified predicate goes. `IsHealthy` stays on the untouched
+    list above — widening it would drop rebuilders from the failure section too.
 
 The two sets are disjoint by construction (`ExitedNonZero` is the discriminator),
 so a resource is named at most once and the ordering claim
