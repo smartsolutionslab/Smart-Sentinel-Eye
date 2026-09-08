@@ -69,14 +69,48 @@ namespace SmartSentinelEye.Integration.Tests.Automation;
 /// </para>
 ///
 /// <para>
-/// <b>Why the count assertions run before the percentile.</b> A latency test's
-/// characteristic failure is passing while measuring a path that skipped the
-/// work — a stubbed evaluator or a short-circuited predicate makes the figure
-/// <i>better</i>. So the row count and the correct-value count are asserted
-/// first, and the SQL <c>COALESCE</c>s to <c>-1</c> rather than <c>0</c>, because
-/// a zero over an empty population is a perfect score for a journey nobody
-/// watched. Weakening either count to <c>ShouldBeGreaterThan(0)</c> would make
-/// that failure silent.
+/// <b>What each assertion actually catches.</b> A latency test's characteristic
+/// failure is passing while measuring a path that skipped the work — a stubbed
+/// evaluator makes the figure <i>better</i>. Three things stand between this file
+/// and a green run on a pipeline that did nothing, and they are not
+/// interchangeable:
+/// </para>
+/// <list type="number">
+///   <item><description>
+///     <b>The per-iteration wait</b> is first and strictest. It observes every
+///     effect individually, so a stubbed evaluator never reaches the SQL: it times
+///     out at iteration 0 of the warm-up. Observed, not assumed — spec 106's M1
+///     counterfactual died exactly there, two minutes before any row was counted.
+///   </description></item>
+///   <item><description>
+///     <b>Assertion (1)</b>, the row count, catches what survives that wait: a
+///     <c>WHERE</c> clause that does not match the run's rows, or audit rows still
+///     unwritten when <c>SettleAsync</c>'s deadline expired.
+///   </description></item>
+///   <item><description>
+///     <b>Assertion (2)</b>, the expected-value count, catches <c>RootIngestedAt</c>
+///     no longer being forwarded — the one failure that leaves the row count
+///     correct, empties every delta, and would otherwise hand the percentile a
+///     population of <c>NULL</c>.
+///   </description></item>
+/// </list>
+///
+/// <para>
+/// <c>COALESCE(…, -1)</c> is a <b>legible</b> sentinel, not a safety net:
+/// <c>-1 ≤ 100</c> is true, so the budget assertion cannot see it. That is why the
+/// p95 is bounded <i>below</i> at zero as well as above at the budget. And
+/// weakening assertion (1) to <c>ShouldBeGreaterThan(0)</c> would hide a
+/// <i>partially</i> corrupted population — under a total failure the count is 0,
+/// which even the weakened form catches.
+/// </para>
+///
+/// <para>
+/// <b>What none of them covers: the predicate.</b> The rule's predicate is
+/// <c>$.payload.cycleTime &lt;= 30</c> and this file drives <c>cycleTime</c> through
+/// <c>1..30</c>, so it is true for every event published here. An evaluator that
+/// skipped predicate evaluation entirely would produce identical output and a
+/// <i>better</i> figure. The value <i>expression</i> is covered by assertion (2);
+/// the predicate is not, and the gap is written down rather than implied.
 /// </para>
 /// </summary>
 [Collection(AspireCollection.Name)]
@@ -97,6 +131,15 @@ public class AcceptToDecideLatencyTests(AspireFixture aspire, ITestOutputHelper 
     /// runner beside a Postgres, a RabbitMQ, a Keycloak and eight services, a
     /// figure at the real budget would either flake or be quoted. Four times it
     /// catches an order-of-magnitude regression without policing the budget.
+    ///
+    /// <para>
+    /// <b>If this ever flakes, raise <see cref="GuardMeasuredIterations"/> rather
+    /// than this bound.</b> At n=5 <c>percentile_cont(0.95)</c> is the near-maximum
+    /// of five, and the guard warms on its own rule, trigger kind and variable — so
+    /// any first-write cost lands in sample 0 of those five. Observed at 28–31 ms
+    /// against 400, roughly 13× headroom, so a flake here would be evidence the
+    /// sample is too small, not that the bound is too tight.
+    /// </para>
     /// </summary>
     private const double GuardBudgetMilliseconds = 400;
 
@@ -108,6 +151,30 @@ public class AcceptToDecideLatencyTests(AspireFixture aspire, ITestOutputHelper 
     /// returns instantly and gates nothing.
     /// </summary>
     private const int CycleTimeValues = 30;
+
+    /// <summary>
+    /// The span written out beside every figure, so a number cannot travel without
+    /// its definition (FR-008).
+    /// </summary>
+    private const string SpanDefinition =
+        "Span: EventIngestion accepting the plant-floor event (Metadata.RootIngestedAt) → "
+        + "Automation deciding its action (Metadata.OccurredAt). This is NOT NFR-001's "
+        + "consume→published span: it overshoots at the head (ingest dispatch, outbox "
+        + "release, one broker hop, deserialise) and undershoots at the tail (the publish, "
+        + "Wolverine's flush and the broker send are after the stamp).";
+
+    /// <summary>The measurement's prefix. The only line in this repository that is a figure for this span.</summary>
+    private const string MeasurementArtefact = "[accept→decide]";
+
+    /// <summary>
+    /// The guard's prefix, deliberately <b>not</b> the measurement's. The guard is
+    /// the half of this file CI runs, so this is the only accept→decide line that
+    /// will ever appear in a CI log — and it is the one most likely to be found and
+    /// quoted. A p95 over five samples is the near-maximum of five, at four times
+    /// the budget. The label says so where the number is.
+    /// </summary>
+    private const string GuardArtefact =
+        "[accept→decide GUARD — not a measurement; n=5, bound is 4× the budget]";
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(100);
 
@@ -172,7 +239,8 @@ public class AcceptToDecideLatencyTests(AspireFixture aspire, ITestOutputHelper 
     [Fact]
     [Trait("Category", "Measurement")]
     public Task Accept_to_decide_p95_stays_within_the_automation_leg_budget() =>
-        MeasureAsync(WarmupIterations, MeasuredIterations, BudgetMilliseconds, CancellationToken.None);
+        MeasureAsync(
+            WarmupIterations, MeasuredIterations, BudgetMilliseconds, MeasurementArtefact, CancellationToken.None);
 
     /// <summary>
     /// US2. The same helper, cheap enough for CI and loose enough not to flake
@@ -182,10 +250,18 @@ public class AcceptToDecideLatencyTests(AspireFixture aspire, ITestOutputHelper 
     [Fact]
     public Task Accept_to_decide_has_not_regressed_by_an_order_of_magnitude() =>
         MeasureAsync(
-            GuardWarmupIterations, GuardMeasuredIterations, GuardBudgetMilliseconds, CancellationToken.None);
+            GuardWarmupIterations,
+            GuardMeasuredIterations,
+            GuardBudgetMilliseconds,
+            GuardArtefact,
+            CancellationToken.None);
 
     private async Task MeasureAsync(
-        int warmup, int measured, double budgetMilliseconds, CancellationToken cancellationToken)
+        int warmup,
+        int measured,
+        double budgetMilliseconds,
+        string artefact,
+        CancellationToken cancellationToken)
     {
         using HttpClient variables = await aspire.CreateAdminClientAsync("system-variables", cancellationToken);
         using HttpClient rules = await aspire.CreateAdminClientAsync("automation", cancellationToken);
@@ -219,7 +295,11 @@ public class AcceptToDecideLatencyTests(AspireFixture aspire, ITestOutputHelper 
             await DriveAsync(variables, warmKind, warmVariable, index, EffectDeadline, cancellationToken);
         }
 
-        output.WriteLine($"warmed up over {warmup} events on {warmVariable}");
+        // The readiness event is index 0 and the loop adds `warmup` more, so the
+        // warm-up is warmup + 1 events. Printed as it is rather than as the
+        // constant, in a file whose subject is figures meaning what they say.
+        output.WriteLine(
+            $"warmed up over {warmup + 1} events on {warmVariable} — one readiness event, then {warmup}");
 
         HashSet<string> expectedValues = new(StringComparer.Ordinal);
         for (int index = 0; index < measured; index++)
@@ -242,13 +322,15 @@ public class AcceptToDecideLatencyTests(AspireFixture aspire, ITestOutputHelper 
         span.TotalRows.ShouldBe(
             measured,
             $"{span.TotalRows} of {measured} action events reached the audit log for "
-            + $"'{measuredVariable}'. A low count means the pipeline did not fire — not that "
-            + "it was fast. Look at the rule cache, the handler and the broker before reading "
-            + "any figure below.");
+            + $"'{measuredVariable}'. The pipeline applied every effect — the per-iteration "
+            + "wait observed each one individually, or the run would have failed there — so a "
+            + "low count here is audit lag past the settle deadline, or a filter that does not "
+            + "match the rows. Check payload->>'Name' before the broker.");
 
-        // (2) the trap. A stubbed evaluator, a short-circuited predicate or a
-        // stale cache hit all make the *latency* better, so correctness is
-        // asserted separately and before the figure.
+        // (2) the one failure that survives the per-iteration wait with the row
+        // count intact: RootIngestedAt no longer forwarded. Every delta is then
+        // NULL, count(*) still equals `measured`, and the percentile would be taken
+        // over an empty population.
         span.RowsWithExpectedValue.ShouldBe(
             measured,
             $"{span.RowsWithExpectedValue} of {span.TotalRows} action events carried both a "
@@ -266,17 +348,20 @@ public class AcceptToDecideLatencyTests(AspireFixture aspire, ITestOutputHelper 
             CultureInfo.InvariantCulture,
             $"n={span.TotalRows} min={span.Min:F1} p50={span.P50:F1} p95={span.P95:F1} p99={span.P99:F1} max={span.Max:F1} ms — budget {budgetMilliseconds:F0} ms");
 
-        output.WriteLine(
-            $"[accept→decide] {figures}. "
-            + "Span: EventIngestion accepting the plant-floor event (Metadata.RootIngestedAt) → "
-            + "Automation deciding its action (Metadata.OccurredAt). This is NOT NFR-001's "
-            + "consume→published span: it overshoots at the head (ingest dispatch, outbox "
-            + "release, one broker hop, deserialise) and undershoots at the tail (the publish, "
-            + "Wolverine's flush and the broker send are after the stamp).");
+        output.WriteLine($"{artefact} {figures}. {SpanDefinition}");
 
         string breach = string.Create(
             CultureInfo.InvariantCulture,
             $"the p95 of the accept→decide span was {span.P95:F1} ms over {span.TotalRows} events, against a budget of {budgetMilliseconds:F0} ms");
+
+        // -1 ≤ budget is true, so the COALESCE sentinel is unmistakable to a human
+        // reading the line above and invisible to the assertion below. This is what
+        // makes it fail.
+        span.P95.ShouldBeGreaterThanOrEqualTo(
+            0,
+            $"{breach}, which is the SQL's empty-population sentinel rather than a fast "
+            + "journey: no row carried a RootIngestedAt the cast could read, so every delta "
+            + "was NULL.");
 
         span.P95.ShouldBeLessThanOrEqualTo(
             budgetMilliseconds,
@@ -437,9 +522,13 @@ public class AcceptToDecideLatencyTests(AspireFixture aspire, ITestOutputHelper 
     /// </para>
     ///
     /// <para>
-    /// <c>COALESCE(…, -1)</c> and never <c>COALESCE(…, 0)</c>: an empty
-    /// population yields <c>NULL</c>, and a zero there is a perfect score for a
-    /// journey nobody watched. <c>-1</c> cannot be mistaken for a good figure.
+    /// <c>COALESCE(…, -1)</c> and never <c>COALESCE(…, 0)</c>: an empty population
+    /// yields <c>NULL</c>, and a zero there is a perfect score for a journey nobody
+    /// watched. <c>-1</c> is <b>legible</b> — no reader mistakes it for a good
+    /// figure — but it is not self-enforcing, because <c>-1</c> also clears the
+    /// budget. The assertion that makes it fail is the lower bound beside the
+    /// budget in <c>MeasureAsync</c>; this <c>COALESCE</c> only makes the diagnosis
+    /// obvious once it has.
     /// <c>percentile_cont</c> rather than an index into a sorted list, matching
     /// <c>IngestSpanMeasurement.PercentilesAsync</c> — two spellings of "p95" in
     /// one repository is how two figures come to disagree.
