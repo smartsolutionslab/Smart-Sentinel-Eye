@@ -52,13 +52,23 @@ public class AspireFixtureReportSelectionTests
     }
 
     [Fact]
-    public void A_resource_with_a_captured_null_exit_code_is_not_named_as_a_cause()
+    public void A_resource_with_a_captured_null_exit_code_is_named_without_inventing_one()
     {
-        // `automation` carries the assertion: it is unhealthy, so the health
-        // filter does not excuse it, and its exit code was never observed, so
-        // there is no non-zero exit to name. Reading the null as non-zero would
-        // print "automation exited with code " — a cause line with no code in
-        // it. The two `Running` entries are the ordinary case alongside it.
+        // #1930's observation, spelled out: `automation` ends `Finished` while
+        // the others reach `Running`, and its exit code was never captured.
+        //
+        // This assertion is inverted (spec 098). It used to require
+        // `FormatLikelyCause` to stay *empty* here, and the reason it gave was
+        // a wording problem, not a suppression judgement: reading the null as
+        // non-zero would print "automation exited with code " — a cause line
+        // with no code in it. That finding is kept, and the new sentence
+        // honours it by not using the phrase at all: it says the resource
+        // reached a state and that no exit code was recorded, so there is
+        // never a number-shaped hole to fill.
+        //
+        // The selection half is unchanged — the failure section already names
+        // `automation`, and a cause line must point at a section that exists.
+        // The two `Running` entries are the ordinary case alongside it.
         Dictionary<string, string> states = new(StringComparer.Ordinal)
         {
             ["automation"] = "Finished",
@@ -73,7 +83,53 @@ public class AspireFixtureReportSelectionTests
         };
 
         AspireFixture.SelectResourcesToReport(states, exitCodes).ShouldBe(["automation"]);
-        AspireFixture.FormatLikelyCause(states, exitCodes).ShouldBeEmpty();
+
+        string cause = AspireFixture.FormatLikelyCause(states, exitCodes);
+
+        cause.ShouldStartWith("Likely cause: ");
+        cause.ShouldContain("automation");
+        cause.ShouldContain("Finished");
+        cause.ShouldContain("no exit code");
+        cause.ShouldNotContain("exited with code");
+        cause.ShouldNotContain("api-gateway");
+        cause.ShouldNotContain("camera-catalog");
+    }
+
+    [Fact]
+    public void A_long_running_resource_that_finished_with_exit_code_zero_is_named_as_a_cause()
+    {
+        // #1930's other branch — the one the issue's own analysis singles out:
+        // "exit 0 → graceful stop. Nothing in the app asks for one, so look at
+        // the orchestrator." Exit code 0 changes *where you look next*; it does
+        // not change *what broke*. A long-running service sitting in a terminal
+        // state while the boot timed out waiting for it is the cause of that
+        // timeout, whatever number it exited with.
+        //
+        // The non-zero wording must not be reused: "a non-zero exit is a
+        // failure" is a false sentence over exit code 0, and #2061's cause line
+        // is the sentence readers already recognise.
+        Dictionary<string, string> states = new(StringComparer.Ordinal)
+        {
+            ["automation"] = "Finished",
+            ["api-gateway"] = "Running",
+            ["camera-catalog"] = "Running",
+        };
+        Dictionary<string, int?> exitCodes = new(StringComparer.Ordinal)
+        {
+            ["automation"] = 0,
+            ["api-gateway"] = null,
+            ["camera-catalog"] = null,
+        };
+
+        string cause = AspireFixture.FormatLikelyCause(states, exitCodes);
+
+        cause.ShouldStartWith("Likely cause: ");
+        cause.ShouldContain("automation");
+        cause.ShouldContain("Finished");
+        cause.ShouldContain("exit code 0");
+        cause.ShouldNotContain("a non-zero exit");
+        cause.ShouldNotContain("api-gateway");
+        cause.ShouldNotContain("camera-catalog");
     }
 
     [Fact]
