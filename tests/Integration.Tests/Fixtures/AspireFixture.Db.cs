@@ -258,6 +258,39 @@ public sealed partial class AspireFixture
         }
     }
 
+    /// <summary>
+    /// Repoints an SFU path at a different RTSP source, leaving
+    /// StreamDistribution's own record of the camera untouched — which is what
+    /// makes it a camera going dark rather than a reconfiguration. The same
+    /// call production's <c>MediaMtxRtspGateway.RepointPathAsync</c> issues.
+    ///
+    /// <para>
+    /// Throws on a non-success status. This is a test <strong>arrangement</strong>:
+    /// a silently failed repoint would leave the source answering, and the
+    /// assertion that follows would be observing an unchanged stream.
+    /// </para>
+    /// </summary>
+    public async Task RepointMediaMtxPathAsync(
+        string pathName, string rtspSourceUrl, CancellationToken cancellationToken = default)
+    {
+        using HttpClient client = App.CreateHttpClient("mediamtx", "api");
+
+        using HttpResponseMessage response = await SendMediaMtxWithRetryAsync(
+            () => client.PatchAsJsonAsync(
+                $"/v3/config/paths/patch/{pathName}",
+                new { source = rtspSourceUrl },
+                cancellationToken),
+            cancellationToken).ConfigureAwait(false);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException(
+                $"Repointing MediaMTX path '{pathName}' at '{rtspSourceUrl}' returned "
+                + $"HTTP {(int)response.StatusCode}. The path was not repointed, so the "
+                + "assertion that follows would be observing an unchanged stream.");
+        }
+    }
+
     // CI-only flake (#964): requests to the MediaMTX API intermittently hit a
     // transient connection error on the Linux runner even though the SFU is up
     // (its boot probe in WaitForMediaMtxAsync already passed). Retry a few times
