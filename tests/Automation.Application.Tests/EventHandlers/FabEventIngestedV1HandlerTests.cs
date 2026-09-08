@@ -51,6 +51,18 @@ public class FabEventIngestedV1HandlerTests
         return rule;
     }
 
+    private static RuleAggregate ActiveHighlightRule(
+        string name, Guid overlay, int durationMs, DateTimeOffset createdAt)
+    {
+        RuleAggregate rule = new RuleBuilder()
+            .WithName(name)
+            .WithAction(RuleAction.HighlightOverlay.From(overlay, durationMs))
+            .WithClock(createdAt)
+            .Build();
+        rule.Publish(new FakeClock(createdAt.AddMinutes(1)));
+        return rule;
+    }
+
     [Fact]
     public async Task Matching_event_publishes_SystemVariableValueRequestedV1_with_the_causing_event_id()
     {
@@ -105,6 +117,35 @@ public class FabEventIngestedV1HandlerTests
             .ShouldHaveSingleItem();
         published.OverlayIdentifier.ShouldBe(overlay);
         published.DurationMs.ShouldBe(10_000);
+    }
+
+    [Fact]
+    public async Task Two_highlight_actions_on_the_same_overlay_both_publish()
+    {
+        Guid overlay = Guid.CreateVersion7();
+        InMemoryRuleCache cache = new();
+        // Distinct names, so the cache keeps both rather than replacing one.
+        cache.Upsert(ActiveHighlightRule("highlight-rule-a", overlay, 5_000, BaseMoment));
+        cache.Upsert(ActiveHighlightRule(
+            "highlight-rule-b", overlay, 12_000, BaseMoment.AddMinutes(5)));
+
+        FakeEventBus bus = new();
+        FabEventIngestedV1Handler handler = HandlerFor(cache, bus);
+
+        FabEventIngestedV1 ingested = PlcCycleStart();
+        await handler.Handle(ingested, CancellationToken.None);
+
+        // Both windows ride the bus; the kiosk ORs them by later expiry
+        // (CellPage.test.tsx:491), so the producer emits both rather than
+        // picking. The shared CausingEventIdentifier is what tells "two
+        // rules, one event" from "one rule, two events".
+        OverlayHighlightRequestedV1[] published = bus.Published
+            .OfType<OverlayHighlightRequestedV1>().ToArray();
+        published.Length.ShouldBe(2);
+        published.Select(p => p.OverlayIdentifier).ShouldBe([overlay, overlay]);
+        published.Select(p => p.DurationMs).ShouldBe([5_000, 12_000]);
+        published.Select(p => p.CausingEventIdentifier)
+            .ShouldBe([ingested.EventIdentifier, ingested.EventIdentifier]);
     }
 
     [Fact]
