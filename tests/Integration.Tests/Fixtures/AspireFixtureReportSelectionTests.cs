@@ -133,6 +133,83 @@ public class AspireFixtureReportSelectionTests
     }
 
     [Fact]
+    public void A_one_shot_that_ended_is_named_without_being_called_long_running()
+    {
+        // `IsHealthy` spells the one-shot exemption for `Finished` only, so a
+        // `migrations` in `Exited` is unhealthy and reaches the cause line —
+        // which then said "a long-running resource that ends…" about the one
+        // resource in the stack that is known not to be. Naming it is right;
+        // the boot was waiting on it. The predicate never asked whether it was
+        // long-running, so the sentence must not answer.
+        Dictionary<string, string> states = new(StringComparer.Ordinal)
+        {
+            ["migrations"] = "Exited",
+            ["camera-catalog"] = "Running",
+        };
+        Dictionary<string, int?> exitCodes = new(StringComparer.Ordinal) { ["migrations"] = 0 };
+
+        string cause = AspireFixture.FormatLikelyCause(states, exitCodes);
+
+        cause.ShouldContain("migrations reached Exited with exit code 0");
+        cause.ShouldNotContain("long-running");
+    }
+
+    [Fact]
+    public void A_rebuilder_that_ended_is_not_named_as_the_likely_cause()
+    {
+        // `The_real_failure_is_not_buried_under_idle_rebuilders` covers
+        // `NotStarted`, which is the only state `IsHealthy` exempts a rebuilder
+        // in. A rebuilder that *ends* is therefore unhealthy, in an ended
+        // state, and — without the clause in `FormatLikelyCause` — the first
+        // sentence of the report: "automation-rebuilder reached Finished and no
+        // exit code was recorded". That is #1918's failure buried under idle
+        // rebuilders, arriving through the one line #2061 built to be trusted.
+        //
+        // The rebuilder stays in the failure section; only the sentence drops
+        // it. Dropping it from the section is what #1918 argued against.
+        Dictionary<string, string> states = new(StringComparer.Ordinal)
+        {
+            ["automation"] = "Finished",
+            ["automation-rebuilder"] = "Finished",
+            ["camera-catalog"] = "Running",
+        };
+        Dictionary<string, int?> exitCodes = new(StringComparer.Ordinal)
+        {
+            ["automation"] = 0,
+            ["automation-rebuilder"] = null,
+        };
+
+        string cause = AspireFixture.FormatLikelyCause(states, exitCodes);
+
+        cause.ShouldStartWith("Likely cause: ");
+        cause.ShouldContain("automation reached Finished");
+        cause.ShouldNotContain("-rebuilder");
+
+        AspireFixture.SelectResourcesToReport(states, exitCodes)
+            .ShouldBe(["automation", "automation-rebuilder"]);
+    }
+
+    [Fact]
+    public void No_cause_is_claimed_when_only_a_rebuilder_ended()
+    {
+        // The damaging half: with nothing else to name, an ended rebuilder is
+        // the *whole* cause line, and a report that claims a cause it does not
+        // have is worse than one that claims none — which is the property
+        // `FormatLikelyCause` returns `string.Empty` to keep.
+        Dictionary<string, string> states = new(StringComparer.Ordinal)
+        {
+            ["automation-rebuilder"] = "Finished",
+            ["camera-catalog"] = "Running",
+        };
+        Dictionary<string, int?> exitCodes = new(StringComparer.Ordinal)
+        {
+            ["automation-rebuilder"] = null,
+        };
+
+        AspireFixture.FormatLikelyCause(states, exitCodes).ShouldBeEmpty();
+    }
+
+    [Fact]
     public void Rebuilders_that_never_started_are_not_reported()
     {
         Dictionary<string, string> states = new(StringComparer.Ordinal)
