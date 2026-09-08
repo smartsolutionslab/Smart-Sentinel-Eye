@@ -102,7 +102,9 @@ public static class EventIngestionInfrastructureModule
 
         // Spec 103 FR-004. A meter nobody registers records into nothing and
         // raises no error, so this line is the whole difference between an
-        // instrument and a no-op — and no unit test can tell them apart.
+        // instrument and a no-op. IngestVolumeRegistrationTests fails loudly if
+        // it goes; what no unit test can see is whether the exporter then ships
+        // the figure to a sink, which is spec 103 §5's job.
         //
         // Here rather than beside the other three meters in ServiceDefaults:
         // that project is referenced by every context and references none of
