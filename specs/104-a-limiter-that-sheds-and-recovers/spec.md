@@ -187,6 +187,17 @@ public IngestWriteLease TryAcquire() => new IngestWriteLease(slots);
   measurement test asserts only ordering and is CI-excluded; no integration test saturates
   64 concurrent writes. CF-A is invisible to the entire suite today.
 
+**Observed** (phase 4a, re-run during phase 6 remediation): **all four fail**, as
+predicted — but **AS-3 fails for a different reason than the one written above.** It fails
+at `IngestWriteLimiterTests.cs:93` on `refused.Acquired should be False but was True`. That
+assertion sits *before* the dispose, so the run never reaches the surplus lease at all and
+the "count above `maxCount`" mechanism never happens. The predicted *outcome* held; the
+predicted *mechanism* is wrong.
+
+Recorded beside the prediction rather than corrected in place, per `T007`: a prediction
+edited after the run to match the run proves nothing, and the point of writing it down
+first was to be able to be wrong in public.
+
 ### CF-B — "the limiter never releases"
 
 In the same file, empty the lease's `Dispose` (line 53):
@@ -212,8 +223,41 @@ public void Dispose() { }
   named failure. That is a diffuse, order-dependent signal, not a safety net.
   `IngestThroughputMeasurementTests` would not help: it is CI-excluded (§1.1).
 
+**Observed** (phase 4a, re-run during phase 6 remediation): **exactly as predicted** — one
+failure, `A_released_slot_is_handed_to_the_next_writer`; AS-1, AS-3 and AS-4 green. The
+asymmetry with CF-A is the evidence that one test would not have been enough.
+
 CF-B is the direction the audit called out as the one nobody would notice until
 production, and §5.2 records that it does **not** occur today.
+
+### The full mutation matrix
+
+Phase 6 ran four further mutations beyond the two predicted above, and the remediation
+re-ran all six. Every row below was observed, not reasoned about:
+
+| mutation | AS-1 | AS-2 | AS-3 | AS-4 |
+|---|---|---|---|---|
+| Real code | PASS | PASS | PASS | PASS |
+| CF-A — never rejects | FAIL | FAIL | FAIL | FAIL |
+| CF-B — never releases | PASS | **FAIL** | PASS | PASS |
+| CF-C — `slots.Wait(50)` instead of `Wait(0)` | PASS | PASS | PASS | PASS |
+| CF-D — a refused lease releases a slot | PASS | PASS | **FAIL** | PASS |
+| CF-E — `DefaultConcurrency = 32` | PASS | PASS | PASS | **FAIL** |
+| CF-F — `DefaultConcurrency = 128` | PASS | PASS | PASS | **FAIL** |
+
+Three things follow that the two-mutation argument above could not establish:
+
+- **AS-3 is not filler.** CF-D — the lease keeps its semaphore but reports
+  `Acquired == false`, so disposing a *refused* lease hands back a slot it never took — is
+  caught by AS-3 **alone**. That is a third failure direction, distinct from "never
+  refuses" and "never releases", and it is the exact defect the refusal path's own `using`
+  would turn into a slow capacity leak.
+- **AS-4 pins the default in both directions.** 32 and 128 each redden it, so it proves the
+  bound *is* 64 rather than merely that some bound exists. A test that only counted to
+  `DefaultConcurrency` would pass under both.
+- **CF-C is the hole.** A nonzero acquisition timeout — the plausible "soften the limiter"
+  edit — is invisible: all four tests pass, in 368 ms against a 58 ms baseline. §5.3
+  records this as the slice's one unasserted acceptance clause.
 
 ---
 
@@ -259,6 +303,14 @@ change that would close it.
 - **No load or throughput assertion**, and **no `[Trait("Category", "Measurement")]`**.
 - **No parallel-`TryAcquire` race test.** `SemaphoreSlim` guarantees the count; a test of it
   tests the BCL and buys flakiness for no information (ADR-0036).
+- **No assertion that the refusal is *immediate*** — AS-1's second clause, and the one
+  acceptance clause this slice genuinely leaves uncovered. `TryAcquire` is synchronous, so
+  immediacy could only be expressed as a wall-clock bound, which is the thread timing §5.1
+  avoids. The gap is not theoretical: changing the gate to `slots.Wait(50)` (CF-C) passes
+  all four tests. What holds the guarantee is **structural** — the literal `0` in
+  `IngestWriteLimiter.cs:37` — and a bound loose enough not to flake in CI would not catch
+  a 50 ms wait anyway. The argument that a waiting limiter "would hang the test rather than
+  pass it" covers only the unbounded wait, not the plausible one.
 
 ---
 
@@ -327,4 +379,7 @@ test-only slice (ADR-0036, ADR-0144).
    §4. Revert.
 3. Apply **CF-B** to `IngestWriteLimiter.cs:53`; re-run. Expect AS-2 red and AS-1 green —
    the asymmetry is the evidence that two tests were needed. Revert.
-4. `git diff --stat src/` is empty: nothing outside `tests/` changed.
+4. Apply **CF-C** to **CF-F** in turn (§4, the matrix); re-run after each. Expect the column
+   marked in the table for that row, and in particular expect **CF-C to stay green** — that
+   is the recorded gap, not a broken step. Revert after each.
+5. `git diff --stat src/` is empty: nothing outside `tests/` changed.
