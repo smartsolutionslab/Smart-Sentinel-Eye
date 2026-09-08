@@ -160,6 +160,30 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
         "Terminated",
     ];
 
+    /// <summary>
+    /// The states that mean a resource ended, for the purpose of naming a cause.
+    ///
+    /// <para>
+    /// <c>FailedToStart</c> is deliberately absent, and its absence is the whole
+    /// reason this is a separate set from <see cref="FatalStartupStates"/>. The
+    /// run that motivated #2061 had nine services in it, none of which was the
+    /// cause; naming all nine is the noise that fix removed, and a cause line
+    /// that names nine resources answers "what broke?" no better than the
+    /// forty-five-line state list it sits above.
+    /// </para>
+    ///
+    /// <para>
+    /// <c>RuntimeUnhealthy</c> is absent for a different reason: it is a
+    /// container that is up and answering badly, not one that ended.
+    /// </para>
+    /// </summary>
+    private static readonly string[] EndedStates =
+    [
+        KnownResourceStates.Finished,
+        KnownResourceStates.Exited,
+        "Terminated",
+    ];
+
     private readonly ConcurrentDictionary<string, ConcurrentQueue<string>> _logTails = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _logTailFailures = new(StringComparer.Ordinal);
     private CancellationTokenSource? _logCts;
@@ -627,8 +651,17 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
     /// The cause of the run that motivated #2061 was printed — once per state
     /// list, in the same typeface as the forty-four resources that were fine.
     /// Prominence is not ordering; it is a sentence at the top that names the
-    /// resource. Empty when nothing exited non-zero, so the report never
+    /// resource. Empty when there is no such resource, so the report never
     /// claims a cause it does not have.
+    /// </para>
+    ///
+    /// <para>
+    /// Two disjoint populations, because a non-zero exit was too narrow a
+    /// question (#1930): <c>automation</c> ended <c>Finished</c> with exit code
+    /// <c>0</c> — and, on the run that was actually observed, with no exit code
+    /// captured at all — while the boot was still waiting for it, and the
+    /// report offered no cause line whatsoever. Exit code 0 changes where a
+    /// reader looks next; it does not change what stopped the boot.
     /// </para>
     /// </summary>
     internal static string FormatLikelyCause(
@@ -639,20 +672,54 @@ public sealed partial class AspireFixture : IAsyncLifetime, IDisposable
         // inside the watch window ends it `Running` and is left out of the
         // failure section, so naming it here would point the reader at a
         // section that does not exist.
-        string[] died = states.Keys
-            .Where(name => !IsHealthy(name, states[name], exitCodes) && ExitedNonZero(name, exitCodes))
-            .OrderBy(name => name, StringComparer.Ordinal)
+        string[] died = UnhealthyResources(states, exitCodes)
+            .Where(name => ExitedNonZero(name, exitCodes))
             .ToArray();
 
-        if (died.Length == 0)
+        // The rest of the resources that reached an end state — disjoint from
+        // `died` by `!ExitedNonZero`, so nothing is named twice.
+        string[] ended = UnhealthyResources(states, exitCodes)
+            .Where(name => !ExitedNonZero(name, exitCodes)
+                && EndedStates.Contains(states[name], StringComparer.OrdinalIgnoreCase))
+            .ToArray();
+
+        List<string> sentences = [];
+
+        if (died.Length > 0)
         {
-            return string.Empty;
+            string named = string.Join("; ", died.Select(name => $"{name} exited with code {exitCodes[name]}"));
+            sentences.Add($"{named} — a non-zero exit is a failure, not a clean finish.");
         }
 
-        string named = string.Join("; ", died.Select(name => $"{name} exited with code {exitCodes[name]}"));
+        if (ended.Length > 0)
+        {
+            string named = string.Join("; ", ended.Select(name => DescribeEnd(name, states[name], exitCodes)));
+            sentences.Add(
+                $"{named} — a long-running resource that ends during startup is a failed boot, "
+                + "not a clean finish.");
+        }
 
-        return $"Likely cause: {named} — a non-zero exit is a failure, not a clean finish.\n";
+        return sentences.Count == 0
+            ? string.Empty
+            : $"Likely cause: {string.Join(" ", sentences)}\n";
     }
+
+    private static IEnumerable<string> UnhealthyResources(
+        Dictionary<string, string> states,
+        Dictionary<string, int?> exitCodes) =>
+        states.Keys
+            .Where(name => !IsHealthy(name, states[name], exitCodes))
+            .OrderBy(name => name, StringComparer.Ordinal);
+
+    // Never "exited with code {exit}" — an unobserved code is a present null
+    // (the dominant shape; see `ExitedNonZero`), and that phrasing renders it as
+    // "automation exited with code  — …", a cause line with a number-shaped
+    // hole where its one fact should be. Saying the code was not recorded is
+    // the true sentence, and it is shorter than the false one.
+    private static string DescribeEnd(string name, string state, Dictionary<string, int?> exitCodes) =>
+        exitCodes.TryGetValue(name, out int? exit) && exit is not null
+            ? $"{name} reached {state} with exit code {exit}"
+            : $"{name} reached {state} and no exit code was recorded";
 
     /// <summary>
     /// What the fixture says when the migration runner finished by dying.
