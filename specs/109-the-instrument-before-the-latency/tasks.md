@@ -43,11 +43,16 @@ this was written; a full disk stops the Docker engine and only a GUI restart rec
 
 *Independently shippable. Turns one refusal into one answer, and unblocks US2 and US3.*
 
-- [ ] **T010 [US1]** **RED.** With no environment variable exported by the runner, run
+- [x] **T010 [US1]** **RED. DONE 2026-09-09, commit `97885925`.** With no environment variable exported by the runner, run
       `dotnet test tests/Integration.Tests --filter "FullyQualifiedName=SmartSentinelEye.Integration.Tests.AuditObservability.NFR001_AuditIngestLatencyTests.Where_the_ingest_span_goes"`.
       Capture the verbatim failure — expected: *"N rows arrived without the measurement
       stamps; turn the switch on before reading anything above"*
       (`NFR001_AuditIngestLatencyTests.cs:305-307`). This is the red the PR quotes.
+      **Do not run this fact alone from a cold stack.** Two attempts to do so died at
+      `IngestSpanMeasurement.DefineAsync` with
+      `Polly.Timeout.TimeoutRejectedException … '00:00:10'` on the first POST —
+      infrastructure, not the stamps refusal the run exists to observe. Another fact must
+      warm `system-variables` first.
       **Depends: T001.**
 - [ ] **T011 [US1]** Add one line inside the existing `if (isE2ETests)` block in
       `src/AppHost/AppHost.cs` (the block opening at `:410`, beside the
@@ -76,10 +81,12 @@ export. Shippable on its own.
 
 ## US2 (P2) — the verdict states the rate it was taken at
 
-- [ ] **T020 [US2]** **RED.** Add a fact that drives through
+- [x] **T020 [US2]** **RED. DONE 2026-09-09, commit `97885925`.** Add a fact that drives through
       `IngestSpanMeasurement.RunAsync` and guards `Conditions.RateWasMet` — mirroring
       `NFR001_AuditIngestLatencyTests.cs:329-332` — but wire it to the **unpaced**
-      driver first, so it fails reporting ~15-20 ev/s against a target of 100. Capture
+      driver first, so it fails reporting 45.1-57.5 ev/s against a target of 100 — measured
+      at phase 4a; the earlier ~15-20 in this file came from ADR-0136's row for a
+      different machine, and the guard refuses either way. Capture
       the verbatim failure. This red is the evidence that defect (A) is real, not
       inferred.
       **Depends: T013.**
@@ -112,27 +119,52 @@ did not pace, and the verdict that exists reports an interval rather than a poin
 
 ## US3 (P3) — locating the handover
 
-- [ ] **T101 [US3]** **The assumption check, and it comes first.** Verify A1: that
-      `messages_unacknowledged` on the `wolverine_audit.*` queues is the in-flight
-      population under `ProcessInParallelWithNativeAcks()`
+- [x] **T101 [US3]** **The assumption check, and it comes first.** Verify A1: that
+      `messages_unacknowledged` on the **`audit-observability.*`** queues is the
+      in-flight population under `ProcessInParallelWithNativeAcks()`
       (`WolverineDefaults.cs:126-129`). Observe it **zero** when the audit service is
       quiescent and **non-zero** with handlers mid-flight, read from RabbitMQ's
       management API.
+      **The queue name is `ContextName` + `.` + the event FQN** (`WolverineDefaults.cs:95-96`,
+      `AuditObservabilityInfrastructureModule.cs:23,94`) — **not** `wolverine_audit`,
+      which an earlier draft of this file named and which is the **Postgres outbox
+      schema** (`:24`). A filter on `wolverine_audit` matches nothing and reports a mean
+      of zero: the very failure T102 exists to refuse, arriving through the task that
+      specifies it.
+      **Sample through the drain, not only the drive.** RabbitMQ's management statistics
+      refresh on `collect_statistics_interval` (~5 s), so a short fast sample reads a
+      **cached zero**. The first version of this task sampled only the publish window at
+      100 ms, reported peak 0, and falsely refuted A1. The version that holds drives
+      3000 events and samples at 250 ms through the drive **and 20 s of drain** — peak
+      64, 31 of 88 samples non-zero.
       **If it does not behave this way, US3 stops here and reports** — every number
       downstream divides by this one. ADR-0126's own correction came from a count that
       answered a different question from the one asked of it.
-      **Blocks: T102, T103, T104. Depends: T023.**
-- [ ] **T102 [US3]** **RED.** Add a fact that reports a sampled mean unacknowledged
-      count, the achieved drain rate, and the implied mean leg time. It fails today —
-      there is no sampler and no such figure. Capture the verbatim failure.
+      **DONE 2026-09-09: A1 HOLDS. US3 proceeds.**
+      **Blocks: T102, T104. Depends: T023.**
+
+- [ ] **T102 [US3]** **Build the sampler and the fact that reports it, as one task.**
+      Poll the `audit-observability.*` queues from the broker's HTTP API through a paced
+      run, and report the mean unacknowledged count, the achieved drain rate, and the
+      implied mean leg time. It must fail naming the address and the status it received
+      if the broker refuses, rather than reporting a mean of zero samples. Evidence comes
+      from the broker and from Postgres — **never** from an Aspire structured-log search,
+      which ADR-0127 recorded returning zero hits for events that were demonstrably
+      landing.
       **Depends: T101.**
-- [ ] **T103 [US3]** Implement the sampler: poll the audit queues once a second through
-      a paced run, from the broker's HTTP API. It must fail naming the address and the
-      status it received if the broker refuses, rather than reporting a mean of zero
-      samples. Evidence comes from the broker and from Postgres — **never** from an
-      Aspire structured-log search, which ADR-0127 recorded returning zero hits for
-      events that were demonstrably landing.
-      **Depends: T102.**
+
+      > **This task has no red available, and the PR must say so rather than imply a gate
+      > it never passed.** T102 was previously split into a RED fact (T102) and its
+      > implementation (T103). That split does not survive contact: both halves live in
+      > `tests/Integration.Tests`, so they are **the same artefact in the same project**.
+      > A fact written against a sampler that does not exist is a **compile error**, which
+      > ADR-0139 does not accept as red; a fact that samples inline is **green on its
+      > first run**. There is no third shape that produces an honest red here, and none is
+      > to be manufactured. The two tasks are therefore merged, and **T104's two runs are
+      > the evidence** — reported unaveraged, in place of a red.
+      >
+      > US1's and US2's reds are unaffected and were observed: commit `97885925`.
+
 - [ ] **T104 [US3]** Run it **twice**, unaveraged. Read the outcome:
       - **near zero** → the handover is at handler entry, the requirement's span is the
         floor, NFR-001 holds on its own leg, and the *end-to-end* span — which has no
@@ -140,7 +172,7 @@ did not pace, and the verdict that exists reports an interval rather than a poin
       - **deep** → the prefetch buffer holds the wait inside NFR-001's leg, the
         requirement is genuinely missed, and the next step is a per-row
         transport-receipt stamp, which is **not** taken in this pass.
-      **Depends: T103. Serial with every other fixture task.**
+      **Depends: T102. Serial with every other fixture task.**
 
 **US3 checkpoint** — the requirement's span is located inside "before handler", or the
 run says in one number why it could not be.
@@ -168,7 +200,7 @@ run says in one number why it could not be.
       `NFR001_AuditIngestLatencyTests.cs:180-194`'s standing conclusion with it.
       **Depends: T201, T202.**
 - [ ] **T204** PR to `develop` (`--base develop`, ADR-0028), quoting T010's, T020's and
-      T102's verbatim red output. Conventional Commit, **no `Co-Authored-By`**
+      T102's absence of one (tasks.md records why). Conventional Commit, **no `Co-Authored-By`**
       (ADR-0086).
       **Depends: T203.**
 
@@ -181,7 +213,7 @@ T001
  └─ T010 → T011 ─┬─ T012 [P]
                  ├─ T014 [P]
                  └─ T013 → T020 → T021 → T022 → T023 → T101 ─┬─ (stop & report)
-                                                             └─ T102 → T103 → T104
+                                                             └─ T102 → T104
                                                                           └─ T200 ─┬─ T201 [P]
                                                                                    └─ T202 [P]
                                                                                         └─ T203 → T204
