@@ -11,7 +11,7 @@ files are genuinely disjoint.
 
 ## Phase 4a — characterisation, captured green **before** any src edit
 
-- [ ] **T000 [US1]** Run the covering set and capture the **verbatim** output:
+- [x] **T000 [US1]** Run the covering set and capture the **verbatim** output:
   ```sh
   dotnet test tests/StreamDistribution.Infrastructure.Tests --filter "FullyQualifiedName~WhepValidator"
   ```
@@ -25,7 +25,7 @@ files are genuinely disjoint.
 
 ## Phase 4b — the seam (commit 1, `src/` only)
 
-- [ ] **T001 [US1]** In `src/StreamDistribution/Infrastructure/Auth/WhepAuthValidator.cs`:
+- [x] **T001 [US1]** In `src/StreamDistribution/Infrastructure/Auth/WhepAuthValidator.cs`:
   widen the `oidc` field (:21) to
   `IConfigurationManager<OpenIdConnectConfiguration>` and add an **`internal`**
   constructor taking that interface. The public
@@ -36,18 +36,18 @@ files are genuinely disjoint.
   run still reflects on it (plan R2).
   FR-001, FR-002, FR-003, FR-004. *Depends: T000.*
 
-- [ ] **T002 [US1]** Re-run T000's command **without touching a test file**.
+- [x] **T002 [US1]** Re-run T000's command **without touching a test file**.
   The two reflecting files must pass **unmodified**. This is the characterisation
   discharge and the ADR-0139 evidence for a behaviour-preserving change.
   An assertion that has to be edited to pass means the behaviour moved — block,
   file a finding, do not adjust. *Depends: T001.*
 
-- [ ] **T003 [P] [US1]** Confirm the file still satisfies ADR-0084 (≤ 300 LOC,
+- [x] **T003 [P] [US1]** Confirm the file still satisfies ADR-0084 (≤ 300 LOC,
   ≤ 30 LOC/method, ≤ 4 params) and that `dotnet build -c Release` is clean —
   the collection-expression and analyzer rules fail the Release build, not the
   Debug one. *Depends: T001. Disjoint from T004.*
 
-- [ ] **T004 [P] [US1]** Pin assumption A1 rather than trusting it: a test in
+- [x] **T004 [P] [US1]** Pin assumption A1 rather than trusting it: a test in
   `tests/StreamDistribution.Infrastructure.Tests/` asserting that the service
   container resolves `IWhepAuthValidator` to a `WhepAuthValidator` after
   `AddStreamDistributionInfrastructure` — i.e. that adding a second constructor
@@ -60,7 +60,7 @@ files are genuinely disjoint.
 
 ## Phase 4c — drop the reflection (commit 2, `tests/` only)
 
-- [ ] **T005 [US1]** Rewrite `ValidatorWithStubbedMetadata()` in **both**
+- [x] **T005 [US1]** Rewrite `ValidatorWithStubbedMetadata()` in **both**
   `tests/StreamDistribution.Infrastructure.Tests/Auth/WhepValidatorAudienceTests.cs`
   (:81, :145) and `.../WhepValidatorIssuerTests.cs` (:115, :206) to construct
   through T001's seam. Delete `OidcField`, the `GetField`/`SetValue` calls and
@@ -73,7 +73,7 @@ files are genuinely disjoint.
   *Not `[P]`: one logical edit, and both files must land together or the
   intermediate commit half-describes itself.* *Depends: T002.*
 
-- [ ] **T006 [US1]** Re-run T000's command. Same assertions, same messages,
+- [x] **T006 [US1]** Re-run T000's command. Same assertions, same messages,
   green. Then the counterfactual that proves the seam is real:
   ```sh
   grep -rn "System.Reflection" tests/StreamDistribution.Infrastructure.Tests/Auth/
@@ -105,7 +105,8 @@ files are genuinely disjoint.
 
 ## Follow-up filed, not fixed
 
-- [ ] **T010** File a new issue: **the WHEP hook answers 500, not 401, when the
+- [x] **T010** *Already satisfied — filed as **#2160** (open, `agent:ready`) before
+  this phase ran. No duplicate opened.* File a new issue: **the WHEP hook answers 500, not 401, when the
   realm's discovery document cannot be fetched.**
   `WhepAuthValidator.ValidateAsync:83-113` catches `SecurityTokenException` and
   `ArgumentException`; `oidc.GetConfigurationAsync` (:85) throws
