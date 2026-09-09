@@ -427,6 +427,14 @@ if (isE2ETests)
     // Sweep retention every few seconds in the integration suite so the
     // round-trip test isn't waiting on the production daily timer.
     auditObservability.WithEnvironment("AuditObservability__Retention__TickInterval", "00:00:03");
+
+    // The ingest breakdown's stamps, for the integration suite only. The type
+    // default stays false (AuditMeasurementSwitchTests) because the stamps sit
+    // on a write path and production does not pay for an instrument nobody
+    // reads. But a run that has to remember a shell export is a run whose
+    // breakdown silently reports zeros, so the fixture turns it on rather than
+    // asking (spec 109 US1).
+    auditObservability.WithEnvironment("AuditObservability__Measurement__RecordIngestBreakdown", "true");
 }
 
 // ADR-0106: single YARP API gateway at the edge — fronts all nine context REST
