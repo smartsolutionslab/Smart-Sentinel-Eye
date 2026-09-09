@@ -260,5 +260,13 @@ could not quietly widen.
   retry directory was created and the property was not watched.
 - **The counterfactuals were not re-run.** SC-002 and SC-003 are phase 4a's evidence; this
   phase observed the green path and its mechanism only.
+- **The test now runs a state strictly harsher than production** (added in phase 6, after
+  this note's runs). `KEYCLOAK_SESSION` turns out to survive the process death — it carries
+  an explicit expiry, so Chromium persists it — and the test clears the provider cookies
+  before the wall loads, so it recovers holding none. **A real wall after a power cut comes
+  back still holding that cookie.** The delta is low risk: nothing in the app reads it, it
+  authenticates nothing (Keycloak's SSO session is the httpOnly `KEYCLOAK_IDENTITY`, which
+  does *not* survive), and a harsher precondition cannot manufacture a pass. Recorded so it
+  is met here rather than discovered later.
 - **A warm stack.** Both runs hit an Aspire stack that had been up ~20 minutes. A cold
   stack is CI's condition, not this note's.
