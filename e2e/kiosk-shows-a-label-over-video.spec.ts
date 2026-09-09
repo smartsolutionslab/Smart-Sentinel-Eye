@@ -789,6 +789,20 @@ function printSample(sample: SpanSample): void {
 
 interface SpanRun {
   measurements: ReadonlyArray<SpanMeasurement>;
+  /**
+   * The run's own `overlay_draw` p50, or null where it emitted none.
+   *
+   * <para>
+   * <b>The 2-rAF term is measured, not assumed.</b> `overlay_draw` is the same
+   * two-chained-`requestAnimationFrame` construct as t1
+   * (`kioskLatency.ts:137-141`), on the same page under the same conditions — and
+   * it reported a p50 of 30-52 ms across six runs, not the 33 ms "2 frames at
+   * 60 Hz" the old line assumed. <b>33 was a floor being quoted as a ceiling.</b>
+   * It is an upper bound in the other direction, because `overlay_draw` also
+   * contains React's commit — so both are printed and neither is quoted alone.
+   * </para>
+   */
+  overlayDrawMilliseconds: number | null;
   /** The bracketed skew taken before the loop, or null where none was taken. */
   skewBefore: ClockSkewBound | null;
   /** And again after it, so drift across the run is visible rather than assumed. */
@@ -862,6 +876,34 @@ function report(run: SpanRun): void {
     );
   }
 
+  // **The bracket, because neither end is the figure.** Net of each sample's own
+  // round trip OVER-subtracts: `responseEnd` includes server processing that is
+  // genuinely part of *event → overlay state*, so the net p50 is a floor. The raw
+  // p50 OVER-counts: it additionally contains the browser's `fetch` and the gateway
+  // hop, which happen before §IV's span begins, so it is a ceiling. Quoting either
+  // alone is the mistake — and phase 6 found the run-to-run spread lives almost
+  // entirely in this one term, so the choice is not cosmetic.
+  const netFigures = samples
+    .filter((sample) => sample.submitRoundTripMilliseconds !== null)
+    .map((sample) => sample.elapsedMilliseconds - (sample.submitRoundTripMilliseconds ?? 0));
+
+  if (netFigures.length === 0) {
+    console.info(
+      '[span] section IV bracket: UNAVAILABLE — no sample carried its submit round trip, so the head ' +
+        'overshoot cannot be removed and only the raw ceiling exists',
+    );
+  } else {
+    const floor = median([...netFigures].sort((left, right) => left - right));
+    const ceiling = percentiles(figures).p50;
+    console.info(
+      `[span] section IV's span on this run lies between ${milliseconds(floor)} ms and ${milliseconds(ceiling)} ms` +
+        " — a BRACKET, not a figure. The floor is the p50 net of each sample's own submit round trip and " +
+        'OVER-subtracts, because responseEnd contains server processing genuinely inside event → overlay ' +
+        'state. The ceiling is the raw p50 and OVER-counts, because it contains the browser fetch and the ' +
+        "gateway hop, which precede section IV's span. Quote the bracket, never either end.",
+    );
+  }
+
   console.info(`[span] covers: ${LEGS_COVERED.join(', ')}`);
   console.info(`[span] NOT covered: ${LEGS_NOT_COVERED.join(', ')} — ${WHY_NOT_COVERED}`);
   console.info(
@@ -873,31 +915,59 @@ function report(run: SpanRun): void {
   console.info('[span] includes the label hold (ADR-0129): see the [legs] label_delay line below');
   console.info(`[span] conditions: ${process.platform}, CI=${process.env['CI'] ?? 'false'}, one tile, one clip`);
 
-  // **The instrument's own error, beside its figures, and replaced rather than
-  // deleted.** A number without its resolution reads as far more precise than it
-  // is — the same defect as the ±1000 ms figure this supersedes.
+  // **The instrument's own error — one-sided, and with the rAF term measured
+  // rather than assumed.** Two corrections at re-review, and the old line read
+  // better than the truth on both:
   //
-  //   two chained rAF at t1   <= 2 frames ~ 33 ms at 60 Hz
-  //   click dispatch          ~ 1 frame   ~ 17 ms
-  //   Date.now() resolution   2 x 1 ms
-  //                           ---------
-  //                                      ~ +/-52 ms, PLUS the skew term below
-  const quantisation = 52;
+  //   two chained rAF at t1   stamps t1 LATE only    -> +0 .. +R   (INFLATES)
+  //   click coalescing at t0  stamps t0 LATE only    -> -0 .. -17  (DEFLATES)
+  //   Date.now() resolution   1 ms at each end       -> +/- 2
+  //   cross-context skew      printed = true - delta -> -high .. -low
+  //
+  // R is *not* "2 frames at 60 Hz = 33 ms". `overlay_draw` is the identical
+  // construct on the same page and reported a p50 of 30-52 ms across six runs, so
+  // 33 is a floor. `overlay_draw` also carries React's commit, so it bounds R from
+  // above as 33 bounds it from below; both are printed.
+  //
+  // And the interval is NOT symmetric. Writing it as +/- implies the true value
+  // could sit that far BELOW the printed one, when the dominant term can only push
+  // it above.
+  const CLICK_COALESCING_MS = 17;
+  const CLOCK_RESOLUTION_MS = 2;
+  const NOMINAL_RAF_MS = 33;
+
   const bounds = [run.skewBefore, run.skewAfter].filter((bound): bound is ClockSkewBound => bound !== null);
-  const skew = bounds.length === 0 ? null : Math.max(...bounds.map(skewMagnitude));
+  const skewLow = bounds.length === 0 ? null : Math.min(...bounds.map((bound) => bound.lowMilliseconds));
+  const skewHigh = bounds.length === 0 ? null : Math.max(...bounds.map((bound) => bound.highMilliseconds));
+
+  const errorInterval = (raf: number): string => {
+    if (skewLow === null || skewHigh === null) return 'NOT boundable — the skew probe did not run';
+    const low = -(CLICK_COALESCING_MS + CLOCK_RESOLUTION_MS + skewHigh);
+    const high = raf + CLOCK_RESOLUTION_MS - skewLow;
+    return `printed − true ∈ [${low.toFixed(0)}, +${high.toFixed(0)}] ms`;
+  };
 
   console.info(
-    `[span] instrument error: ±${quantisation} ms of quantisation (2 rAF ≈ 33 ms + click dispatch ≈ 17 ms + ` +
-      '2 × Date.now() 1 ms) PLUS the cross-context clock skew term below — the two ends are stamped in ' +
-      'different Chromium renderer processes, and that term was missing from this line until spec 108 phase 6',
+    '[span] instrument error, by term and by SIGN: the 2 rAF at t1 can stamp only LATE (+0..+R, inflating); ' +
+      `click coalescing at t0 can stamp only LATE (−0..−${CLICK_COALESCING_MS}, deflating); Date.now() ` +
+      `resolution ±${CLOCK_RESOLUTION_MS}; the skew term below. The interval is ONE-SIDED — writing it as ± ` +
+      'would imply the true value can sit that far BELOW the printed one, when the dominant term can only ' +
+      'push it above.',
   );
   console.info(describeSkew('before the loop', run.skewBefore));
   console.info(describeSkew('after the loop', run.skewAfter));
   console.info(
-    skew === null
-      ? `[span] total instrument error: at least ±${quantisation} ms, and NOT boundable — the skew probe did not run`
-      : `[span] total instrument error: ~±${(quantisation + skew).toFixed(0)} ms ` +
-          `(${quantisation} ms quantisation + ${skew.toFixed(0)} ms skew bound)`,
+    `[span] error with R = ${NOMINAL_RAF_MS} ms (2 frames at 60 Hz — the BEST case, and a floor): ` +
+      errorInterval(NOMINAL_RAF_MS),
+  );
+  console.info(
+    run.overlayDrawMilliseconds === null
+      ? '[span] error with R measured: UNAVAILABLE — this run emitted no overlay_draw, so only the best case ' +
+          'above is stated. It must not be read as the error actually achieved.'
+      : `[span] error with R = ${run.overlayDrawMilliseconds.toFixed(0)} ms (this run's OWN overlay_draw p50 — ` +
+          `the same 2-rAF construct on the same page, kioskLatency.ts:137-141): ${errorInterval(run.overlayDrawMilliseconds)}` +
+          '. overlay_draw also carries React commit work, so this bounds R from above as 33 ms bounds it from ' +
+          'below. The honest reading of a run is this line, not the one above it.',
   );
   console.info(
     '[span] skew direction: elapsed = t1(kiosk) − t0(operator), so an operator clock running δ ms AHEAD of ' +
@@ -910,9 +980,14 @@ function report(run: SpanRun): void {
   // adjacent pairs. The apparatus was reverted; the figures are in spec 108's
   // verification note.
   console.info(
-    '[span] calibration C1: a 300 ms delay, injected on the KIOSK side only, recovered as a 296 ms mean over ' +
-      '10 paired iterations, every pair inside 277-340 ms — i.e. −23/+40 ms per pair. ±32 ms is the ' +
-      'dispersion over pairs, NOT a per-sample bound; the per-pair worst case is ±40 ms.',
+    '[span] calibration C1: a 300 ms delay injected on the KIOSK side only. PREFERRED estimator, named so a ' +
+      "later reader cannot pick the flattering one — the mean of the adjacent pairs NET of each sample's own " +
+      'submit round trip, because the other two carry the head overshoot as a confound: 280.3 ms at n=20 ' +
+      '(phase 6) and 296 ms at n=10 (phase 4a). Those disagree by five points, so C1 supports a scale claim ' +
+      'of about −7%/+2%, not "296". The same n=20 run gives 377 ms as a raw pair mean — dragged by one ' +
+      "delayed sample carrying a 941 ms round trip — and 304.5 ms as a median-of-populations. Phase 4a's " +
+      '±32 ms is a dispersion over pairs, NOT a per-sample bound: its per-pair worst case is −23/+40 ms, and ' +
+      "phase 6's pairs ran wider still, 233-372 net.",
   );
   console.info(
     '[span] what C1 does and does not establish: it defers the TAIL, so it calibrates scale and linearity ' +
@@ -1117,7 +1192,12 @@ test('the span from a value being submitted to it being visible', async ({ page,
   // **Refused before it is attempted**, so a run that cannot be measured says so
   // rather than producing a figure whose two ends came from different clocks.
   if (!clock.ok) {
-    report({ measurements: [{ refusal: clock.because }], skewBefore: null, skewAfter: null });
+    report({
+      measurements: [{ refusal: clock.because }],
+      skewBefore: null,
+      skewAfter: null,
+      overlayDrawMilliseconds: null,
+    });
     test.skip(true, `span unmeasured: ${clock.because}`);
     return;
   }
@@ -1207,7 +1287,11 @@ test('the span from a value being submitted to it being visible', async ({ page,
       }
       if (elapsed > budget) {
         measurements.push({
-          refusal: `iteration ${iteration}: ${elapsed} ms exceeds this iteration's ${budget} ms observe budget`,
+          refusal:
+            `iteration ${iteration}: ${elapsed} ms exceeds this iteration's ${budget} ms observe budget — ` +
+            'note that this budget SHRINKS with the time left in the test, so a sample that would have been ' +
+            'accepted at iteration 0 can refuse here. That is deliberate — it turns a slow tail into a red ' +
+            'rather than a silently dropped sample — and it is not by itself evidence of a product defect',
         });
         break;
       }
@@ -1230,9 +1314,20 @@ test('the span from a value being submitted to it being visible', async ({ page,
     await operatorContext.close();
   }
 
-  // **Printed before any assertion** (FR-008), so the figures survive a red.
-  report({ measurements, skewBefore, skewAfter });
+  // **Printed before any assertion** (FR-008), so the figures survive a red. The
+  // captured legs are settled FIRST, because the error budget's rAF term is now the
+  // run's own `overlay_draw` p50 rather than an assumed 33 ms.
   await Promise.all(pending);
+  const overlayDraws = latencyLines
+    .filter((line) => line.measurement === 'overlay_draw')
+    .map((line) => line.elapsedMilliseconds);
+
+  report({
+    measurements,
+    skewBefore,
+    skewAfter,
+    overlayDrawMilliseconds: overlayDraws.length === 0 ? null : percentiles(overlayDraws).p50,
+  });
   reportLegs(latencyLines, malformedLatencyLines);
 
   // **The picture must still be moving after all that** — folded in from what
@@ -1252,6 +1347,37 @@ test('the span from a value being submitted to it being visible', async ({ page,
         `${afterChanges.perElement[index] ?? 0} → ${frames} frames in ${SAMPLE_GAP_MS}ms`,
     ).toBe(true);
   });
+
+  // **The one clock pathology that had no assertion.** A negative elapsed refuses
+  // above, and a backwards kiosk clock throws inside `bracketClockSkew` — but a
+  // bracket that EXCLUDED zero, or a pair of brackets that did not intersect, only
+  // ever *printed*. A run whose two renderers sat 200 ms apart would have reported
+  // green, printed its error accordingly, and had its p50 quoted anyway.
+  //
+  // **This is not the "figures are recorded, not gated" exemption.** That covers the
+  // span against its 800 ms budget. This asserts that the subtraction producing the
+  // span means anything at all, which is a precondition of reporting a figure rather
+  // than a threshold on what the figure may be.
+  for (const probe of [
+    { when: 'before the loop', bound: skewBefore },
+    { when: 'after the loop', bound: skewAfter },
+  ]) {
+    expect(
+      probe.bound !== null,
+      `the cross-context skew probe ${probe.when} never ran, so t1 − t0 is an unbounded subtraction`,
+    ).toBe(true);
+
+    const bound = probe.bound;
+    if (bound === null) continue;
+
+    expect(
+      bound.consistent && bound.lowMilliseconds <= 0 && bound.highMilliseconds >= 0,
+      `the two renderer clocks ${probe.when} cannot be shown to agree: operator − kiosk ∈ ` +
+        `[${bound.lowMilliseconds}, ${bound.highMilliseconds}] ms` +
+        `${bound.consistent ? '' : ', and the brackets did not intersect'} — every figure above is wrong by ` +
+        'that offset, and none of them may be quoted',
+    ).toBe(true);
+  }
 
   // **Every refusal fails the run, naming its iteration.** A measurement harness
   // whose error path drops samples reports the distribution of the samples that
