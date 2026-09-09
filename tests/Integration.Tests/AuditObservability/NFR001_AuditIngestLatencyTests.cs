@@ -188,14 +188,35 @@ public class NFR001_AuditIngestLatencyTests(AspireFixture aspire, ITestOutputHel
     /// worse — p50 36–44 ms against 23–30 ms — because a batch window short
     /// enough to respect a 50 ms budget collects roughly one message at that
     /// rate. It is a large win under backlog, which ADR-0124 and ADR-0126 had
-    /// already removed. So what is open in 1956 is no longer code: production
-    /// topology, where audit gets its own pod and database node and none of
-    /// this measured that, or moving NFR-001 to what the pipeline does.
+    /// already removed.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Every figure above, and the conclusion that used to close this note —
+    /// "what is open in 1956 is no longer code" — was read off an instrument
+    /// wrong at both ends</b> (spec 109). Wrong rate: this run is one sequential
+    /// writer, which sustains 45–58 ev/s on this stack against the 100 ev/s
+    /// NFR-001 names. Wrong leg: <c>received_at - occurred_at</c> is a
+    /// <i>superset</i> of "deliver-ack → row committed", starting at an
+    /// aggregate mutation in another bounded context, so every p99 quoted on
+    /// #1956 is the <b>ceiling</b> of an interval whose floor nobody reported
+    /// (<see cref="IngestAttribution.RequirementSpanWidthMs"/>).
+    /// </para>
+    ///
+    /// <para>
+    /// <b>So this fact no longer returns a verdict on NFR-001, and its shape is
+    /// why it still exists.</b> One sequential writer, <c>NoPacing</c> — kept
+    /// unchanged, because that shape is the only thing that makes its figure
+    /// comparable with the ones already quoted on the issue. It reports the
+    /// end-to-end span and the rate it achieved, and nothing more. The verdict
+    /// question is asked at the rate the requirement names, and answered as an
+    /// interval, by
+    /// <see cref="Requirement_span_at_100_events_per_second_is_an_interval_not_a_verdict"/>.
     /// </para>
     /// </summary>
     [Trait("Category", "Measurement")]
     [Fact]
-    public async Task Ingest_p99_from_publish_to_row_stays_under_50ms()
+    public async Task Ingest_span_from_publish_to_row_at_the_unpaced_historic_shape()
     {
         using HttpClient variables = await aspire.CreateAdminClientAsync("system-variables");
 
@@ -207,7 +228,14 @@ public class NFR001_AuditIngestLatencyTests(AspireFixture aspire, ITestOutputHel
         string measureName = await IngestSpanMeasurement.DefineAsync(variables, CancellationToken.None);
 
         await IngestSpanMeasurement.SetRepeatedlyAsync(variables, warmName, IngestRunShape.WarmupEvents, IngestSpanMeasurement.NoPacing, CancellationToken.None);
+
+        // **The rate this shape actually achieves, measured rather than
+        // assumed.** It is the reason the figure below is not a verdict: a
+        // sequential writer is capped by its own round trip, well under the
+        // 100 ev/s NFR-001 is a claim about.
+        DateTimeOffset started = DateTimeOffset.UtcNow;
         string measureIdentifier = await IngestSpanMeasurement.SetRepeatedlyAsync(variables, measureName, IngestRunShape.MeasuredEvents, IngestSpanMeasurement.NoPacing, CancellationToken.None);
+        TimeSpan drove = DateTimeOffset.UtcNow - started;
 
         await using AuditObservabilityDbContext context =
             await aspire.CreateAuditObservabilityDbContextAsync();
@@ -223,6 +251,14 @@ public class NFR001_AuditIngestLatencyTests(AspireFixture aspire, ITestOutputHel
         output.WriteLine(
             $"audit ingest over {IngestRunShape.MeasuredEvents} events: "
             + $"p50 = {p50:F1} ms, p99 = {p99:F1} ms, max = {max:F1} ms");
+        output.WriteLine(
+            $"achieved rate: {IngestRunShape.MeasuredEvents / drove.TotalSeconds:F1} ev/s "
+            + $"(one sequential writer, unpaced) against the {IngestRunShape.TargetRatePerSecond:F0} ev/s "
+            + "NFR-001 names — so this span is not a verdict on it");
+        output.WriteLine(
+            "the span above is occurred → received, a superset of NFR-001's deliver-ack → commit; "
+            + "for the requirement's own interval see "
+            + nameof(Requirement_span_at_100_events_per_second_is_an_interval_not_a_verdict));
 
         // **The apparatus' own cost, and the reason this line exists** (spec 053).
         // The switch is service-side configuration read at startup, so no single
@@ -235,11 +271,6 @@ public class NFR001_AuditIngestLatencyTests(AspireFixture aspire, ITestOutputHel
         output.WriteLine(
             $"measurement switch: {(stamped > 0 ? "ON" : "OFF")} "
             + $"({stamped} of {landed} rows carry the stamps)");
-
-        p99.ShouldBeLessThan(
-            P99BudgetMs,
-            $"NFR-001 allows p99 ≤ {P99BudgetMs} ms from publish to row; "
-            + $"observed p50 = {p50:F1} ms, p99 = {p99:F1} ms, max = {max:F1} ms");
     }
 
     /// <summary>
@@ -354,8 +385,9 @@ public class NFR001_AuditIngestLatencyTests(AspireFixture aspire, ITestOutputHel
     /// drove at the rate the requirement names, that every row carried its
     /// stamps, and that the parts cover each row. A number taken at another rate
     /// answers another question — which is exactly what
-    /// <see cref="Ingest_p99_from_publish_to_row_stays_under_50ms"/> above has
-    /// been doing at ~15-20 ev/s.
+    /// <see cref="Ingest_span_from_publish_to_row_at_the_unpaced_historic_shape"/>
+    /// above was doing while it still returned a verdict: measured at phase 4a,
+    /// that shape sustains 45-58 ev/s.
     /// </para>
     /// </summary>
     [Trait("Category", "Measurement")]
@@ -367,38 +399,26 @@ public class NFR001_AuditIngestLatencyTests(AspireFixture aspire, ITestOutputHel
         await using AuditObservabilityDbContext context =
             await aspire.CreateAuditObservabilityDbContextAsync();
 
-        // **The drive, and the only thing this fact is waiting on.** One
-        // sequential writer, unpaced — the historic shape, and the shape every
-        // figure quoted against NFR-001 on #1956 was taken at. It is here so the
-        // rate guard below has something real to refuse.
-        string warmName = await IngestSpanMeasurement.DefineAsync(variables, CancellationToken.None);
-        string measureName = await IngestSpanMeasurement.DefineAsync(variables, CancellationToken.None);
+        // **The paced shape, and it is the fact's whole subject.** Fifty writers
+        // drawing their slots from one counter, paced to
+        // `IngestRunShape.TargetRatePerSecond` — the drive
+        // `IngestSpanMeasurement.RunAsync` already carries, taken from here so
+        // that this figure and `Where_the_ingest_span_goes`' are comparable by
+        // construction rather than by prose. The single sequential writer this
+        // fact was first wired to sustains 45-58 ev/s on this stack, which is
+        // the rate the guard below refused at phase 4a.
+        IngestSpanResult result = await IngestSpanMeasurement.RunAsync(
+            variables,
+            context,
+            environment: "Aspire test fixture",
+            endpoint: variables.BaseAddress?.ToString() ?? "unknown",
+            logLevel: ServiceLogLevel,
+            logLevelWasChosen: ServiceLogLevelWasChosen,
+            CancellationToken.None);
 
-        await IngestSpanMeasurement.SetRepeatedlyAsync(
-            variables, warmName, IngestRunShape.WarmupEvents, IngestSpanMeasurement.NoPacing, CancellationToken.None);
-
-        DateTimeOffset started = DateTimeOffset.UtcNow;
-        string measured = await IngestSpanMeasurement.SetRepeatedlyAsync(
-            variables, measureName, IngestRunShape.MeasuredEvents, IngestSpanMeasurement.NoPacing, CancellationToken.None);
-        TimeSpan drove = DateTimeOffset.UtcNow - started;
-
-        int landed = await IngestSpanMeasurement.WaitForRowsAsync(context, [measured], CancellationToken.None);
-
-        IngestAttribution typical = await IngestSpanMeasurement.AttributionAsync(
-            context, [measured], tailOnly: false, CancellationToken.None);
-        IngestAttribution tail = await IngestSpanMeasurement.AttributionAsync(
-            context, [measured], tailOnly: true, CancellationToken.None);
-
-        IngestRunConditions conditions = new(
-            Environment: "Aspire test fixture",
-            Endpoint: variables.BaseAddress?.ToString() ?? "unknown",
-            IntendedRatePerSecond: IngestRunShape.TargetRatePerSecond,
-            AchievedRatePerSecond: IngestRunShape.MeasuredEvents / drove.TotalSeconds,
-            LogLevel: ServiceLogLevel,
-            LogLevelWasChosen: ServiceLogLevelWasChosen,
-            MeasurementSwitchOn: typical.RowsMeasured > 0 && typical.RowsMissingStamps == 0,
-            RowsMeasured: landed,
-            RowsMissingStamps: typical.RowsMissingStamps);
+        IngestRunConditions conditions = result.Conditions;
+        IngestAttribution typical = result.Typical;
+        IngestAttribution tail = result.Tail;
 
         // The conditions before anything that can fail, so a refused run still
         // says what it was refused for.
@@ -409,8 +429,6 @@ public class NFR001_AuditIngestLatencyTests(AspireFixture aspire, ITestOutputHel
         output.WriteLine("--- tail band (rows at or above the p99 of the total) ---");
         output.WriteLine(tail.Describe());
         output.WriteLine(BudgetPlacement("tail", tail));
-
-        await VariableRequests.ArchiveAllAsync(variables, [warmName, measureName], CancellationToken.None);
 
         // **The rate first.** NFR-001 is a claim about a sustained 100 ev/s, and
         // a breakdown taken at another rate answers another question — so
