@@ -64,6 +64,35 @@ public static class IngestSpanMeasurement
     public static readonly Func<Task> NoPacing = () => Task.CompletedTask;
 
     /// <summary>
+    /// A gate that admits one write per slot, drawn from <b>one counter shared by
+    /// every writer</b>, so the rate belongs to the run rather than to each
+    /// writer.
+    ///
+    /// <para>
+    /// Slots are counted from a single stopwatch rather than slept between
+    /// writes: a per-write delay accumulates each write's own service time and
+    /// the run drifts steadily below the rate it claims to be holding.
+    /// </para>
+    /// </summary>
+    public static Func<Task> PaceTo(double slotIntervalMs, CancellationToken cancellationToken)
+    {
+        Stopwatch pacing = Stopwatch.StartNew();
+        long issued = 0;
+
+        return async () =>
+        {
+            long slot = Interlocked.Increment(ref issued) - 1;
+            double dueMs = slot * slotIntervalMs;
+            double waitMs = dueMs - pacing.Elapsed.TotalMilliseconds;
+
+            if (waitMs > 0)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(waitMs), cancellationToken);
+            }
+        };
+    }
+
+    /// <summary>
     /// Drives the load, waits for it to land, and divides the span.
     ///
     /// <para>
@@ -100,25 +129,12 @@ public static class IngestSpanMeasurement
 
         // **Paced to the rate, not driven flat out.** Every writer draws its slot
         // from one counter, so the pacing is global rather than per-writer.
-        Stopwatch pacing = Stopwatch.StartNew();
-        long issued = 0;
-
-        async Task PaceAsync()
-        {
-            long slot = Interlocked.Increment(ref issued) - 1;
-            double dueMs = slot * IngestRunShape.SlotIntervalMs;
-            double waitMs = dueMs - pacing.Elapsed.TotalMilliseconds;
-
-            if (waitMs > 0)
-            {
-                await Task.Delay(TimeSpan.FromMilliseconds(waitMs), cancellationToken);
-            }
-        }
+        Func<Task> pace = PaceTo(IngestRunShape.SlotIntervalMs, cancellationToken);
 
         DateTimeOffset started = DateTimeOffset.UtcNow;
         string[] measured = await Task.WhenAll(
             measureNames.Select(name =>
-                SetRepeatedlyAsync(variables, name, IngestRunShape.EventsPerWriter, PaceAsync, cancellationToken)));
+                SetRepeatedlyAsync(variables, name, IngestRunShape.EventsPerWriter, pace, cancellationToken)));
         TimeSpan drove = DateTimeOffset.UtcNow - started;
 
         int landed = await WaitForRowsAsync(context, measured, cancellationToken);
