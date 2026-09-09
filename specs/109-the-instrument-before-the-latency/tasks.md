@@ -131,17 +131,25 @@ export. Shippable on its own.
 - [x] **T023 [US2]** Run both facts. **Twice.** Record the achieved rates and all four
       span figures per run, unaveraged.
       **Depends: T022. Serial with every other fixture task.**
-      **DONE 2026-09-09, four paced runs.** `Requirement_span…` achieved 98.1 / 99.4 /
-      99.6 / 99.8 ev/s, typical requirement span **5.4–4017.9**, **6.2–2438.8**,
-      **7.2–1895.3**, **6.5–1904.7 ms** — the 50 ms budget **inside the interval every
-      time**. `Where_the_ingest_span_goes`, second paced drive of the same boot, ran
-      99.5 / 99.6 / 99.8 / 99.7 ev/s at **5.5–43.4**, **5.8–31.5**, **2.5–18.8**,
-      **4.5–32.8 ms** — budget **above the whole interval** every time.
-      **The bistability is ordering, not chance**: within one boot the first paced drive
-      is seconds and the second is tens of milliseconds, 4/4. The historic unpaced shape
-      ran third and reached **80.2 / 94.7 / 95.1 / 95.5 ev/s**, not the 45–58 phase 4a
-      measured cold — so its rate is a property of when it runs, which is by itself
-      reason enough that it cannot carry a verdict.
+      **DONE 2026-09-09, six paced runs — and phase 5 refuted half of the first
+      reading.** `Requirement_span…` ran first in its boot every time and achieved
+      98.1 / 99.4 / 99.6 / 99.8 / 98.9 / 99.0 ev/s, typical requirement span
+      **5.4–4017.9**, **6.2–2438.8**, **7.2–1895.3**, **6.5–1904.7**, **5.8–2375.7**,
+      **4.9–1400.3 ms** — the 50 ms budget **inside the interval every time: this fact
+      cannot say whether NFR-001 was met.** `Where_the_ingest_span_goes` ran second and
+      reported **5.5–43.4**, **5.8–31.5**, **2.5–18.8**, **4.5–32.8**, **4.6–33.1**,
+      **3.3–16.8 ms**.
+      **What phase 5 struck out.** "Budget above the whole interval every time" is
+      **false** — over 14 boots the second drive was `above` in 5 and `inside` in 2
+      (ceiling 73.4 ms). And "the bistability is ordering" overstates it: 7 of 7
+      within-boot pairs had the second drive faster, by 3.2× to 143×, and boot 2 is a
+      clean reverse counterfactual (the always-fast fact read 5146.1 ms when it ran
+      first) — but **2 of 10 first drives were already fast** (402.4, 54.1 ms). A
+      tendency, not a law, which is why the position is now *printed* rather than warmed
+      away (`IngestSpanMeasurement.PacedDrivesSinceBoot`).
+      The historic unpaced shape reached **80.2 / 94.7 / 95.1 / 95.5 / 82.9 / 93.4 ev/s**
+      running third, against the 45–58 measured cold at phase 4a — its rate is a property
+      of when it runs, which is by itself reason enough that it cannot carry a verdict.
 
 **US2 checkpoint** — no fact in the repository reports an NFR-001 verdict from a run it
 did not pace, and the verdict that exists reports an interval rather than a point.
@@ -210,18 +218,64 @@ did not pace, and the verdict that exists reports an interval rather than a poin
         requirement is genuinely missed, and the next step is a per-row
         transport-receipt stamp, which is **not** taken in this pass.
       **Depends: T102. Serial with every other fixture task.**
-      **DONE 2026-09-09. NEAR ZERO, twice.** 3000 events paced, 0 unacknowledged before
-      each drive, 3000 rows landed. Run 1: window 30.1 s, drain **99.7 ev/s**, 94 samples
-      (55 non-zero, peak **2**), mean unacknowledged **1.01**, implied leg **10.1 ms**.
-      Run 2: window 30.3 s, drain **98.9 ev/s**, 94 samples (72 non-zero, peak **5**),
-      mean **1.94**, implied leg **19.6 ms**. A peak of 2–5 in flight at 100 ev/s is not
-      a prefetch buffer holding a queue. So the handover is at handler entry, the
-      requirement's span is the **floor** of the interval — 2.5–9.0 ms across every run
-      above — and the seconds seen end to end are queue wait **before** delivery, outside
-      NFR-001's leg and outside every budget in this repository.
+      **DONE 2026-09-09 — and the answer is DEEP, which phase 4b got wrong first time.**
+      The number is bimodal on drive position, and phase 4b sampled only the warm half.
+      - **Cold** (first paced drive of its boot), phase 5 ×4 plus one re-run here after
+        the F1–F3 fixes: implied leg **237.8 / 794.1 / 402.2 / 306.6 ms** and **248.3 ms**;
+        L 22.18 / 74.95 / 37.79 / 28.58 / **23.49**, drain 93.2–94.6 ev/s, peak **64–115**
+        in flight. **DEEP, five times out of five.**
+      - **Warm** (third drive in): **16.8 / 11.7 / 51.8 ms** (phase 5) and **22.5 /
+        11.4 ms** here — near zero, except the 51.8 which is deep again.
+      - Phase 4b's original pair, **10.1 and 19.6 ms**, sits at the very bottom of the
+        warm range. Reporting it as the finding was reading one mode of a bimodal number.
+      Quiescent 0 and 3000/3000 landed in every run, so **A1 still holds** and the
+      division is sound. A peak of 64–115 unacknowledged at ~100 ev/s **is** a prefetch
+      buffer holding a queue, and that wait is inside NFR-001's leg.
+      **So this feature's claim is not "NFR-001 is met".** It is that the requirement's
+      own leg is now *readable*, and reads **12–52 ms warm, 248–794 ms cold**. That is
+      US3's explicitly anticipated **ambiguous** branch, and its stated next step — a
+      per-row transport-receipt stamp — is **not taken in this pass**.
 
 **US3 checkpoint** — the requirement's span is located inside "before handler", or the
 run says in one number why it could not be.
+
+---
+
+## What phases 5 and 6 changed, recorded so the next reader does not re-derive it
+
+**A7 is misattributed in T010 above.** The cold-stack `Polly.Timeout.TimeoutRejectedException`
+at `DefineAsync` belongs to **whichever fact touches `system-variables` first after a boot**,
+not to `Where_the_ingest_span_goes` specifically. Read the warning as "warm the service", not
+as a property of that one fact.
+
+**T013 is confirmed, not fixed, and that is the right outcome.** With nothing exported the
+stamps refusal is gone; `LoggingIsVerbose` then refuses at
+`NFR001_AuditIngestLatencyTests.cs:353`. Two remembered exports existed and US1 removed one.
+
+**Run mode is untested.** `RunModeIngestAttributionTests` refused for want of a configured
+stack, so #1956's own step 1 is undone. Recorded; not chased in this pass.
+
+**Phase 6 findings, all addressed** (`AuditHandoverPopulationTests.cs` untouched throughout —
+it is the phase-4a artefact):
+
+- **F1** quiescence is now asserted, not merely printed
+  (`AuditHandoverLegTests.cs`). Given phase 5's genuine deep readings, a false one off a
+  neighbour's backlog was the most expensive wrong answer available.
+- **F2** the paced verdict fact now applies the same three fitness guards its sibling does
+  over the same `IngestSpanResult` — `RowsMeasured`, `Verdict.IsEstablished`,
+  `LoggingIsVerbose`. The clock guard is the load-bearing one: both ends of the requirement
+  span include `WriteMs`, and phase 5 saw two negative floors.
+- **F3** both paced facts print `paced drive since boot: #N (cold|warm)`. Printed rather than
+  warmed away — the effect is a tendency, and a warm-up would hide which mode the figure came
+  from.
+- **F4** `AuditQueueProbe.ClientAsync` takes a trailing token, the sampler's HTTP read carries
+  the sampling token, and both `Task.Delay` calls take one (ADR-0049).
+- **F5** partially. `NFR001_AuditIngestLatencyTests.cs` went **532 → 370** lines by moving the
+  historic fact to `AuditIngestHistoricSpanTests.cs`. **Still over ADR-0084's 300**, and the
+  remaining path is not clean: the two paced facts share `BudgetPlacement`, `DrivePosition`
+  and the log-level accessors, and separating them would triplicate those. `IngestSpanMeasurement.cs`
+  is 455 and was already over before this spec. Not taken.
+- The probe duplication is **#2223**, deliberately out of scope.
 
 ---
 

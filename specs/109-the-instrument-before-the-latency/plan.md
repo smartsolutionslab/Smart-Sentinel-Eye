@@ -175,6 +175,21 @@ count answered a different question from the one asked of it.
   and **stops**. That stamp is production-path apparatus beyond ADR-0135's scope and is
   not taken in this pass.
 
+**Observed: the deep branch, and the plan did not anticipate that it would be
+bimodal.** Phase 5 drove this over 14 boots and phase 4b re-ran it after the review
+fixes. On the **first paced drive of a boot** the implied leg reads 237.8 / 794.1 /
+402.2 / 306.6 / 248.3 ms with 64–115 deliveries in flight — deep, 5 of 5. Three drives
+in it reads 11.4 / 11.7 / 16.8 / 22.5 ms — and once 51.8 ms, deep again. So the
+requirement's leg is now **readable** and reads **12–52 ms warm, 248–794 ms cold**;
+neither bullet above is the whole answer, and **"NFR-001 is met" is not this feature's
+claim**. The deep branch's stated next step, a per-row transport-receipt stamp, stands
+and is **not taken in this pass**.
+
+Phase 4b's own first pair of runs (10.1 and 19.6 ms) were both warm and both at the
+bottom of the warm range, and were briefly reported as "near zero". That is the failure
+this section's own warning describes, one level up: a count read twice, an inference
+drawn, and the inference wrong because both reads came from the same mode.
+
 ### Where this stops and raises an ADR instead
 
 If locating the handover turns out to need a **Wolverine listener policy or middleware**

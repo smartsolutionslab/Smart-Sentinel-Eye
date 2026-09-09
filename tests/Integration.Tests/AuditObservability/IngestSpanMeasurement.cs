@@ -16,7 +16,8 @@ public sealed record IngestSpanResult(
     IngestAttribution Tail,
     ClockOffset Offset,
     AttributionVerdict Verdict,
-    IngestRunConditions Conditions);
+    IngestRunConditions Conditions,
+    int PacedDrivePosition);
 
 /// <summary>
 /// The audit-ingest measurement run, extracted so that the fixture run and the
@@ -46,6 +47,8 @@ public sealed record IngestSpanResult(
 /// </summary>
 public static class IngestSpanMeasurement
 {
+    private static int pacedDrives;
+
     /// <summary>How long to wait for the last measured row to reach the store.</summary>
     internal static readonly TimeSpan IngestDeadline = TimeSpan.FromMinutes(3);
 
@@ -64,6 +67,27 @@ public static class IngestSpanMeasurement
     public static readonly Func<Task> NoPacing = () => Task.CompletedTask;
 
     /// <summary>
+    /// How many paced drives this test process has started, counted so a run can
+    /// print <b>which one it was</b>.
+    ///
+    /// <para>
+    /// <b>Position is a condition of the measurement here, not trivia.</b>
+    /// Phase 5 drove fourteen boots and found the first paced drive of a boot
+    /// slower than the second in 7 of 7 within-boot pairs, by 3.2x to 143x — and
+    /// found 2 of 10 first drives already fast, so it is a tendency and not a
+    /// law. A reader comparing two intervals that differ hundredfold otherwise
+    /// has nothing printed to attribute the difference to.
+    /// </para>
+    ///
+    /// <para>
+    /// Counted rather than warmed away. The warm-up before each drive is
+    /// unpaced, so it does not exercise what the effect is about; making it
+    /// paced would bury the mode the figure was taken in rather than report it.
+    /// </para>
+    /// </summary>
+    public static int PacedDrivesSinceBoot => Volatile.Read(ref pacedDrives);
+
+    /// <summary>
     /// A gate that admits one write per slot, drawn from <b>one counter shared by
     /// every writer</b>, so the rate belongs to the run rather than to each
     /// writer.
@@ -76,6 +100,8 @@ public static class IngestSpanMeasurement
     /// </summary>
     public static Func<Task> PaceTo(double slotIntervalMs, CancellationToken cancellationToken)
     {
+        Interlocked.Increment(ref pacedDrives);
+
         Stopwatch pacing = Stopwatch.StartNew();
         long issued = 0;
 
@@ -183,7 +209,7 @@ public static class IngestSpanMeasurement
         // deposit, over and over.
         await VariableRequests.ArchiveAllAsync(variables, [warmName, .. measureNames], cancellationToken);
 
-        return new IngestSpanResult(typical, tail, offset, verdict, conditions);
+        return new IngestSpanResult(typical, tail, offset, verdict, conditions, PacedDrivesSinceBoot);
     }
 
     /// <summary>
