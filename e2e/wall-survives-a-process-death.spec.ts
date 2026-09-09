@@ -195,8 +195,15 @@ test.describe('A wall survives a process death (spec 107 US1)', () => {
       // POSIX-only, so on Linux a `close()` that returns before the process is
       // reaped leaves launch #2 either blocking to the 300 s timeout or quietly
       // re-creating the profile. A named failure here beats both.
+      // The listing is folded into the message because this check fires at the
+      // one moment nothing can be looked at afterwards: process #1's trace has
+      // just been discarded (green so far) and process #2 does not exist yet.
       const leveldb = await readdir(join(profile, 'Default', 'Local Storage', 'leveldb')).catch(() => null);
-      expect(leveldb, 'the dead process must have flushed Local Storage to disk').not.toBeNull();
+      const onDisk = await readdir(profile).catch(() => ['<profile unreadable>']);
+      expect(
+        leveldb,
+        `the dead process must have flushed Local Storage to disk; the profile holds: ${onDisk.join(', ')}`,
+      ).not.toBeNull();
 
       // --- process #2 — same directory, nothing handed over ----------------
       const second: BrowserContext = await chromium.launchPersistentContext(profile, { ignoreHTTPSErrors: true });
@@ -206,6 +213,12 @@ test.describe('A wall survives a process death (spec 107 US1)', () => {
       // Recovery through the stored grant is a `grant_type=refresh_token` token
       // call and nothing else; a screen that reached the picker via the provider
       // would have gone through `/protocol/openid-connect/auth` on the way.
+      //
+      // Both halves were shown capable of failing rather than assumed to be
+      // (spec §8): C2b leaves `grantTypes` **empty** and reddens the first, and a
+      // probe that attached this same collector to process #1 — which does sign
+      // in interactively — caught its one `/auth` request, so the second is
+      // watching a live wire and not an empty one.
       const grantTypes: string[] = [];
       const providerPrompts: string[] = [];
       second.on('request', (request) => {
@@ -251,12 +264,15 @@ test.describe('A wall survives a process death (spec 107 US1)', () => {
         expect(survived, 'the SSO identity cookie must not outlive the process that held it').not.toContain(
           'KEYCLOAK_IDENTITY',
         );
+        // The A2 correction, asserted where a reader meets it rather than only in
+        // the spec — and it is what makes the clear below real work. Re-reading
+        // the jar *after* the clear on the same regex would assert only that
+        // Playwright honours its own contract.
+        expect(survived, 'KEYCLOAK_SESSION does survive a process death (spec §10 A2, corrected)').toContain(
+          'KEYCLOAK_SESSION',
+        );
 
         await second.clearCookies({ name: /^KEYCLOAK_|AUTH_SESSION_ID/ });
-        const providerSession = (await second.cookies()).filter((cookie) =>
-          /^KEYCLOAK_|AUTH_SESSION_ID/.test(cookie.name),
-        );
-        expect(providerSession, 'a restarted device carries no provider session cookie').toHaveLength(0);
 
         await revived.goto(WALL);
 
