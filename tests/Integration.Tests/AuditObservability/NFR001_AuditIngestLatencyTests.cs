@@ -331,4 +331,137 @@ public class NFR001_AuditIngestLatencyTests(AspireFixture aspire, ITestOutputHel
             + $"{IngestRunShape.TargetRatePerSecond:F0}; NFR-001 is a claim about that rate sustained, "
             + "and a breakdown taken at another rate answers another question");
     }
+
+    /// <summary>
+    /// **The requirement's span, at the rate the requirement names** (spec 109
+    /// US2). Excluded from CI like its neighbours: the fixture is bistable at
+    /// 100 ev/s (ADR-0136) and a bistable figure does not belong in a gate.
+    ///
+    /// <para>
+    /// <b>It reports an interval and asserts no verdict.</b> NFR-001's span is
+    /// "RabbitMQ deliver-ack to audit row committed", and the hand-over falls
+    /// <i>inside</i> "before handler" with no publisher-side stamp to divide it
+    /// (<see cref="IngestAttribution.RequirementSpanWidthMs"/>). So the budget is
+    /// <i>placed</i> against the floor-to-ceiling interval and the reader is told
+    /// where it fell. Asserting <c>p99 &lt; 50</c> against the ceiling is the
+    /// assertion that produced every superseded verdict on #1956; asserting it
+    /// against the floor is the same error mirrored, and turns the fact green for
+    /// the wrong reason.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>What it does assert is that the run was fit to be read</b>: that it
+    /// drove at the rate the requirement names, that every row carried its
+    /// stamps, and that the parts cover each row. A number taken at another rate
+    /// answers another question — which is exactly what
+    /// <see cref="Ingest_p99_from_publish_to_row_stays_under_50ms"/> above has
+    /// been doing at ~15-20 ev/s.
+    /// </para>
+    /// </summary>
+    [Trait("Category", "Measurement")]
+    [Fact]
+    public async Task Requirement_span_at_100_events_per_second_is_an_interval_not_a_verdict()
+    {
+        using HttpClient variables = await aspire.CreateAdminClientAsync("system-variables");
+
+        await using AuditObservabilityDbContext context =
+            await aspire.CreateAuditObservabilityDbContextAsync();
+
+        // **The drive, and the only thing this fact is waiting on.** One
+        // sequential writer, unpaced — the historic shape, and the shape every
+        // figure quoted against NFR-001 on #1956 was taken at. It is here so the
+        // rate guard below has something real to refuse.
+        string warmName = await IngestSpanMeasurement.DefineAsync(variables, CancellationToken.None);
+        string measureName = await IngestSpanMeasurement.DefineAsync(variables, CancellationToken.None);
+
+        await IngestSpanMeasurement.SetRepeatedlyAsync(
+            variables, warmName, IngestRunShape.WarmupEvents, IngestSpanMeasurement.NoPacing, CancellationToken.None);
+
+        DateTimeOffset started = DateTimeOffset.UtcNow;
+        string measured = await IngestSpanMeasurement.SetRepeatedlyAsync(
+            variables, measureName, IngestRunShape.MeasuredEvents, IngestSpanMeasurement.NoPacing, CancellationToken.None);
+        TimeSpan drove = DateTimeOffset.UtcNow - started;
+
+        int landed = await IngestSpanMeasurement.WaitForRowsAsync(context, [measured], CancellationToken.None);
+
+        IngestAttribution typical = await IngestSpanMeasurement.AttributionAsync(
+            context, [measured], tailOnly: false, CancellationToken.None);
+        IngestAttribution tail = await IngestSpanMeasurement.AttributionAsync(
+            context, [measured], tailOnly: true, CancellationToken.None);
+
+        IngestRunConditions conditions = new(
+            Environment: "Aspire test fixture",
+            Endpoint: variables.BaseAddress?.ToString() ?? "unknown",
+            IntendedRatePerSecond: IngestRunShape.TargetRatePerSecond,
+            AchievedRatePerSecond: IngestRunShape.MeasuredEvents / drove.TotalSeconds,
+            LogLevel: ServiceLogLevel,
+            LogLevelWasChosen: ServiceLogLevelWasChosen,
+            MeasurementSwitchOn: typical.RowsMeasured > 0 && typical.RowsMissingStamps == 0,
+            RowsMeasured: landed,
+            RowsMissingStamps: typical.RowsMissingStamps);
+
+        // The conditions before anything that can fail, so a refused run still
+        // says what it was refused for.
+        output.WriteLine(conditions.Describe());
+        output.WriteLine("--- typical event (medians over every row) ---");
+        output.WriteLine(typical.Describe());
+        output.WriteLine(BudgetPlacement("typical", typical));
+        output.WriteLine("--- tail band (rows at or above the p99 of the total) ---");
+        output.WriteLine(tail.Describe());
+        output.WriteLine(BudgetPlacement("tail", tail));
+
+        await VariableRequests.ArchiveAllAsync(variables, [warmName, measureName], CancellationToken.None);
+
+        // **The rate first.** NFR-001 is a claim about a sustained 100 ev/s, and
+        // a breakdown taken at another rate answers another question — so
+        // nothing printed above is worth reading until this holds.
+        conditions.RateWasMet.ShouldBeTrue(
+            $"the run drove {conditions.AchievedRatePerSecond:F1} ev/s against a target of "
+            + $"{IngestRunShape.TargetRatePerSecond:F0}; NFR-001 is a claim about that rate sustained, "
+            + "and a verdict taken at another rate is not a verdict about NFR-001");
+
+        typical.EveryRowStamped.ShouldBeTrue(
+            $"{typical.RowsMissingStamps} rows arrived without the measurement stamps, so the "
+            + "requirement span has neither a floor nor a ceiling; turn the switch on");
+
+        typical.PartsCoverEveryRow.ShouldBeTrue(
+            $"the median row leaves {typical.PerRowResidualMs:F3} ms between its span and its parts; "
+            + "consecutive stamps cannot do that, so the stamps disagree with the timestamps that "
+            + "bracket them");
+    }
+
+    /// <summary>
+    /// Where the budget falls against the requirement span's interval —
+    /// **reported, never asserted**.
+    ///
+    /// <para>
+    /// Three placements, and only two of them are answers. A budget below the
+    /// whole interval means the span exceeds it on any reading; above the whole
+    /// interval means it is inside on any reading; and inside the interval means
+    /// this run cannot say, which is the state every figure on #1956 was quoted
+    /// from without noticing.
+    /// </para>
+    /// </summary>
+    private static string BudgetPlacement(string band, IngestAttribution attribution)
+    {
+        string placement = "inside the interval — this run cannot say whether NFR-001 was met or missed";
+
+        if (P99BudgetMs < attribution.RequirementSpanFloorMs)
+        {
+            placement = "below the whole interval — the span exceeds the budget on any reading";
+        }
+
+        if (P99BudgetMs > attribution.RequirementSpanCeilingMs)
+        {
+            placement = "above the whole interval — the span is inside the budget on any reading";
+        }
+
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"""
+               NFR-001 budget, {band,-21}: {P99BudgetMs:F0} ms
+               against the interval                : {attribution.RequirementSpanFloorMs:F1} to {attribution.RequirementSpanCeilingMs:F1} ms (width {attribution.RequirementSpanWidthMs:F1} ms)
+               the budget falls                    : {placement}
+             """);
+    }
 }
