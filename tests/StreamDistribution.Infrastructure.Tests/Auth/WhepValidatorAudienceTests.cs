@@ -1,8 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
-using System.Reflection;
 using System.Security.Claims;
 using System.Security.Cryptography;
-using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
@@ -41,13 +39,13 @@ namespace SmartSentinelEye.StreamDistribution.Infrastructure.Tests.Auth;
 /// </para>
 ///
 /// <para>
-/// <b>No Docker, no network, no realm.</b> The validator's
-/// <see cref="ConfigurationManager{T}"/> is built in its constructor with a
-/// non-injectable <c>HttpDocumentRetriever</c>, so the OIDC metadata is stubbed by
-/// replacing the field: the discovery document and JWKS are served from memory and
-/// the signing key is generated here. Reflecting on a private field of our own
-/// type is the cost of that; a rename fails these tests loudly with a message
-/// saying so, rather than skipping them.
+/// <b>No Docker, no network, no realm.</b> The validator takes its metadata
+/// source through an internal constructor (#2099), so these tests hand it a
+/// <see cref="ConfigurationManager{T}"/> over an in-memory
+/// <see cref="IDocumentRetriever"/>: the discovery document and JWKS are served
+/// from memory and the signing key is generated here. Everything else about the
+/// validator is the production object — the parameters, the handler and
+/// <c>ValidateAsync</c> itself are untouched.
 /// </para>
 ///
 /// <para>
@@ -72,18 +70,6 @@ public sealed class WhepValidatorAudienceTests : IDisposable
     private const string JwksUri = Authority + "/protocol/openid-connect/certs";
 
     private const string SigningKeyIdentifier = "whep-validator-audience-tests";
-
-    /// <summary>
-    /// The one private field these tests reach into. Resolved once, with a message
-    /// that names the rename if it ever stops existing — a test that quietly stops
-    /// covering the runtime object is the exact failure mode #2093 is about.
-    /// </summary>
-    private static readonly FieldInfo OidcField =
-        typeof(WhepAuthValidator).GetField("oidc", BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new InvalidOperationException(
-            "WhepAuthValidator no longer has a private 'oidc' field. These tests stub the OIDC "
-            + "metadata through it so ValidateAsync can run without a realm; point them at the "
-            + "renamed field rather than deleting them (#2093).");
 
     private readonly RSA signingKey = RSA.Create(2048);
 
@@ -130,20 +116,18 @@ public sealed class WhepValidatorAudienceTests : IDisposable
     }
 
     /// <summary>
-    /// A real validator, with only its metadata source replaced. The constructor
-    /// dials nothing, so the swap happens before the first token is validated.
+    /// A real validator, with only its metadata source supplied. Nothing is
+    /// dialled: the manager is addressed at <see cref="Authority"/>, as the
+    /// production constructor addresses it, and answers from memory.
     /// </summary>
     private WhepAuthValidator ValidatorWithStubbedMetadata()
     {
-        WhepAuthValidator validator = new(Options.Create(new WhepAuthOptions { Authority = Authority }));
-
         ConfigurationManager<OpenIdConnectConfiguration> metadata = new(
             $"{Authority}/.well-known/openid-configuration",
             new OpenIdConnectConfigurationRetriever(),
             new StubbedMetadata(DiscoveryDocument, JsonWebKeySet()));
 
-        OidcField.SetValue(validator, metadata);
-        return validator;
+        return new WhepAuthValidator(metadata);
     }
 
     private static string DiscoveryDocument =>
