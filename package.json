@@ -10,7 +10,8 @@
   "scripts": {
     "build": "pnpm -r --filter \"./apps/**\" build",
     "lint": "pnpm -r --filter \"./apps/**\" lint",
-    "test": "pnpm -r --filter \"./apps/**\" test",
+    "test": "pnpm -r --filter \"./apps/**\" test && pnpm test:guards",
+    "test:guards": "node --test \"scripts/**/*.test.mjs\"",
     "typecheck": "pnpm -r --filter \"./apps/**\" typecheck && pnpm typecheck:e2e",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json --noEmit",
     "format": "prettier --write \"{apps,e2e}/**/*.{ts,tsx,js,jsx,json,css,md,yaml,yml}\" playwright.config.ts",
@@ -19,8 +20,13 @@
     "test:e2e:install": "playwright install chromium"
   },
   "devDependencies": {
+    "@eslint/js": "9.18.0",
     "@playwright/test": "^1.62.1",
     "@types/node": "^22.20.1",
+    "@typescript-eslint/eslint-plugin": "8.68.0",
+    "@typescript-eslint/parser": "8.68.0",
+    "eslint": "9.18.0",
+    "eslint-config-prettier": "9.1.0",
     "prettier": "3.9.6",
     "typescript": "6.0.3"
   }
