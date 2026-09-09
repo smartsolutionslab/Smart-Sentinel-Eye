@@ -215,6 +215,19 @@ and what it does **not** license:
 
 > The 800 ms SLO holds. / §IV's event → overlay state leg is measured. / The path is watched.
 
+**The figure is a bracket, and quoting either end alone is an error** (re-review finding 4).
+The raw p50 is a **ceiling**: it contains the browser's `fetch` and the gateway hop, which
+precede §IV's span. The p50 net of each sample's own submit round trip is a **floor**: the
+request's `responseEnd` includes the service's own processing of the write, which is
+*genuinely inside* event → overlay state, so subtracting it removes real span along with the
+overshoot. The harness prints both ends and calls the pair a bracket. **Measured on this
+machine: [82, 234] ms.**
+
+Phase 6 established that the run-to-run spread is almost entirely this one term — the submit
+round trip p50 moved 152.2 → 36.0 → 79.1 ms across three runs while the net p50 held at
+102 → 88.5 → 82 ms. **That is a reason to quote the bracket, not a reason to distrust the
+instrument.**
+
 **How much of the 800 ms this span can possibly account for — 250 ms, and the arithmetic is
 not a subtraction.** §IV's 800 is `80 + 120 + 200 + 200 + 50 + 150`. This span covers **two**
 of those rows: *event → overlay state* (200) and *overlay composite + render* (50). The other

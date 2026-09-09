@@ -203,6 +203,8 @@ for `t1` — the product's own definition of *painted*
 contexts of one browser on one machine.
 
 **Stated error: ~±52 ms** (2 rAF ≈ 33 ms + click dispatch ≈ 17 ms + 2 × `Date.now()` 1 ms).
+*Superseded twice — see phase 6 for the skew term, and re-review findings 2 and 3 for the
+shape and the size of the rAF term.*
 Phase 4a's paired calibration recovered a 300 ms injected delay as a mean of 296 ms across
 ten adjacent pairs, all inside 277–340 — an observed spread of ~±32 ms, comfortably inside
 the stated ceiling. **I did not re-run that calibration**; its apparatus was reverted and is
@@ -436,9 +438,22 @@ one-way probe is not.
 | C1 run (earlier, contaminated) | `[−5, +4] ms` | `[−3, +3] ms` | yes, both |
 | kiosk + wall, `--workers=1` | `[−3, +4] ms` | `[−4, +3] ms` | yes, both |
 
-**The bound is |δ| ≤ 6 ms across every probe of every run, and every interval contains zero.**
-Twelve probes, six runs — including a seven-minute suite — with the brackets agreeing within
-each run, so no drift was observed either.
+**Every one of the twelve probes returned |δ| ≤ 6 ms, and every interval contains zero.**
+
+**Stated precisely, because the loose version is tempting and wrong: this bounds δ at the
+twelve instants the probes ran, not throughout the runs.** Before-and-after brackets that
+agree show no drift *between* those two instants; an excursion that departed and returned
+mid-loop would be invisible to them. What the evidence supports is "δ was within [−6, +6] ms
+whenever it was looked at, twice per run, across six runs including a seven-minute suite" —
+not "δ ≤ 6 ms throughout".
+
+**And it is now asserted, not merely printed** (re-review finding 1). A bracket that excludes
+zero, or a pair of brackets that do not intersect, **fails the run**. Previously it printed
+"EXCLUDES zero" and reported green — the one clock pathology of the three that could not fail,
+where a negative elapsed already refused and a backwards kiosk clock already threw. That is
+not the "figures are recorded, not gated" exemption, which is about the span against 800 ms:
+this asserts the subtraction means anything at all, which is a precondition of reporting a
+figure rather than a threshold on it.
 
 **What this settles.** G1 held. It was *not* established by the evidence the spec originally
 cited for it, and the difference matters: a constant −60 ms offset would have made every
@@ -472,7 +487,9 @@ Two figures changed name at phase 6, and both had been reading better than they 
 | submit round trip p50 / max | 152.2 / 529.8 ms | 36.0 / 89.7 ms | 79.1 / 198.8 ms |
 | **p50 net of each sample's own round trip** | **102 ms** | **88.5 ms** | **82 ms** |
 | skew bound | ≤ 6 ms | ≤ 4 ms | ≤ 6 ms |
-| total instrument error | ~±58 ms | ~±56 ms | ~±58 ms |
+| error, R = 33 ms (best case) | `[−25, +39]` | `[−23, +39]` | `[−23, +41]` |
+| error, R = this run's `overlay_draw` p50 | `[−25, +58]` | `[−23, +51]` | `[−23, +46]` |
+| **§IV bracket** (net floor → raw ceiling) | **[102, 233.5]** | **[88.5, 122.5]** | **[82, 177.5]** |
 | `overlay_draw` p50 / max | 51.7 / **79.8** ms | 45.3 / **81.6** ms | 37.9 / **84** ms |
 | `label_delay` | no samples | no samples | no samples |
 
@@ -481,15 +498,36 @@ had taken; phase 5 named its absence as the one comparison that would settle §3
 **It does not settle §3d in #2072's favour**: 233.5 ms is still well below 555 ms, though it
 is three times phase 5's warm 79 ms.
 
-**Read across all six runs of this feature, the p50 lies between 79 ms and 234 ms.** That is
-the honest statement. **It is not a number.** The corrected p50 arithmetic does not explain
-the difference — recomputed on phase 5's run 1 the averaged median is 78 ms against the 79 ms
-it printed — so the difference is the machine and the stack's thermal state, not the label.
+**Read across all six runs of this feature, the raw p50 lies between 79 ms and 234 ms.**
 
-**Net of the head overshoot the three runs agree closely: p50 82–102 ms**, against phase 5's
-60–65 ms. So **most of the run-to-run variation is the submit round trip**, which is head
-overshoot outside §IV's span, and phase 5's reading that "the whole tail is the submit round
-trip" survives the harder cold case rather than being an artefact of a warm one.
+**The cause of that spread is measured, and it is not thermal state.** I wrote "thermal state"
+first; it was a guess, and the data already contained the answer. Across the three phase-6
+runs the **submit round trip p50 moved 152.2 → 36.0 → 79.1 ms** (maxima 529.8 / 89.7 /
+198.8) while the **p50 net of each sample's own round trip barely moved: 102 → 88.5 → 82 ms**.
+The head term varied roughly fourfold; the tail did not. So the spread lives almost entirely
+in a term the instrument already prints, already tells the reader to subtract, and which
+**§IV's span excludes by definition**.
+
+Two consequences, and the second is the one that changes what gets quoted:
+
+1. **The spread is not evidence the instrument is unstable.** It is the instrument resolving a
+   term that genuinely varies. That strengthens the case for quoting the figure.
+2. **Net-of-round-trip over-subtracts.** `responseEnd` includes the service's own processing
+   of the write, which is *genuinely inside* event → overlay state. Subtracting it removes real
+   span along with the head overshoot.
+
+**So §IV's span is bracketed, not measured to a point:**
+
+> **§IV's *event → overlay state* + *composite + render* lies between 82 ms and 234 ms on this
+> machine.** The **floor** is the lowest net-of-round-trip p50 and is a floor because it
+> over-subtracts server processing. The **ceiling** is the highest raw p50 and is a ceiling
+> because it over-counts the browser `fetch` and the gateway hop, which precede §IV's span.
+> **Quote the bracket. Neither end is the figure**, and the harness now prints this bracket
+> per run rather than leaving the reader to construct it.
+
+The reviewer checked the obvious confound and it is absent: `label_delay` reads `no samples`
+in all six runs and *does* produce samples elsewhere (35–45 ms on a two-tile wall), so the
+ADR-0129 hold is genuinely not in these figures and is not the spread's cause.
 
 **What none of this licenses.** The span covers **250 ms of §IV's 800** — *event → overlay
 state* (200) and *composite + render* (50). The other 400 ms of budgeted legs are **not
@@ -541,9 +579,18 @@ same wall and is reported below rather than dropped):
 
 | statistic | recovered | against |
 |---|---|---|
-| **median(delayed) − median(undelayed)** — robust to the one outlier | **304.5 ms** | 300 |
-| mean of the ten adjacent pairs, **net of each sample's own round trip** | **280.3 ms** (range 233–372) | 300 |
+| **PREFERRED — mean of the ten adjacent pairs, net of each sample's own round trip** | **280.3 ms** (range 233–372) | 300 |
+| median(delayed) − median(undelayed) | 304.5 ms | 300 |
 | mean of the ten adjacent pairs, raw | 377 ms | 300 |
+
+**280.3 is the estimator to quote**, and it is named rather than left to a reader's choice:
+three unranked numbers for one injected quantity let a later reader pick the flattering one.
+It is preferred because it removes the confound the other two carry — the submit round trip,
+which varies fourfold between runs and is not the injected quantity.
+
+**The honest scale claim is therefore wider than "296".** Phase 4a's n=10 run gives 296 ms
+(−1.3 %) and phase 6's n=20 run gives 280.3 ms (−6.6 %) by the same estimator. Those disagree
+by five points, so **C1 supports a recovery of roughly −7 % / +2 %**, not a point estimate.
 
 The raw mean is dragged by one pair whose delayed sample carried a **941 ms** submit round
 trip — head overshoot, not the injected quantity. **The location-shift estimate recovers
@@ -617,7 +664,8 @@ pnpm test                                              → 54 files, 546 tests, 
 pnpm format:check                                      → All matched files use Prettier code style!
 pnpm lint                                              → eslint --max-warnings 0, all three apps clean
 pnpm exec playwright test --list                       → Total: 58 tests in 28 files
---project=kiosk --project=wall --workers=1             → 33 passed (7.2m)
+--project=kiosk --project=wall --workers=1             → 33 passed (7.2m), BEFORE the re-review fixes
+--project=kiosk kiosk-shows-a-label-over-video         → 8 passed, AFTER them (and one red, below)
 ```
 
 `--workers=1` is stated because it is **the configuration CI runs**
@@ -651,6 +699,43 @@ This is a **concurrency interaction between the wall specs and the span's realti
 not an instrument defect and not something this branch may fix (it would be product or
 shared-fixture work). It does not affect CI, which runs one worker. **Recorded because
 neither phase 4a nor phase 5 ran these two projects together, so nobody had seen it.**
+
+## The re-review fixes, and the two runs after them
+
+Six findings, all fixed. **Findings 1, 2, 3, 5 and 6 change what is reported or asserted, not
+what is measured; finding 4 adds a computed bracket.** I re-ran the span spec twice against a
+freshly booted stack to confirm the new assertion path and the new lines. **I did not re-run
+`--project=kiosk --project=wall --workers=1`** — no fix touches the wall specs or the shared
+fixture — so that gate stands on the earlier 33-passed run and is reported as such rather than
+restated as if I had watched it again.
+
+| | re-review run 1 | **re-review run 2** |
+|---|---|---|
+| outcome | **failed** — see below | **8 passed** |
+| n | 9 of 10 | 10 |
+| raw p50 | 459 ms | 153 ms |
+| **§IV bracket** | *[128.9, 459] — partial* | **[110.4, 153]** |
+| skew, before / after | `[−5, +4]` / `[−4, +4]` | `[−5, +6]` / `[−3, +3]` |
+| error, R = 33 (best) | `[−23, +40]` | `[−25, +40]` |
+| **error, R measured** | **`[−23, +58]`** (R = 51 ms) | **`[−25, +78]`** (R = 71 ms) |
+| `overlay_draw` p50 / max | 50.5 / 77.4 ms | **70.9** / 88.7 ms |
+
+**Run 1's red is the pre-existing delivery stall, not the new assertions.** It refused with
+`iteration 9: the value never painted on the tile within 60000 ms (0 label mutation(s) were
+seen)` — at the **full 60 s ceiling**, so the derived budget was not the cause, and with
+**zero** mutations, so nothing arrived at all. Both skew assertions passed in that same run.
+It is the same signature as the kiosk+wall stall recorded above, on a stack booted minutes
+earlier with submit round trips up to 667 ms. Recorded rather than re-run away.
+
+**Finding 2 is vindicated by run 2 more sharply than by the argument for it.** That run's
+`overlay_draw` p50 was **70.9 ms** — the identical 2-rAF construct on the same page. The old
+line asserted that term was 33 ms. **The measured error interval for that run is
+`[−25, +78]` ms, against a "±52" the old line would have printed.** 33 ms was a floor quoted
+as a ceiling, and the gap is not small.
+
+**`overlay_draw` is now over its 50 ms budget at the MEDIAN in two of the five phase-6 runs**
+(51.7 and 70.9 ms) and over it at the maximum in all of them. That is a firmer finding than
+phase 6 first recorded, and it is still a human's to act on.
 
 ## What phase 6 did not establish
 
