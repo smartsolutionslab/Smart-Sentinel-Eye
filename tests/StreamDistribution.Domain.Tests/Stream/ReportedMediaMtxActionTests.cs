@@ -69,6 +69,63 @@ public class ReportedMediaMtxActionTests
         reported.Value.ShouldBe("read��warn: authorized");
     }
 
+    /// <summary>
+    /// <b>Security review F2.</b> <c>char.IsControl</c> was one category short.
+    /// U+2028/U+2029 are real line breaks in some sinks and in every
+    /// JavaScript-side viewer, and U+202E reorders everything after it for a
+    /// human reader without touching a byte — the same class of defect as the
+    /// <c>\r\n</c> above, reached by a different door.
+    /// </summary>
+    // Given as numeric code points, not literals: U+2028 inside a C# string
+    // literal is a newline to the compiler ("CS1010: Newline in constant"),
+    // which is this finding demonstrating itself.
+    [Theory]
+    [InlineData(0x2028)]  // Zl - a line break in some sinks
+    [InlineData(0x2029)]  // Zp - likewise
+    [InlineData(0x202E)]  // Cf - right-to-left override
+    [InlineData(0x200B)]  // Cf - zero-width space
+    [InlineData(0x0007)]  // Cc - the category the old filter already caught
+    public void From_neutralises_characters_that_rewrite_the_line_around_them(int codePoint)
+    {
+        string dangerous = char.ConvertFromUtf32(codePoint);
+
+        ReportedMediaMtxAction reported = ReportedMediaMtxAction.From("read" + dangerous + "publish");
+
+        reported.Value.ShouldNotContain(dangerous);
+        reported.Value.ShouldBe("read�publish");
+    }
+
+    /// <summary>
+    /// A cap counted in <c>char</c>s could fall between the halves of a
+    /// surrogate pair and leave a lone surrogate. Counting runes cannot.
+    /// </summary>
+    [Fact]
+    public void From_never_splits_a_surrogate_pair_at_the_cap()
+    {
+        string astral = string.Concat(Enumerable.Repeat("\U0001F4F7", 100));
+
+        ReportedMediaMtxAction reported = ReportedMediaMtxAction.From(astral);
+
+        reported.Value.ShouldBe(
+            string.Concat(Enumerable.Repeat("\U0001F4F7", ReportedMediaMtxAction.MaximumLength)) + "…");
+        reported.Value.Any(char.IsSurrogate).ShouldBeTrue();
+
+        // 64 runes is 128 chars plus the mark - the cap counts runes, not chars.
+        reported.Value.Length.ShouldBe((ReportedMediaMtxAction.MaximumLength * 2) + 1);
+        reported.Value.ShouldNotContain("�");
+    }
+
+    /// <summary>
+    /// Clamped, never rejected. A factory that threw on a long or hostile value
+    /// would turn a diagnosable 403 into a 500 at exactly the moment the
+    /// diagnosis is wanted, which is the failure this type exists to avoid.
+    /// </summary>
+    [Fact]
+    public void From_clamps_rather_than_rejects()
+    {
+        Should.NotThrow(() => ReportedMediaMtxAction.From(new string((char)0x202E, 5000)));
+    }
+
     [Fact]
     public void ToString_returns_the_bounded_value()
     {
