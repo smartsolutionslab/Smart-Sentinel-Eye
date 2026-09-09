@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using SmartSentinelEye.Shared.Kernel;
 using SmartSentinelEye.Shared.Kernel.Primitives;
 
@@ -14,9 +16,11 @@ namespace SmartSentinelEye.StreamDistribution.Domain.Stream;
 /// <b>It exists so that "bounded" is a property of the type, not a rule at the
 /// call site.</b> The field is attacker-influenced only insofar as MediaMTX
 /// composes the body, but an unbounded value in a log is a finding whoever put
-/// it there: <see cref="From"/> caps the length and neutralises control
-/// characters, so there is no way to hold one of these that is not already safe
-/// to log.
+/// it there: <see cref="From"/> caps the length and neutralises characters that
+/// can rewrite the line around them, so there is no way to hold one of these
+/// that is not already safe to log. It <b>clamps and never rejects</b> — a
+/// factory that threw would turn a diagnosable 403 into a 500 at exactly the
+/// moment the diagnosis is wanted.
 /// </para>
 ///
 /// <para>
@@ -38,6 +42,9 @@ public sealed record ReportedMediaMtxAction : StringValueObject
     /// truncates the honest case destroys the diagnosis it exists to provide.
     /// It is still far below anything that could bloat a log record or push a
     /// message past a sink's line limit.
+    ///
+    /// <para>Counted in runes, not <c>char</c>s, so the cap cannot fall between
+    /// the halves of a surrogate pair.</para>
     /// </summary>
     public const int MaximumLength = 64;
 
@@ -66,17 +73,43 @@ public sealed record ReportedMediaMtxAction : StringValueObject
             : Option<ReportedMediaMtxAction>.Some(From(value));
 
     /// <summary>
-    /// A <c>\r\n</c> in a logged value forges a second line in any text sink, so
-    /// control characters are replaced rather than kept.
+    /// Filtered by Unicode category rather than by <c>char.IsControl</c>, which
+    /// was one category short in three ways that all end the same place — a
+    /// logged value rewriting the line around it:
+    /// <c>Cc</c> is the <c>\r\n</c> that forges a second line in a text sink;
+    /// <c>Zl</c>/<c>Zp</c> (U+2028/U+2029) are real line breaks in some sinks
+    /// and in every JavaScript-side viewer; <c>Cf</c> carries the bidi
+    /// overrides (U+202E and friends) that reorder the rest of the message for
+    /// a human reader without touching a byte of it.
+    ///
+    /// <para>
+    /// Iterating runes also disposes of the lone-surrogate edge:
+    /// <c>EnumerateRunes</c> yields U+FFFD for an unpaired half, and a cap
+    /// counted in runes never creates one.
+    /// </para>
     /// </summary>
     private static string Bounded(string value)
     {
-        char[] printable = [.. value
-            .Take(MaximumLength)
-            .Select(character => char.IsControl(character) ? Unprintable : character)];
+        StringBuilder bounded = new(MaximumLength + 1);
+        int taken = 0;
 
-        return value.Length > MaximumLength
-            ? new string(printable) + TruncationMark
-            : new string(printable);
+        foreach (Rune rune in value.EnumerateRunes())
+        {
+            if (taken == MaximumLength)
+            {
+                return bounded.Append(TruncationMark).ToString();
+            }
+
+            bounded.Append(RewritesTheLine(rune) ? Unprintable.ToString() : rune.ToString());
+            taken++;
+        }
+
+        return bounded.ToString();
     }
+
+    private static bool RewritesTheLine(Rune rune) =>
+        Rune.GetUnicodeCategory(rune) is UnicodeCategory.Control
+            or UnicodeCategory.Format
+            or UnicodeCategory.LineSeparator
+            or UnicodeCategory.ParagraphSeparator;
 }

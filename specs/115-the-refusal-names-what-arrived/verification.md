@@ -286,3 +286,130 @@ branch; the succeeding branch is unchanged (200, same code path, same single
   "survives export to *a* sink", not "survives export to whatever production
   eventually uses".
 - **CI has not run this branch.** Everything above is local.
+
+---
+
+# Re-verification after the security review (F1, F2)
+
+Phase 6 raised two findings. Both are fixed, and because **F1 changed the
+deployed message text**, every live figure quoted above was re-read off a fresh
+stack rather than carried forward. The templates quoted in §1–§5 are the
+**pre-F1** ones; what ships is below.
+
+## F1 — the placeholder is quoted
+
+`{ReportedAction}` was embedded unquoted, so `"action": ""` rendered as
+*"naming action  on path cam-…"* — a gap in the sentence that reads as *"no
+action was named"*. That is the exact ambiguity spec 115 exists to remove,
+reached by the one case no test covered: `ReportedMediaMtxActionTests` proved
+`TryFrom("")` is `Some`, and nothing proved what it then *read* like.
+
+Observed red before the fix, verbatim:
+
+```
+Shouldly.ShouldAssertException : empty
+    should contain (case insensitive comparison)
+"action ''"
+    but was actually
+"Refused a WHEP request naming action  on path cam-01a08811-f96d-7b90-9dfc-ddbd5b25c5fc: this build r..."
+
+Shouldly.ShouldAssertException : logger.Entries.ShouldHaveSingleItem().Message
+    should contain (case insensitive comparison)
+"action '   '"
+    but was actually
+"Refused a WHEP request naming action     on path cam-01a08811-f9f6-7fd3-9a72-cee43bec9269: this buil..."
+
+Failed!  - Failed: 2, Passed: 16, Skipped: 0, Total: 18
+```
+
+Two tests were added for it — `An_empty_action_field_is_refused_differently_from_an_absent_one`
+and `A_blank_action_field_still_shows_what_arrived`.
+
+### Live, after the fix
+
+Fresh stack, `POST /streams/authorize` on `stream-distribution` directly. The
+empty case, from `mcp__aspire__list_structured_logs`:
+
+```json
+{"logId":3100,
+ "message":"Refused a WHEP request naming action '' on path cam-00000000-0000-7000-8000-000000000011: this build recognises only read, publish and playback. …",
+ "severity":"Warning","resourceName":"stream-distribution",
+ "attributes":{"ReportedAction":"","Path":"cam-00000000-0000-7000-8000-000000000011", …}}
+```
+
+`naming action ''` — an empty value now reads as *itself*. The blank case
+(`logId 3152`) renders `naming action '   '`, so trailing whitespace is legible
+too, and the named case (`logId 3153`) renders `naming action 'stream'`.
+
+The absent case is unchanged and still distinct — `logId 3154`, a different
+template, and **no `ReportedAction` key in `attributes` at all**.
+
+## F2 — filtered by Unicode category, not by `char.IsControl`
+
+`Bounded` caught `Cc` only, leaving U+2028/U+2029 (`Zl`/`Zp` — real line breaks
+in some sinks and in every JavaScript-side viewer) and the bidi format
+characters (`Cf`, e.g. U+202E) that reorder a message for a human reader without
+touching a byte. It now filters `Cc`, `Cf`, `Zl` and `Zp`, iterating **runes**,
+which also disposes of the lone-surrogate edge: a cap counted in runes cannot
+fall between the halves of a pair.
+
+### Live, all three categories in one value
+
+The first attempt at this was inconclusive — the payload rendered `read?WARN
+forged`, one `?` where U+FFFD was expected, while the CRLF case in §3 rendered a
+real `�`. Rather than reason about which layer was lying, the value was re-sent
+as **exact UTF-8 bytes** (`printf`, verified with `xxd`: `41 5c72 42 e280a8 43
+e280ae 44` — `A`, escaped CR, `B`, U+2028, `C`, U+202E, `D`). The console sink:
+
+```
+Returned 1 console log.
+
+Refused a WHEP request naming action 'A�B�C�D' on path cam-00000000-0000-7000-8000-000000000032: this build recognises only read, publish and playback. …
+```
+
+Three U+FFFD, one per category, in **one** console line. The earlier `?` was the
+shell mangling the payload before it left this machine, not the implementation —
+settled by controlling the bytes rather than by argument.
+
+A related finding fell out of it: a **raw** control byte in the JSON never reaches
+this code at all. `"action":"A\rB"` with a literal `0x0D` is invalid JSON, and
+`System.Text.Json` answers **400** before the handler runs.
+
+### Truncation and clamping, re-read
+
+```
+"ReportedAction":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+```
+
+Counted off the returned attribute: **64** `x`, then `e2 80 a6` (U+2026). The cap
+still bites at `MaximumLength` and the mark still survives UTF-8 export.
+
+`From` **clamps and never rejects** — asserted by `From_clamps_rather_than_rejects`
+and observed on the wire: all eleven hostile bodies answered 403, none 500.
+
+## The refusal still refuses — re-checked after both fixes
+
+Eleven live POSTs — empty, blank, `stream`, absent, U+2028, U+2029, U+202E,
+U+200B, CRLF, 200 characters, and the three-category value — **every one 403**.
+No 500, no 200, no widening. The value continues to appear only in the log: the
+403 body is built from `AuthorizeWhepError.ActionUnknown`'s constant `Code` and
+`Message`, and `git diff` on `AuthorizeWhepErrors.cs` and `MediaMtxAction.cs`
+remains **0 lines**.
+
+## F3 — not fixed here, deliberately
+
+`apps/shared/src/streaming/WhepClient.test.ts:399` still cites "a MediaMTX whose
+SDP shape moves under a floating `latest` tag (#2103)", which #2103 made false.
+**`apps/shared/*` is a named contention file in ADR-0109 §"contention files"**,
+and this slice does not own it this batch — three commits landed in that exact
+file today. Left for the orchestrator to file rather than forced.
+
+## Suites after the fixes
+
+```
+Build succeeded.  0 Warning(s)  0 Error(s)
+
+StreamDistribution.Domain.Tests        Passed: 140
+StreamDistribution.Application.Tests   Passed:  62
+Architecture.Tests                     Passed: 356
+```

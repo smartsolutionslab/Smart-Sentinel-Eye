@@ -367,6 +367,71 @@ public class AuthorizeWhepCommandHandlerTests
     }
 
     /// <summary>
+    /// <b>Spec 115, security review F1.</b> The case that defeats the whole
+    /// point in one step: MediaMTX ships a release sending <c>action: ""</c>
+    /// rather than dropping the field. An unquoted placeholder renders a blank
+    /// where the value should be, which reads as "no action was named" — so the
+    /// operator hunts release notes for a field that never moved.
+    ///
+    /// <para>
+    /// <c>ReportedMediaMtxActionTests</c> proves <c>TryFrom("")</c> is
+    /// <c>Some</c>. Nothing proved what that then <em>reads</em> like, which is
+    /// where the ambiguity came back.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task An_empty_action_field_is_refused_differently_from_an_absent_one()
+    {
+        MediaMtxPath path = MediaMtxPath.For(SomeCamera());
+        CapturingLogger<AuthorizeWhepCommandHandler> absentLogger = new();
+        CapturingLogger<AuthorizeWhepCommandHandler> emptyLogger = new();
+
+        await new AuthorizeWhepCommandHandler(AKioskValidator(), new InMemoryStreamRepository(), absentLogger)
+            .HandleAsync(
+                new AuthorizeWhepCommand(path, "Bearer.kiosk", Option<MediaMtxAction>.None, Option<ReportedMediaMtxAction>.None),
+                CancellationToken.None);
+
+        Result<MediaMtxPath, AuthorizeWhepError> result =
+            await new AuthorizeWhepCommandHandler(AKioskValidator(), new InMemoryStreamRepository(), emptyLogger)
+                .HandleAsync(
+                    new AuthorizeWhepCommand(path, "Bearer.kiosk", MediaMtxAction.TryFrom(""), ReportedMediaMtxAction.TryFrom("")),
+                    CancellationToken.None);
+
+        result.Error.ShouldBeOfType<AuthorizeWhepError.ActionUnknown>();
+
+        string absent = absentLogger.Entries.ShouldHaveSingleItem().Message;
+        string empty = emptyLogger.Entries.ShouldHaveSingleItem().Message;
+
+        // The quotes are the fix: they make "a value arrived and it was empty"
+        // legible as itself rather than as a gap in the sentence.
+        empty.ShouldContain("action ''");
+        empty.ShouldNotContain("absent");
+        empty.ShouldNotBe(absent);
+    }
+
+    /// <summary>
+    /// The same trap one step along: a blank-but-present value. Quoting is what
+    /// keeps trailing whitespace visible at all.
+    /// </summary>
+    [Fact]
+    public async Task A_blank_action_field_still_shows_what_arrived()
+    {
+        CapturingLogger<AuthorizeWhepCommandHandler> logger = new();
+        AuthorizeWhepCommandHandler handler = new(AKioskValidator(), new InMemoryStreamRepository(), logger);
+
+        Result<MediaMtxPath, AuthorizeWhepError> result = await handler.HandleAsync(
+            new AuthorizeWhepCommand(
+                MediaMtxPath.For(SomeCamera()),
+                "Bearer.kiosk",
+                MediaMtxAction.TryFrom("   "),
+                ReportedMediaMtxAction.TryFrom("   ")),
+            CancellationToken.None);
+
+        result.Error.ShouldBeOfType<AuthorizeWhepError.ActionUnknown>();
+        logger.Entries.ShouldHaveSingleItem().Message.ShouldContain("action '   '");
+    }
+
+    /// <summary>
     /// <b>Spec 115.</b> MediaMTX composes the hook body, so the value is only
     /// indirectly attacker-influenced — but an unbounded one in a log is a
     /// finding whoever put it there, and the whole value must not reach the sink.
