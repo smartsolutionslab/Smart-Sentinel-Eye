@@ -38,10 +38,10 @@ internal static class AuditQueueProbe
     /// The management plugin, with the credentials the AppHost parameterised
     /// rather than guessed: a 401 here reads exactly like "no queues".
     /// </summary>
-    internal static async Task<HttpClient> ClientAsync(AspireFixture aspire)
+    internal static async Task<HttpClient> ClientAsync(AspireFixture aspire, CancellationToken cancellationToken)
     {
         Uri management = aspire.App.GetEndpoint("rabbitmq", "management");
-        string connection = await aspire.App.GetConnectionStringAsync("rabbitmq") ?? "";
+        string connection = await aspire.App.GetConnectionStringAsync("rabbitmq", cancellationToken) ?? "";
         string userInfo = new Uri(connection).UserInfo;
 
         HttpClient client = new() { BaseAddress = management };
