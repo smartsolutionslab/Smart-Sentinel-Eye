@@ -1,8 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
-using System.Reflection;
 using System.Security.Claims;
 using System.Security.Cryptography;
-using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
@@ -70,9 +68,10 @@ namespace SmartSentinelEye.StreamDistribution.Infrastructure.Tests.Auth;
 ///
 /// <para>
 /// <b>The harness is <see cref="WhepValidatorAudienceTests"/>'s</b>, deliberately
-/// reused rather than reinvented: a real <c>WhepAuthValidator</c>, its private
-/// <c>oidc</c> field replaced with a <see cref="ConfigurationManager{T}"/> over
-/// an in-memory <see cref="IDocumentRetriever"/>, and real tokens signed by a
+/// reused rather than reinvented: a real <c>WhepAuthValidator</c>, constructed
+/// through the internal metadata-source constructor (#2099) with a
+/// <see cref="ConfigurationManager{T}"/> over an in-memory
+/// <see cref="IDocumentRetriever"/>, and real tokens signed by a
 /// generated RSA key. No Docker, no network, no realm — and neither hostname
 /// below is ever resolved. Keep the three files together: this one and
 /// <see cref="WhepValidatorAudienceTests"/> drive the real <c>ValidateAsync</c>,
@@ -105,19 +104,6 @@ public sealed class WhepValidatorIssuerTests : IDisposable
     private const string JwksUri = DialledAuthority + "/protocol/openid-connect/certs";
 
     private const string SigningKeyIdentifier = "whep-validator-issuer-tests";
-
-    /// <summary>
-    /// The one private field these tests reach into, resolved once with a
-    /// message that names the rename if it stops existing. Same lookup as
-    /// <see cref="WhepValidatorAudienceTests"/>; a second spelling of it would
-    /// be the drift the two files are meant to avoid.
-    /// </summary>
-    private static readonly FieldInfo OidcField =
-        typeof(WhepAuthValidator).GetField("oidc", BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new InvalidOperationException(
-            "WhepAuthValidator no longer has a private 'oidc' field. These tests stub the OIDC "
-            + "metadata through it so ValidateAsync can run without a realm; point them at the "
-            + "renamed field rather than deleting them (#2095).");
 
     private readonly RSA signingKey = RSA.Create(2048);
 
@@ -187,24 +173,21 @@ public sealed class WhepValidatorIssuerTests : IDisposable
     }
 
     /// <summary>
-    /// A real validator, with only its metadata source replaced. The
+    /// A real validator, with only its metadata source supplied. The
     /// <see cref="ConfigurationManager{T}"/> is addressed at
-    /// <see cref="DialledAuthority"/> — as the constructor addresses it — while
-    /// the document served from there reports <see cref="RealmIssuer"/>. That
-    /// split is the ingress shape, and it is the only thing these tests change.
+    /// <see cref="DialledAuthority"/> — as the production constructor addresses
+    /// it — while the document served from there reports
+    /// <see cref="RealmIssuer"/>. That split is the ingress shape, and it is the
+    /// only thing these tests change.
     /// </summary>
     private WhepAuthValidator ValidatorWithStubbedMetadata()
     {
-        WhepAuthValidator validator =
-            new(Options.Create(new WhepAuthOptions { Authority = DialledAuthority }));
-
         ConfigurationManager<OpenIdConnectConfiguration> metadata = new(
             $"{DialledAuthority}/.well-known/openid-configuration",
             new OpenIdConnectConfigurationRetriever(),
             new StubbedMetadata(DiscoveryDocument, JsonWebKeySet()));
 
-        OidcField.SetValue(validator, metadata);
-        return validator;
+        return new WhepAuthValidator(metadata);
     }
 
     /// <summary>
