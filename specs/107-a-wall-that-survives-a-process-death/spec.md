@@ -336,11 +336,14 @@ found at document start — and, if that assertion were removed, the screen woul
 land on a sign-in button and the happy path would fail on that instead.
 
 **C2 — the token was not expired on disk.** Skip the `expires_at` rewrite.
-**Prediction:** the happy path still **passes**, and the boot-state control's
-`expires_at`-in-the-past assertion goes **red**. That asymmetry is the point: it
-is why the expiry is asserted on the value read at boot rather than left as a step
-nobody checks. If C2 leaves everything green, the assertion is decorative and the
-test is not proving recovery *through the grant*.
+**Prediction:** the boot-state control's `expires_at`-in-the-past assertion goes
+**red** and the run stops there. That assertion runs before the happy-path ones,
+so **the wall assertions are not reached and their outcome cannot be observed
+under C2** — an earlier draft of this line predicted "the happy path still
+passes", which describes something the run cannot show, and phase 4a found it.
+What C2 does establish is the only thing it was asked to: the expiry assertion is
+capable of failing. If C2 leaves the test green, that assertion is decorative and
+the test is not proving recovery *through the grant*.
 
 **C3 — recovery is riding a cookie.** Not inducible without a product change; the
 cookie control (§3.1 scenario 2) is the standing guard instead, and its outcome
@@ -358,9 +361,10 @@ Do not proceed as though it held.
   about **what the wall shows**, never about storage contents alone.
 - **SC-002** — C1 applied → red on the profile-reuse control; C1 reverted →
   green. Both outputs quoted verbatim in the PR.
-- **SC-003** — C2 applied → the expiry assertion is red while the happy path is
-  green. If both stay green, the test is not proving what SC-001 claims and that
-  is reported, not patched.
+- **SC-003** — C2 applied → the expiry assertion is red. The happy-path
+  assertions are **not reached** and nothing is claimed about them under C2. If
+  the test stays green, the test is not proving what SC-001 claims and that is
+  reported, not patched.
 - **SC-004** — Green twice on a clean tree (a first-run-after-churn failure is not
   a verdict), and green on the CI runner. A skip or a narrowed assertion to reach
   green on Linux is a blocked outcome, not a fix.
