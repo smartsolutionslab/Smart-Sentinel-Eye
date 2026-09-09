@@ -51,7 +51,7 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
         handler.MapInboundClaims = false;
     }
 
-    private static ConfigurationManager<OpenIdConnectConfiguration> MetadataSourceFor(
+    internal static ConfigurationManager<OpenIdConnectConfiguration> MetadataSourceFor(
         IOptions<WhepAuthOptions> options)
     {
         Ensure.That(options).IsNotNull();
