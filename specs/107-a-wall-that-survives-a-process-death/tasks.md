@@ -41,9 +41,16 @@ Non-negotiables, each with its reason already recorded:
 - **Absolute URLs** (`http://localhost:5175/`). No `baseURL` is inherited.
 - **`await first.close()` before the second launch.** Two Chromiums on one
   user-data directory is undefined behaviour.
-- **Nothing is written into the second process.** No `localStorage.setItem`
-  anywhere in this file. If one appears, the slice has become the reconstruction
-  it exists to replace.
+- **Nothing is written into the second process.** Process #2 gets an
+  `addInitScript` that only **reads**; no `localStorage.setItem` runs against the
+  relaunched context. Writing a grant into it is what would re-create the
+  reconstruction this test replaces.
+  **This does not forbid the `expires_at` rewrite in process #1** — that is a
+  `setItem`, it is the test's own setup, it happens before the process dies, and
+  spec §2.3 and plan §7 both require it. An earlier draft of this bullet said
+  "no `localStorage.setItem` anywhere in this file" and so forbade the step the
+  spec mandates; plan §7's wording ("nothing is written into process #2") was
+  the precise one and is now what stands here.
 - **The `oidc.user:` key is read, never constructed** — it embeds the issuer, and
   the provider's port is chosen per run (spec §2.3).
 - **The boot-state control reads through `addInitScript`**, before any app code.
@@ -106,14 +113,15 @@ correct spec §8.**
 
 In the working tree only, remove the `expires_at` rewrite in process #1.
 
-**Prediction (spec §8 C2):** the happy-path assertions stay **green** and the
-boot-state control's *"its access token must already be spent"* assertion goes
-**red**. That asymmetry is the whole point of asserting the expiry on the value
-read at boot.
+**Prediction (spec §8 C2):** the boot-state control's *"its access token must
+already be spent"* assertion goes **red**, and the run **stops there** — that
+assertion precedes the happy-path ones, so the wall assertions are never reached
+and their outcome is not observable in this run. That the control fires at all is
+the whole point of asserting the expiry on the value read at boot.
 
-**If both stay green, the expiry assertion is decorative** and the test is not
-proving recovery *through the grant*. Report that (SC-003) — do not patch around
-it.
+**If the test stays green under C2, the expiry assertion is decorative** and the
+test is not proving recovery *through the grant*. Report that (SC-003) — do not
+patch around it.
 
 Revert afterwards.
 
