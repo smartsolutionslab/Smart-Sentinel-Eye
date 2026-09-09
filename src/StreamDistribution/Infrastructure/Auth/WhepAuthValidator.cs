@@ -18,7 +18,7 @@ namespace SmartSentinelEye.StreamDistribution.Infrastructure.Auth;
 /// </summary>
 public sealed class WhepAuthValidator : IWhepAuthValidator
 {
-    private readonly ConfigurationManager<OpenIdConnectConfiguration> oidc;
+    private readonly IConfigurationManager<OpenIdConnectConfiguration> oidc;
     private readonly TokenValidationParameters parameters;
     // Diverges from the bearer pipeline, which uses JsonWebTokenHandler. That should
     // eventually back both sides: Microsoft positions this one as the legacy path, and
@@ -30,6 +30,29 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
     private readonly JwtSecurityTokenHandler handler = new();
 
     public WhepAuthValidator(IOptions<WhepAuthOptions> options)
+        : this(MetadataSourceFor(options))
+    {
+    }
+
+    /// <summary>
+    /// The seam the unit tests construct through, so the OIDC metadata can be
+    /// served from memory instead of a realm (#2099). Deliberately
+    /// <c>internal</c>: a public constructor taking a metadata source would be a
+    /// public way to point this token validator at another issuer.
+    /// </summary>
+    internal WhepAuthValidator(IConfigurationManager<OpenIdConnectConfiguration> metadata)
+    {
+        Ensure.That(metadata).IsNotNull();
+
+        oidc = metadata;
+
+        parameters = CreateParameters();
+
+        handler.MapInboundClaims = false;
+    }
+
+    private static ConfigurationManager<OpenIdConnectConfiguration> MetadataSourceFor(
+        IOptions<WhepAuthOptions> options)
     {
         Ensure.That(options).IsNotNull();
         string authority = options.Value.Authority.TrimEnd('/');
@@ -42,14 +65,10 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
         // same unbacked claim at :58). Without this the default HttpDocumentRetriever
         // requires https and throws IDX20108 on the dev/CI http authority — a 500 on
         // every WHEP authorize.
-        oidc = new ConfigurationManager<OpenIdConnectConfiguration>(
+        return new ConfigurationManager<OpenIdConnectConfiguration>(
             $"{authority}/.well-known/openid-configuration",
             new OpenIdConnectConfigurationRetriever(),
             new HttpDocumentRetriever { RequireHttps = false });
-
-        parameters = CreateParameters();
-
-        handler.MapInboundClaims = false;
     }
 
     internal static TokenValidationParameters CreateParameters() => new()
