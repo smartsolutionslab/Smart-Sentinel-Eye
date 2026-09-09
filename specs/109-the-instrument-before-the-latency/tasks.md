@@ -30,7 +30,7 @@ this was written; a full disk stops the Docker engine and only a GUI restart rec
 
 ## Phase 0 — foundation (blocks everything)
 
-- [ ] **T001 [US1]** Stop any running AppHost
+- [x] **T001 [US1]** Stop any running AppHost
       (`Get-Process SmartSentinelEye.AppHost -ErrorAction SilentlyContinue | Stop-Process -Force`)
       and confirm no `testhost` process names this worktree. A running stack holds the
       service binaries and the build fails MSB3027, which reads as a broken build.
@@ -54,21 +54,34 @@ this was written; a full disk stops the Docker engine and only a GUI restart rec
       infrastructure, not the stamps refusal the run exists to observe. Another fact must
       warm `system-variables` first.
       **Depends: T001.**
-- [ ] **T011 [US1]** Add one line inside the existing `if (isE2ETests)` block in
+- [x] **T011 [US1]** Add one line inside the existing `if (isE2ETests)` block in
       `src/AppHost/AppHost.cs` (the block opening at `:410`, beside the
       `AuditObservability__Retention__TickInterval` precedent at `:429`):
       `auditObservability.WithEnvironment("AuditObservability__Measurement__RecordIngestBreakdown", "true");`
       Nothing else in `src/`.
       **Depends: T010.**
-- [ ] **T012 [P] [US1]** Confirm `tests/AuditObservability.Application.Tests/EventHandlers/AuditMeasurementSwitchTests.cs`
+- [x] **T012 [P] [US1]** Confirm `tests/AuditObservability.Application.Tests/EventHandlers/AuditMeasurementSwitchTests.cs`
       passes **unmodified** — the type default stays `false`
       (`:96`). Unit tests, no fixture boot, disjoint file: safe to run alongside T013.
       **Depends: T011.**
-- [ ] **T013 [US1]** Re-run T010's command. Expect `measurement switch: ON`,
+- [x] **T013 [US1]** Re-run T010's command. Expect `measurement switch: ON`,
       `0 missing stamps`, and the run to pass. **Run it twice** — the first run after
       machine churn looks exactly like a regression. Record both, unaveraged.
       **Depends: T011. Serial with every other fixture task.**
-- [ ] **T014 [P] [US1]** Confirm `tests/Architecture.Tests` `IntegrationTestSelectionTests`
+      **DONE 2026-09-09, with a correction this task needs.** The stamps refusal is
+      gone in every run: `measurement switch: ON`, 1000 of 1000 rows stamped, with
+      **no environment variable exported at all**. But *"the run to pass"* is not
+      reachable by US1 alone, and it never was. `IngestRunConditions.LoggingIsVerbose`
+      (`:67-70`) is true when `!LogLevelWasChosen`, so a bare `dotnet test` now refuses
+      one assertion later — *"the services are logging at 'Information', inherited from
+      the appsettings … set `Logging__LogLevel__Default=Warning` for a measurement run"*
+      — observed, run 5. **There were two remembered exports, not one**; US1 removed the
+      switch, and §1.0's own baseline runs exported the level as well. Removing the
+      second is a different decision: it sets the level for **every** integration test
+      in the suite, not just the measurement facts, and #2133 is open on what
+      `Information` costs. Not taken here. The fact passes, three runs, under §1.0's
+      conditions.
+- [x] **T014 [P] [US1]** Confirm `tests/Architecture.Tests` `IntegrationTestSelectionTests`
       still passes — `ci.yml:179`'s filter string is unchanged and the
       `Category=Measurement` exclusion is untouched. Disjoint file, no boot.
       **Depends: T011.**
@@ -90,7 +103,7 @@ export. Shippable on its own.
       the verbatim failure. This red is the evidence that defect (A) is real, not
       inferred.
       **Depends: T013.**
-- [ ] **T021 [US2]** Point the new fact at the paced shape (50 writers,
+- [x] **T021 [US2]** Point the new fact at the paced shape (50 writers,
       `IngestRunShape.TargetRatePerSecond`). It reports the achieved rate, and
       `RequirementSpanFloorMs` / `RequirementSpanCeilingMs` / `RequirementSpanWidthMs`
       from `IngestAttribution.cs:69-84`, and states whether the 50 ms budget falls
@@ -100,7 +113,7 @@ export. Shippable on its own.
       is the mirror-image error and turns the fact green for the wrong reason.
       Sentence-style name (ADR-0053), `[Trait("Category", "Measurement")]` retained.
       **Depends: T020.**
-- [ ] **T022 [US2]** Strip the NFR-001 verdict from
+- [x] **T022 [US2]** Strip the NFR-001 verdict from
       `Ingest_p99_from_publish_to_row_stays_under_50ms`. It keeps its shape — one
       sequential writer, `NoPacing` (`:209-210`) — because that shape is what makes its
       figure comparable with the ones quoted on #1956. It reports the end-to-end span
@@ -108,9 +121,27 @@ export. Shippable on its own.
       remarks at `:180-194`, which currently conclude *"what is open in 1956 is no longer
       code"* on the strength of the ceiling.
       **Depends: T021.**
-- [ ] **T023 [US2]** Run both facts. **Twice.** Record the achieved rates and all four
+      **DONE 2026-09-09, plus one thing this task did not specify: the name went too.**
+      `Ingest_p99_from_publish_to_row_stays_under_50ms` →
+      `Ingest_span_from_publish_to_row_at_the_unpaced_historic_shape`. Under ADR-0053 the
+      name *is* the claim, and a fact called `stays_under_50ms` that asserts no such
+      thing is this spec's own defect one layer out. Flagged rather than assumed: a
+      reviewer may prefer the old name for traceability to the figures quoted on #1956,
+      which the remarks now carry instead.
+- [x] **T023 [US2]** Run both facts. **Twice.** Record the achieved rates and all four
       span figures per run, unaveraged.
       **Depends: T022. Serial with every other fixture task.**
+      **DONE 2026-09-09, four paced runs.** `Requirement_span…` achieved 98.1 / 99.4 /
+      99.6 / 99.8 ev/s, typical requirement span **5.4–4017.9**, **6.2–2438.8**,
+      **7.2–1895.3**, **6.5–1904.7 ms** — the 50 ms budget **inside the interval every
+      time**. `Where_the_ingest_span_goes`, second paced drive of the same boot, ran
+      99.5 / 99.6 / 99.8 / 99.7 ev/s at **5.5–43.4**, **5.8–31.5**, **2.5–18.8**,
+      **4.5–32.8 ms** — budget **above the whole interval** every time.
+      **The bistability is ordering, not chance**: within one boot the first paced drive
+      is seconds and the second is tens of milliseconds, 4/4. The historic unpaced shape
+      ran third and reached **80.2 / 94.7 / 95.1 / 95.5 ev/s**, not the 45–58 phase 4a
+      measured cold — so its rate is a property of when it runs, which is by itself
+      reason enough that it cannot carry a verdict.
 
 **US2 checkpoint** — no fact in the repository reports an NFR-001 verdict from a run it
 did not pace, and the verdict that exists reports an interval rather than a point.
@@ -143,7 +174,7 @@ did not pace, and the verdict that exists reports an interval rather than a poin
       **DONE 2026-09-09: A1 HOLDS. US3 proceeds.**
       **Blocks: T102, T104. Depends: T023.**
 
-- [ ] **T102 [US3]** **Build the sampler and the fact that reports it, as one task.**
+- [x] **T102 [US3]** **Build the sampler and the fact that reports it, as one task.**
       Poll the `audit-observability.*` queues from the broker's HTTP API through a paced
       run, and report the mean unacknowledged count, the achieved drain rate, and the
       implied mean leg time. It must fail naming the address and the status it received
@@ -165,7 +196,13 @@ did not pace, and the verdict that exists reports an interval rather than a poin
       >
       > US1's and US2's reds are unaffected and were observed: commit `97885925`.
 
-- [ ] **T104 [US3]** Run it **twice**, unaveraged. Read the outcome:
+      **DONE 2026-09-09**, `AuditHandoverLegTests.cs` + `AuditQueueProbe.cs`.
+      `AuditHandoverPopulationTests` was left exactly as phase 4a wrote it — the phase-4b
+      brief forbids editing a test it was handed — so its private broker read stands
+      beside the probe's. Folding the two together is a one-file cleanup for whoever is
+      not under that constraint.
+
+- [x] **T104 [US3]** Run it **twice**, unaveraged. Read the outcome:
       - **near zero** → the handover is at handler entry, the requirement's span is the
         floor, NFR-001 holds on its own leg, and the *end-to-end* span — which has no
         budget anywhere in the repository — does not;
@@ -173,6 +210,15 @@ did not pace, and the verdict that exists reports an interval rather than a poin
         requirement is genuinely missed, and the next step is a per-row
         transport-receipt stamp, which is **not** taken in this pass.
       **Depends: T102. Serial with every other fixture task.**
+      **DONE 2026-09-09. NEAR ZERO, twice.** 3000 events paced, 0 unacknowledged before
+      each drive, 3000 rows landed. Run 1: window 30.1 s, drain **99.7 ev/s**, 94 samples
+      (55 non-zero, peak **2**), mean unacknowledged **1.01**, implied leg **10.1 ms**.
+      Run 2: window 30.3 s, drain **98.9 ev/s**, 94 samples (72 non-zero, peak **5**),
+      mean **1.94**, implied leg **19.6 ms**. A peak of 2–5 in flight at 100 ev/s is not
+      a prefetch buffer holding a queue. So the handover is at handler entry, the
+      requirement's span is the **floor** of the interval — 2.5–9.0 ms across every run
+      above — and the seconds seen end to end are queue wait **before** delivery, outside
+      NFR-001's leg and outside every budget in this repository.
 
 **US3 checkpoint** — the requirement's span is located inside "before handler", or the
 run says in one number why it could not be.
