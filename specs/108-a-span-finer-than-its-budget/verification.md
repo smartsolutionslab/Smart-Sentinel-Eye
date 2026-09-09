@@ -612,7 +612,8 @@ fails the run; it is not dropped.
 ## Gates
 
 ```
-pnpm typecheck:e2e                                     → clean
+pnpm typecheck (all three apps + e2e)                  → clean
+pnpm test                                              → 54 files, 546 tests, 0 failures
 pnpm format:check                                      → All matched files use Prettier code style!
 pnpm lint                                              → eslint --max-warnings 0, all three apps clean
 pnpm exec playwright test --list                       → Total: 58 tests in 28 files
