@@ -141,8 +141,9 @@ Widening `ci.yml:179` is out of scope (spec §2).
 
 ### The mechanism
 
-Sample RabbitMQ's management API for `messages_unacknowledged` on the `wolverine_audit.*`
-queues, once a second, through a paced run. Under
+Sample RabbitMQ's management API for `messages_unacknowledged` on the `audit-observability.*`
+queues (`ContextName` + `.` + the event FQN — `WolverineDefaults.cs:95-96`; **not**
+`wolverine_audit`, which is the Postgres outbox schema, `AuditObservabilityInfrastructureModule.cs:24`), once a second, through a paced run. Under
 `ProcessInParallelWithNativeAcks()` (`WolverineDefaults.cs:126-129`) a delivery is held
 unacknowledged at the broker for the whole handler, so that count is the population
 inside NFR-001's leg. `mean(unacked) / drain rate` is the mean time in the leg — read
@@ -219,9 +220,9 @@ demonstrably false right now:
 
 | Story | The red, before the change |
 |---|---|
-| US1 | With no shell export, `Where_the_ingest_span_goes` fails: *"N rows arrived without the measurement stamps"* — the exact failure #2127 pasted. |
-| US2 | A fact guarding `RateWasMet` on the unpaced driver fails, reporting ~15-20 ev/s against a target of 100. |
-| US3 | A fact reading a sampled unacknowledged count fails — there is no sampler, and no such figure exists. |
+| US1 | With no shell export, `Where_the_ingest_span_goes` fails: *"N rows arrived without the measurement stamps"* — the exact failure #2127 pasted. **Not reachable from a cold stack**: run alone it dies at `DefineAsync` with `Polly.Timeout.TimeoutRejectedException … '00:00:10'`, which is infrastructure, not the refusal. Another fact must warm `system-variables` first (spec A7). |
+| US2 | A fact guarding `RateWasMet` on the unpaced driver fails, reporting 45.1-57.5 ev/s against a target of 100 (measured at phase 4a; the earlier ~15-20 came from ADR-0136's row for a different machine). |
+| US3 | **No red is available, and the PR must say so rather than imply a gate it never passed.** The sampler and the fact asserting on it are the same artefact in the same test project: a fact written against a sampler that does not exist is a compile error, which ADR-0139 does not accept as red, and a fact that samples inline is green on its first run. So US3 is one task (T102), and its evidence is two runs reported unaveraged. Neither the absence nor a compile error is dressed as a red. |
 
 **A test that arrives green here is a phase-4 failure, not a shortcut.** The trap to name
 in advance: US2's paced verdict could be made green by comparing the budget against the

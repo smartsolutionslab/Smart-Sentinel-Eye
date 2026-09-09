@@ -69,7 +69,7 @@ they are reported unaveraged because ADR-0136 records this pipeline as bistable.
 The unpaced verdict fact was run in the same session for comparison: **p50 11.2 ms,
 p99 4081.9 ms, max 4180.5 ms**, switch ON, 1000 of 1000 rows stamped — and it **failed**,
 as it has since it was written, asserting `p99 ≤ 50 ms` against the end-to-end ceiling at
-an unpaced ~15-20 ev/s. That is defect (A) and defect (B) in one line of output.
+an unpaced ~45-58 ev/s. That is defect (A) and defect (B) in one line of output.
 
 ### 1.1 The issue's premise is dead, and so is the guidance built on it
 
@@ -98,8 +98,12 @@ this repository has recorded — in both directions.
 `IngestSpanMeasurement.NoPacing` to a **single sequential writer** —
 `NFR001_AuditIngestLatencyTests.cs:209-210`, driving the loop at
 `IngestSpanMeasurement.cs:227-233`, which awaits each `PUT` before issuing the next.
-That achieves ~15-20 ev/s. The repository already says why this is not an answer, in its
-own words at `IngestRunShape.cs:55-66`:
+That achieves **45.1 / 54.0 / 57.5 ev/s** across three runs on this machine, measured at
+phase 4a on 2026-09-09. (An earlier draft of this spec said ~15-20 ev/s, taken from
+ADR-0136's *"Fixture, 1 writer, 15.6 ev/s"* row; that row describes another machine and
+is corrected here. **Defect (A) is untouched by the correction** — 45.1 ev/s against a
+target of 100 is no more a verdict about NFR-001 than 15.6 was.) The repository already
+says why an off-target rate is not an answer, in its own words at `IngestRunShape.cs:55-66`:
 
 > *"Driven flat out these same writers reached 244 ev/s and a 5.5 s span — a faithful
 > measurement of overload, and no answer at all about the load the requirement
@@ -157,6 +161,16 @@ mid-burst. That has a consequence nobody on this issue has used:
 
 > **RabbitMQ's `messages_unacknowledged` on the audit queues is exactly the population of
 > messages inside NFR-001's leg** — handed over, not yet committed.
+
+**The queues are `audit-observability.<event FQN>`**, not `wolverine_audit.*`. An earlier
+draft of this spec named the latter, and it is the **Postgres outbox/inbox schema**
+(`AuditObservabilityInfrastructureModule.cs:24`), not a broker queue at all. The listener
+name is `moduleQueuePrefix + "." + eventType.FullName`, with the prefix set to
+`ContextName = "audit-observability"` (`WolverineDefaults.cs:95-96`;
+`AuditObservabilityInfrastructureModule.cs:23,94`). A sampler filtering on
+`wolverine_audit` would have matched nothing and reported **a mean of zero** — which is
+exactly the failure US3's own scenario exists to refuse, arriving through the spec that
+specifies it.
 
 By Little's law the mean time in that leg is `mean(messages_unacknowledged) / drain
 rate`. Sampled through a paced 100 ev/s run this reads the requirement's own span from
@@ -240,7 +254,7 @@ Scenario: a fixture that cannot stamp says so
 
 **As** the owner deciding about NFR-001, **I want** the fact that reports the NFR-001
 verdict to drive at 100 ev/s and fail if it did not, **so that** a number taken at
-15 ev/s cannot be read as an answer about 100 ev/s.
+45-58 ev/s cannot be read as an answer about 100 ev/s.
 
 ```gherkin
 Scenario: the verdict is taken at the rate the requirement names
@@ -355,8 +369,8 @@ ADR-0136 records this pipeline as bistable.
 5. **After US3**: read the reported mean `messages_unacknowledged`, drain rate and
    implied leg time. Cross-check by hand against the broker:
    `curl -su <user>:<pass> http://<rabbit-management>/api/queues` and read
-   `messages_unacknowledged` for the `wolverine_audit.*` queues while a run is in
-   flight.
+   `messages_unacknowledged` for the `audit-observability.*` queues while a run is in
+   flight. **Sample through the drain, not only the drive** — see A6.
 6. Confirm nothing on the production path moved: `git diff --stat src/` is empty except
    for whatever US1 needs in `AppHost`/fixture wiring, and `AuditMeasurementSwitchTests`
    passes **unmodified**.
@@ -410,6 +424,17 @@ The budget this feature is about is **spec 009's NFR-001**, and it does not move
   it launches. **Confirmed** by both of §1.0's runs: the switch was exported in the
   launching shell and the services reported `measurement switch: ON`, 1000 of 1000 rows
   stamped. US1 makes it independent of the shell.
+- **A6** — RabbitMQ's management statistics refresh on `collect_statistics_interval`
+  (~5 s), so a short, fast sample reads a **cached zero**. T101's first version sampled
+  only the publish window at 100 ms and reported peak `messages_unacknowledged = 0` — a
+  false refutation of A1. The version that holds drives 3000 events and samples at 250 ms
+  **through the drive and 20 s of drain**: peak 64, 31 of 88 samples non-zero. Anyone
+  re-running must keep that window, or they will "disprove" A1 by sampling too fast.
+- **A7** — `Where_the_ingest_span_goes` is **not reachable from a cold stack**. Two
+  attempts running it alone died at `IngestSpanMeasurement.DefineAsync` with
+  `Polly.Timeout.TimeoutRejectedException … '00:00:10'` on the first POST —
+  infrastructure, not the stamps refusal it was run to observe. The red came from a run
+  where another fact had warmed `system-variables` first.
 - **A5** — Two runs are two samples, not a range. ADR-0135 recorded three clustered runs
   as though they were a spread and had to be corrected; §1.0 reports two runs that differ
   by 177× precisely so nobody reads either as the answer.
