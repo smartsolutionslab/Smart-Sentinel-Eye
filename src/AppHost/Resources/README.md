@@ -23,8 +23,8 @@ end-to-end job serves, and the only picture
 directory as dev-only cruft, and do not skip `generate-sim-clips.sh` on the
 grounds that CI has no video — since spec 056 it does, from here.
 
-The host has no FFmpeg, so clips are generated from the MediaMTX
-`latest-ffmpeg` image. Run once and commit the results:
+The host has no FFmpeg, so clips are generated from the MediaMTX image
+`scripts/generate-sim-clips.sh` names. Run once and commit the results:
 
 ```bash
 bash scripts/generate-sim-clips.sh              # all clips

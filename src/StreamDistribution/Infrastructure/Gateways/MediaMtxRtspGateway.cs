@@ -27,7 +27,7 @@ public sealed class MediaMtxRtspGateway(HttpClient http, ILogger<MediaMtxRtspGat
         // re-packetizes H.264 and transparently transcodes everything else
         // using the bundled FFmpeg binary (configured via `runOnDemand`-style
         // hooks in the YAML; not needed for v1 because we only ship the
-        // latest-ffmpeg image).
+        // ffmpeg-bundled image variant).
         using HttpResponseMessage response = await http
             .PostAsJsonAsync($"/v3/config/paths/add/{path.Value}", new { source = rtspSourceUrl }, cancellationToken);
 
