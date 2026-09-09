@@ -151,6 +151,12 @@ async function stopTracing(context: BrowserContext, name: string, failed: boolea
 }
 
 test.describe('A wall survives a process death (spec 107 US1)', () => {
+  // `{}` rather than a named parameter, and Playwright requires it: the runner
+  // parses the first parameter to work out which fixtures a test needs, and
+  // rejects anything that is not an object destructuring pattern ("First
+  // argument must use the object destructuring pattern"). This test needs no
+  // fixture, only `testInfo`, so the pattern has to be present and empty.
+  // eslint-disable-next-line no-empty-pattern
   test('a wall display comes back after its browser process dies', async ({}, testInfo) => {
     test.setTimeout(300_000);
 
