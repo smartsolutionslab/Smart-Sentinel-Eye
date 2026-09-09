@@ -171,7 +171,34 @@ Scenario: A wall display returns after a real process death (happy path)
     And the screen reaches a populated layout picker without anyone touching it
     And no sign-in control and no credential field appear at any point
     And the wall renders
+    And the access token it now holds is not the one the dead process marked spent
+    And that renewed token is still issued to the wall client
 ```
+
+**The last two lines were added in phase 6, and they are the assertions that make
+the scenario mean what it says.** The realm's `accessTokenLifespan` is 3600
+(`src/AppHost/Realms/smart-sentinel-eye-realm.json:5`), so the JWT the test marks
+spent is *genuinely valid for another hour*. Everything above them therefore
+passes unchanged in a world where the app has stopped consulting `expires_at` and
+simply re-sent the token it found — the picker paints, the wall renders, and no
+refresh ever happens. Counterfactual C2b (§8) demonstrated exactly that run.
+Comparing the stored `access_token` before and after is what distinguishes a
+*renewal* from a *re-use*; `azp` is what keeps the renewal on the narrowed client
+(`wall-outlives-its-session.spec.ts:83`).
+
+```gherkin
+Scenario: The recovery went through the grant, and nowhere else (the primary control)
+  Given a wall display recovered from a relaunched profile
+   When every request the relaunched process made is read
+   Then it made a token call whose grant type is refresh_token
+    And it made no request at all to the provider's authorization endpoint
+```
+
+Phase 5 observed both by hand, out of the second process's network log; they are
+assertions now rather than a note in a verification document. **This is the
+control that excludes the provider-session path** — a screen that reached the
+picker through a surviving SSO session would have gone through
+`/protocol/openid-connect/auth` on the way, and nothing did.
 
 ```gherkin
 Scenario: The restart is genuinely cookie-less (the control that makes it mean something)
@@ -186,6 +213,25 @@ SSO cookie rather than spending its grant — the same class of false pass that
 assertion fires, the finding is that Chromium persisted the cookie, and the
 answer is to record it and clear those cookies explicitly — never to drop the
 assertion.**
+
+**It fired, in phase 6, and that clause is now spent rather than hypothetical.**
+The original assertion matched only `KEYCLOAK_IDENTITY|AUTH_SESSION_ID`; widened
+to `^KEYCLOAK_|AUTH_SESSION_ID` it went red on the first run:
+
+```
+Error: a restarted device carries no provider session cookie
+Received array:  [{"domain": "localhost", "name": "KEYCLOAK_SESSION",
+                   "expires": 1788974409.135845, "httpOnly": false, ...}]
+```
+
+`KEYCLOAK_SESSION` carries an explicit expiry, so Chromium persists it across the
+process death. `KEYCLOAK_IDENTITY` — the httpOnly cookie that **is** the SSO
+session — does not, exactly as A2 predicted. So the scenario now reads: the
+identity cookie is asserted absent, cookies of that shape are then **cleared**
+before the wall loads, and the recovery below happens with no provider cookie of
+any kind. Clearing removes state rather than handing it over, so it does not make
+this the reconstruction §1 exists to replace; it makes the recovery strictly
+harder.
 
 ```gherkin
 Scenario: The profile really was reused (the second control)
@@ -247,12 +293,12 @@ Runnable by a person, no test code read, against a booted AppHost:
 | Test kind | Playwright e2e against the live stack | ADR-0108. The claim is about state outliving a process; nothing below the browser can hold it. |
 | Client | **wall** (:5175, `kiosk-wall`) | §2.2 — the client production walls run, and the one with the offline grant. |
 | File | `e2e/wall-survives-a-process-death.spec.ts` | `playwright.config.ts:62` routes `wall-*` to the wall project, with `seed` and `cleanup` attached. |
-| Profile directory | `testInfo.outputPath('wall-profile')` | Retry-unique and per-test, so a CI retry starts clean; uploaded with `test-results` on failure (`ci.yml:275`). |
+| Profile directory | `fs.mkdtemp(os.tmpdir() + '/sse-wall-')`, removed in a `finally` | Unique by construction, so a CI retry still starts clean. **Not `testInfo.outputPath` (phase 6):** that lands under `test-results/`, which `ci.yml:269-277` uploads with `if: always()` and 14-day retention on a **public** repository, and the profile's LevelDB holds `wall-munich`'s *offline* refresh token — a grant a sibling test asserts carries no `exp` (`wall-outlives-its-session.spec.ts:68`). |
 | Restart | `context.close()` then a second `launchPersistentContext` | The strongest process death Playwright offers; §7.1 prices what it does not cover. |
 | Expiry | rewrite `expires_at` via `page.evaluate` before closing | §2.3. The read-back is the proof it reached disk. |
 | Reading the boot state | `addInitScript` stashing the raw entry | §3.1 control 2 — after boot the value has been renewed. |
 | Sign-in | inline, as the sibling wall specs do | `wall-outlives-its-session.spec.ts:18-26` and `wall-withdrawal.spec.ts:48-56` each carry their own; a shared helper is a separate refactor (ADR-0036). |
-| Tracing | started by hand on both contexts | §2.5 constraint 4. |
+| Tracing | started by hand on both contexts; **written and `testInfo.attach`ed only on failure** | §2.5 constraint 4. A file under `outputPath` is not attached, so the HTML report carried no trace link — the motivation for hand-starting one, undelivered (phase 6). Green runs now write nothing. |
 
 ## 5. Out of scope
 
@@ -345,9 +391,24 @@ What C2 does establish is the only thing it was asked to: the expiry assertion i
 capable of failing. If C2 leaves the test green, that assertion is decorative and
 the test is not proving recovery *through the grant*.
 
+**C2b — the same skip, with the boot expiry control lifted too.** Added in phase
+6, and it is the counterfactual that earns the new assertions their place. C2
+stops at the expiry control, so it can say nothing about what the wall does when
+the token is *not* spent. C2b answers that: the run went all the way through the
+picker, `layout-grid` and both no-credential assertions **green**, and failed only
+on *"the wall must have exchanged its grant, not re-sent the token it marked
+spent"*. That is the regression finding 1 described made visible — a wall that
+never refreshes and renders identically — and it means the expiry control alone
+was not enough to catch it.
+
 **C3 — recovery is riding a cookie.** Not inducible without a product change; the
 cookie control (§3.1 scenario 2) is the standing guard instead, and its outcome
-is recorded either way.
+is recorded either way. **Phase 6 replaced the guard with an observation**: the
+second process makes exactly one credential exchange, a `grant_type=refresh_token`
+POST, and never touches `/protocol/openid-connect/auth`. A recovery riding a
+provider session would have to go through that endpoint, so the path is excluded
+positively rather than by the absence of a cookie — which matters, because one
+Keycloak cookie turned out to survive (§3.1).
 
 **If any prediction is wrong, correct this section in the PR body and say so.**
 Do not proceed as though it held.
@@ -358,13 +419,18 @@ Do not proceed as though it held.
 
 - **SC-001** — A wall display is observed rendering after a genuine process
   restart, with a grant whose access token was expired on disk. The assertion is
-  about **what the wall shows**, never about storage contents alone.
+  about **what the wall shows**, never about storage contents alone — and, since
+  phase 6, about **how it got there**: a renewed access token, on `azp:
+  kiosk-wall`, bought by a `refresh_token` grant, with no request to the
+  provider's authorization endpoint.
 - **SC-002** — C1 applied → red on the profile-reuse control; C1 reverted →
   green. Both outputs quoted verbatim in the PR.
 - **SC-003** — C2 applied → the expiry assertion is red. The happy-path
   assertions are **not reached** and nothing is claimed about them under C2. If
   the test stays green, the test is not proving what SC-001 claims and that is
-  reported, not patched.
+  reported, not patched. **C2b** (C2 with the expiry control lifted) → the
+  *renewal* assertion is red while every wall assertion is green, which is what
+  shows that assertion is load-bearing rather than decorative.
 - **SC-004** — Green twice on a clean tree (a first-run-after-churn failure is not
   a verdict), and green on the CI runner. A skip or a narrowed assertion to reach
   green on Linux is a blocked outcome, not a fix.
@@ -385,7 +451,11 @@ Do not proceed as though it held.
 - **A2** — a relaunched profile carries no Keycloak session cookie, because
   Keycloak's identity cookies are session cookies and Chromium does not persist
   those without session restore. **Asserted rather than assumed** (§3.1 scenario
-  2); if it is wrong the assertion says so.
+  2); if it is wrong the assertion says so. **It was half wrong, and the
+  assertion said so** (phase 6): `KEYCLOAK_IDENTITY` and `AUTH_SESSION_ID` are
+  session cookies and do not survive, but `KEYCLOAK_SESSION` carries an explicit
+  expiry and does. Recorded verbatim in §3.1, and the test now clears it rather
+  than assuming it away.
 - **A3** — the `seed` project's published layout is visible to `wall-munich`, so
   the picker is populated. Holds today: three wall specs depend on it
   (`wall-outlives-its-session.spec.ts:26`).

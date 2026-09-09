@@ -30,9 +30,12 @@ Non-negotiables, each with its reason already recorded:
   it; a differently-named file lands in the management project, drives :5173, and
   fails for reasons that have nothing to do with the product (`:28-35` records
   that incident).
-- **`chromium.launchPersistentContext`, twice, on the same
-  `testInfo.outputPath('wall-profile')`.** Retry-unique so a CI retry starts
-  clean.
+- **`chromium.launchPersistentContext`, twice, on the same `mkdtemp` directory
+  under `os.tmpdir()`, removed in a `finally`.** Unique by construction, so a CI
+  retry still starts clean. **Not `testInfo.outputPath` (corrected in phase 6):**
+  that puts a profile holding a live *offline* refresh token under
+  `test-results/`, which `ci.yml:269-277` uploads with `if: always()` and 14-day
+  retention on a public repository.
 - **`ignoreHTTPSErrors: true` on both launches.** A manual context inherits
   nothing from `use`; Keycloak runs on a dev certificate, and without this the
   refresh exchange fails on certificate validation and the screen falls to a
@@ -60,12 +63,37 @@ Non-negotiables, each with its reason already recorded:
   **populated** picker, then `layout-grid` after opening the first layout. An
   empty picker renders without an error and is what a fab-less token produces
   (`e2e/support/kiosk-session.ts:19-28`).
+- **Assert how it got there, not only what it shows** (added in phase 6). The
+  access token stored after recovery must **differ** from the one process #1
+  marked spent, and carry `azp: kiosk-wall`; the second process's requests must
+  include a `grant_type=refresh_token` token POST and **no**
+  `/protocol/openid-connect/auth` at all. Without these the whole happy path is
+  green in a world where the app ignores `expires_at` and re-sends a token the
+  realm still considers valid for an hour — C2b demonstrated exactly that run.
 - **The cookie control** (spec §3.1 scenario 2) is part of this test, not
-  optional.
-- **Start tracing by hand on both contexts**, writing to `testInfo.outputPath`.
-  `trace: 'on-first-retry'` never fires for a context the fixtures did not
-  create, and a Linux-runner failure with no trace is the worst place this slice
-  can end up.
+  optional. Read it **before** the navigation, so what is seen is what survived
+  the profile rather than what the app has since set. `KEYCLOAK_SESSION` does
+  survive; assert the httpOnly `KEYCLOAK_IDENTITY` absent, then clear the
+  provider cookies before the wall loads — spec §3.1's pre-committed answer.
+- **Guard the boot-state read.** `goto` resolves on `load`, and a `signinRedirect`
+  can land between that and the read — either destroying the execution context or
+  re-running the init script on the provider's document. Unguarded, the run dies
+  on the *profile-persistence* message and sends the next reader after a bug that
+  does not exist. Assert the URL, and name the redirect.
+- **Assert the LevelDB directory exists between the two launches.** Chromium's
+  `SingletonLock`/`SingletonSocket` are POSIX-only; on Linux a `close()` that
+  returns before the process is reaped leaves launch #2 blocking to the 300 s
+  timeout or quietly re-creating the profile. This is a named failure instead,
+  and it independently proves the flush.
+- **Start tracing by hand on both contexts**, writing to `testInfo.outputPath`
+  **and `testInfo.attach`ing — only when something failed.** `trace:
+  'on-first-retry'` never fires for a context the fixtures did not create, and a
+  Linux-runner failure with no trace is the worst place this slice can end up —
+  but a file under `outputPath` is not attached, so the report links nothing.
+  Green runs write no trace.
+- **No `declare global` on `Window`.** A project-wide augmentation from a spec
+  file collides with any branch adding the same member — the ADR-0109 shape this
+  slice otherwise stays off. A file-scoped cast at each use instead.
 - Copy `signInAsWallDisplay` and the grant reader from
   `wall-outlives-its-session.spec.ts:18-46`. **Do not extract a shared helper** —
   `e2e/support/*` is an ADR-0109 contention file and that is a separate refactor.
@@ -93,8 +121,8 @@ this class of reason (`playwright.config.ts:67-83`).
 
 ### [T003] [US1] Counterfactual C1 — the profile is not reused
 
-In the working tree only, point the **second** launch at a different directory
-(`testInfo.outputPath('wall-profile-x')`).
+In the working tree only, point the **second** launch at a different directory (a
+second `mkdtemp`).
 
 **Prediction (spec §8 C1), to be checked against rather than confirmed:** the
 boot-state control fails first — no `oidc.user` entry at document start. Nothing
@@ -122,6 +150,14 @@ the whole point of asserting the expiry on the value read at boot.
 **If the test stays green under C2, the expiry assertion is decorative** and the
 test is not proving recovery *through the grant*. Report that (SC-003) — do not
 patch around it.
+
+**C2b, added in phase 6:** run C2 again with the boot expiry control lifted as
+well, because C2 stops before the wall assertions and so cannot say what a
+non-spent token does downstream. **Observed:** every wall assertion green — the
+picker, `layout-grid`, both no-credential checks — and the run red only on *"the
+wall must have exchanged its grant, not re-sent the token it marked spent"*. That
+is the whole case for the renewal assertion: the expiry control by itself does
+not catch an app that stops consulting `expires_at`.
 
 Revert afterwards.
 
