@@ -11,8 +11,8 @@
 # src/AppHost/Resources/clips/<name>.ATTRIBUTION.txt — read the file *page* for
 # the licence, not the extmetadata API, which disagrees with it.
 #
-# ffmpeg is absent on the host, so it runs from the MediaMTX `latest-ffmpeg`
-# image. Re-run to regenerate, then commit the results:
+# ffmpeg is absent on the host, so it runs from the pinned MediaMTX image the
+# `docker run` below names. Re-run to regenerate, then commit the results:
 #   bash scripts/generate-sim-clips.sh            # all clips
 #   bash scripts/generate-sim-clips.sh paper-     # only names matching a prefix
 set -euo pipefail
@@ -96,7 +96,7 @@ while IFS='|' read -r NAME URL START; do
   # against the ~40 MB the plan committed to. Quality at tile size is
   # indistinguishable; the repo carries half the weight, permanently.
   MSYS_NO_PATHCONV=1 docker run --rm -v "${WORK_DIR}:/work" -v "${OUT_DIR}:/out" \
-    --entrypoint ffmpeg bluenviron/mediamtx:latest-ffmpeg \
+    --entrypoint ffmpeg bluenviron/mediamtx:1.21.0-ffmpeg \
     -ss "${START}" -i "/work/${NAME}.src" -t "${SEGMENT_LEN}" \
     -vf "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:-1:-1,setsar=1,fps=25" \
     -c:v libx264 -profile:v baseline -level:v 3.1 -pix_fmt yuv420p -g 25 -an -crf 28 \

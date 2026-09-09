@@ -130,8 +130,27 @@ if (isRunMode && !isE2ETests)
 // MediaMTX SFU brings RTSP ingest + WHEP playback (spec 002 T003, ADR-0011).
 // MediaMTX is the runtime source of truth for live paths; the stream-distribution
 // service is the durable source of truth and reconciles paths on startup.
+//
+// Pinned, and pinned harder than a typical image, because MediaMTX composes
+// inputs this repository's code reads and decides outcomes it relies on: the
+// `token`/`path`/`action` fields the WHEP authorization hook receives, what
+// `authHTTPExclude` means in mediamtx.yml, the refusal to publish to a path
+// whose `source` is not `publisher` (the safety that makes #2094's remaining
+// gap unexploitable), and the treatment of 401 as a challenge that made #2094
+// answer 403. None of the four is written down here, and on a floating tag all
+// four could change with no diff and no PR — arriving as a red run on a branch
+// that changed nothing, on whichever machine pulled first (#2103, spec 113).
+//
+// 1.21.0-ffmpeg is sha256:9d148b5f29906618dee627ea3232c75d4ed60da8d40a3ad7276ca87c1ec4f19e,
+// the image `latest-ffmpeg` resolved to when it was pinned, so the pin changed
+// the running bytes not at all. The version is named rather than the digest
+// because every image this repository pins, it pins by version tag, and because
+// a reader reasoning about MediaMTX's behaviour needs a number they can take to
+// a changelog; the digest is recorded so the exact artifact stays recoverable.
+// Bumping is by hand — no Dependabot or Renovate config exists in this tree.
+// ContainerImagePinTests fails the build when any of this drifts apart.
 var mediamtx = builder
-    .AddContainer("mediamtx", "bluenviron/mediamtx", "latest-ffmpeg")
+    .AddContainer("mediamtx", "bluenviron/mediamtx", "1.21.0-ffmpeg")
     .WithBindMount("Resources/mediamtx.yml", "/mediamtx.yml")
     .WithHttpEndpoint(targetPort: 9997, name: "api")
     // Spec 024: the SFU measures its own RTP ingest; exposing the endpoint is
@@ -167,14 +186,14 @@ var mediamtx = builder
 // reaching `Healthy` rather than only the failure half. What the integration
 // run now pays is one container start plus a `-c copy` FFmpeg loop against an
 // already-H.264 clip, so nothing transcodes — and **no image pull at all**,
-// because `bluenviron/mediamtx:latest-ffmpeg` is the same tag the ungated
+// because `bluenviron/mediamtx:1.21.0-ffmpeg` is the same tag the ungated
 // `mediamtx` above already pulls.
 // `E2ETests_argument_excludes_the_dev_only_resources` now asserts the
 // presence, so folding this back under `!isE2ETests` fails there.
 if (isRunMode)
 {
     builder
-        .AddContainer("fixture-video", "bluenviron/mediamtx", "latest-ffmpeg")
+        .AddContainer("fixture-video", "bluenviron/mediamtx", "1.21.0-ffmpeg")
         .WithBindMount("Resources/fixture-video.yml", "/mediamtx.yml")
         // The whole clips directory, mounted where the config expects it.
         .WithBindMount("Resources/clips", "/media")
@@ -568,7 +587,7 @@ if (isRunMode && !isE2ETests)
 if (isRunMode && !isE2ETests && isScenarioSimulatorEnabled)
 {
     var cameraSim = builder
-        .AddContainer("camera-sim", "bluenviron/mediamtx", "latest-ffmpeg")
+        .AddContainer("camera-sim", "bluenviron/mediamtx", "1.21.0-ffmpeg")
         .WithBindMount("Resources/camera-sim.yml", "/mediamtx.yml")
         // The whole clips directory, not one file: an asset names its own clip
         // (spec 044) and mounting them individually would mean editing AppHost

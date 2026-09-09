@@ -9,7 +9,7 @@ DejaVuSans.ttf — the font `drawtext` renders bulk-camera labels with
 Free to use, modify and redistribute, including bundled with software, with the
 condition that the fonts and derivatives may not be sold on their own.
 
-**Why it is here at all.** `bluenviron/mediamtx:latest-ffmpeg` — the image
+**Why it is here at all.** `bluenviron/mediamtx` — the image
 camera-sim runs — ships no fonts whatsoever: no /usr/share/fonts, no .ttf or
 .otf anywhere, though `fc-list` exists to report nothing. A bare `drawtext`
 fails with "Cannot find a valid font for the family Sans", so the ffmpeg process
