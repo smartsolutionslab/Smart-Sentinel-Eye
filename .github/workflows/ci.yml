@@ -117,13 +117,13 @@ jobs:
         run: pnpm format:check
 
       - name: Lint
-        run: pnpm -r --filter "./apps/**" lint
+        run: pnpm lint
 
       - name: Typecheck
         run: pnpm typecheck
 
       - name: Test
-        run: pnpm -r --filter "./apps/**" test
+        run: pnpm test
 
   integration:
     name: integration tests (Docker)
