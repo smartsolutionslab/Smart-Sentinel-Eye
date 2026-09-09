@@ -141,8 +141,9 @@ contention list.
 
 `retries: 2` and `workers: 1` on CI (`playwright.config.ts:15-16`). A retry must
 begin from a *clean* profile, or the second attempt starts signed in and proves
-nothing — §4 pins the profile to `testInfo.outputPath()`, which Playwright makes
-retry-unique.
+nothing — §4 pins the profile to an `mkdtemp` directory, which is unique per
+attempt by construction. (It said `testInfo.outputPath()` until phase 6 moved the
+profile off `test-results/`; that path is retry-unique too, but it is uploaded.)
 
 ---
 
@@ -391,6 +392,38 @@ What C2 does establish is the only thing it was asked to: the expiry assertion i
 capable of failing. If C2 leaves the test green, that assertion is decorative and
 the test is not proving recovery *through the grant*.
 
+**C2b′ — C2b, with the renewal assertions lifted as well.** Because C2b stops at
+the renewal assertion, the two network assertions that follow it were **never
+reached**, and "failed only on the renewal assertion" was an ordering artifact
+rather than evidence about them. Run again with those lines lifted, execution
+reaches them and the first goes **red**:
+
+```
+Error: the wall must come back by spending its stored grant
+expect(received).toContain(expected) // indexOf
+Expected value: "refresh_token"
+Received array: []
+```
+
+`Received array: []` is the load-bearing detail. It also settles a worry raised in
+review — that `automaticSilentRenew` (`apps/kiosk-web/src/app/auth.ts:116`) might
+satisfy `toContain('refresh_token')` for reasons unrelated to the recovery: over
+this test's lifetime the second process makes **no token call at all** unless the
+recovery makes it.
+
+**The `/auth`-absence assertion cannot be reddened in place**, by C2b′ or
+anything else: inducing a redirect needs the product change C3 already rules out.
+What was checked instead is that its collector is live — the same listener
+attached to process #1, which *does* sign in interactively, caught the request:
+
+```
+Error: C3b probe: does the collector see an authorization request at all?
+Received array:  ["https://localhost:10756/realms/smart-sentinel-eye/protocol/openid-connect/auth?client_id=kiosk-wall&…"]
+```
+
+So the assertion watches a live wire. That is weaker than a red, and §10 A5
+records it as such.
+
 **C2b — the same skip, with the boot expiry control lifted too.** Added in phase
 6, and it is the counterfactual that earns the new assertions their place. C2
 stops at the expiry control, so it can say nothing about what the wall does when
@@ -403,12 +436,20 @@ was not enough to catch it.
 
 **C3 — recovery is riding a cookie.** Not inducible without a product change; the
 cookie control (§3.1 scenario 2) is the standing guard instead, and its outcome
-is recorded either way. **Phase 6 replaced the guard with an observation**: the
-second process makes exactly one credential exchange, a `grant_type=refresh_token`
-POST, and never touches `/protocol/openid-connect/auth`. A recovery riding a
-provider session would have to go through that endpoint, so the path is excluded
-positively rather than by the absence of a cookie — which matters, because one
-Keycloak cookie turned out to survive (§3.1).
+is recorded either way. **Phase 6 added an observation alongside it**: the second
+process makes exactly one credential exchange, a `grant_type=refresh_token` POST,
+and never touches `/protocol/openid-connect/auth`. A recovery riding a provider
+session would have to go through that endpoint.
+
+**Which of these carries the weight, stated precisely, because an earlier draft
+of this paragraph overstated it.** The load-bearing control is the **renewal**
+assertion (§3.1, C2b): a different `access_token` after recovery than before,
+observed red. The `refresh_token` assertion is observed red too (C2b′). The
+`/auth`-absence assertion has **never been observed red** and cannot be without a
+product change — its collector was probed live instead — so it is corroboration,
+not proof. And the cookie guard is not retired: the provider cookies are cleared,
+so the second process holds none while it recovers, which is a stronger statement
+than the original assertion made.
 
 **If any prediction is wrong, correct this section in the PR body and say so.**
 Do not proceed as though it held.
@@ -462,3 +503,11 @@ Do not proceed as though it held.
 - **A4** — headless Chromium on the runner supports persistent contexts as the
   headed local one does. Unverified until CI runs (§7.2), and explicitly not to
   be worked around.
+- **A5** — the `/auth`-absence assertion is **corroboration, not the load-bearing
+  control**, and this is a limit rather than a claim. It has never been observed
+  red: making it fire needs a real redirect, which needs the product change C3
+  rules out. What was observed (phase 6) is that its collector sees such a
+  request when one happens — the same listener on process #1 caught the
+  interactive sign-in's single `/auth` call. The controls with a red behind them
+  are the renewal assertion (C2b) and the `refresh_token` assertion (C2b′); those
+  are what SC-001 rests on.
