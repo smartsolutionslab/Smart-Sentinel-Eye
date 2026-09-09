@@ -55,7 +55,8 @@ public class AuthorizeWhepCommandHandlerTests
             new AuthorizeWhepCommand(
                 MediaMtxPath.For(SomeCamera()),
                 "Bearer.xyz",
-                Option<MediaMtxAction>.Some(MediaMtxAction.Read)),
+                Option<MediaMtxAction>.Some(MediaMtxAction.Read),
+                ReportedMediaMtxAction.TryFrom("read")),
             CancellationToken.None);
 
         result.IsSuccess.ShouldBeTrue();
@@ -80,7 +81,8 @@ public class AuthorizeWhepCommandHandlerTests
             new AuthorizeWhepCommand(
                 MediaMtxPath.For(SomeCamera()),
                 "Bearer.kiosk",
-                Option<MediaMtxAction>.Some(MediaMtxAction.Read)),
+                Option<MediaMtxAction>.Some(MediaMtxAction.Read),
+                ReportedMediaMtxAction.TryFrom("read")),
             CancellationToken.None);
 
         result.IsSuccess.ShouldBeTrue();
@@ -95,7 +97,8 @@ public class AuthorizeWhepCommandHandlerTests
             new AuthorizeWhepCommand(
                 MediaMtxPath.For(SomeCamera()),
                 "",
-                Option<MediaMtxAction>.Some(MediaMtxAction.Read)),
+                Option<MediaMtxAction>.Some(MediaMtxAction.Read),
+                ReportedMediaMtxAction.TryFrom("read")),
             CancellationToken.None);
 
         result.IsFailure.ShouldBeTrue();
@@ -118,7 +121,8 @@ public class AuthorizeWhepCommandHandlerTests
             new AuthorizeWhepCommand(
                 MediaMtxPath.For(SomeCamera()),
                 "Bearer.invalid",
-                Option<MediaMtxAction>.Some(MediaMtxAction.Read)),
+                Option<MediaMtxAction>.Some(MediaMtxAction.Read),
+                ReportedMediaMtxAction.TryFrom("read")),
             CancellationToken.None);
 
         result.IsFailure.ShouldBeTrue();
@@ -138,7 +142,8 @@ public class AuthorizeWhepCommandHandlerTests
             new AuthorizeWhepCommand(
                 MediaMtxPath.For(SomeCamera()),
                 "Bearer.scoped-wrong",
-                Option<MediaMtxAction>.Some(MediaMtxAction.Read)),
+                Option<MediaMtxAction>.Some(MediaMtxAction.Read),
+                ReportedMediaMtxAction.TryFrom("read")),
             CancellationToken.None);
 
         result.IsFailure.ShouldBeTrue();
@@ -171,7 +176,8 @@ public class AuthorizeWhepCommandHandlerTests
             new AuthorizeWhepCommand(
                 MediaMtxPath.For(camera),
                 "Bearer.xyz",
-                Option<MediaMtxAction>.Some(MediaMtxAction.Read)),
+                Option<MediaMtxAction>.Some(MediaMtxAction.Read),
+                ReportedMediaMtxAction.TryFrom("read")),
             CancellationToken.None);
 
         result.IsFailure.ShouldBeTrue();
@@ -196,7 +202,8 @@ public class AuthorizeWhepCommandHandlerTests
             new AuthorizeWhepCommand(
                 MediaMtxPath.For(SomeCamera()),
                 "Bearer.kiosk",
-                Option<MediaMtxAction>.Some(MediaMtxAction.Publish)),
+                Option<MediaMtxAction>.Some(MediaMtxAction.Publish),
+                ReportedMediaMtxAction.TryFrom("publish")),
             CancellationToken.None);
 
         result.IsFailure.ShouldBeTrue();
@@ -221,7 +228,8 @@ public class AuthorizeWhepCommandHandlerTests
             new AuthorizeWhepCommand(
                 MediaMtxPath.For(SomeCamera()),
                 "Bearer.xyz",
-                Option<MediaMtxAction>.Some(MediaMtxAction.Publish)),
+                Option<MediaMtxAction>.Some(MediaMtxAction.Publish),
+                ReportedMediaMtxAction.TryFrom("publish")),
             CancellationToken.None);
 
         result.IsFailure.ShouldBeTrue();
@@ -244,7 +252,8 @@ public class AuthorizeWhepCommandHandlerTests
             new AuthorizeWhepCommand(
                 MediaMtxPath.For(SomeCamera()),
                 "",
-                Option<MediaMtxAction>.Some(MediaMtxAction.Publish)),
+                Option<MediaMtxAction>.Some(MediaMtxAction.Publish),
+                ReportedMediaMtxAction.TryFrom("publish")),
             CancellationToken.None);
 
         result.IsFailure.ShouldBeTrue();
@@ -269,7 +278,8 @@ public class AuthorizeWhepCommandHandlerTests
             new AuthorizeWhepCommand(
                 MediaMtxPath.For(SomeCamera()),
                 "Bearer.kiosk",
-                Option<MediaMtxAction>.None),
+                Option<MediaMtxAction>.None,
+                Option<ReportedMediaMtxAction>.None),
             CancellationToken.None);
 
         result.IsFailure.ShouldBeTrue();
@@ -294,11 +304,93 @@ public class AuthorizeWhepCommandHandlerTests
             new AuthorizeWhepCommand(
                 MediaMtxPath.For(SomeCamera()),
                 "Bearer.kiosk",
-                MediaMtxAction.TryFrom("api")),
+                MediaMtxAction.TryFrom("api"),
+                ReportedMediaMtxAction.TryFrom("api")),
             CancellationToken.None);
 
         result.IsFailure.ShouldBeTrue();
         result.Error.ShouldBeOfType<AuthorizeWhepError.ActionUnknown>();
+    }
+
+    /// <summary>
+    /// <b>Spec 115.</b> Failing closed is defensible only because the outage is
+    /// meant to be recoverable in minutes, and it is not if the operator cannot
+    /// learn which value to look up. The refusal itself is asserted first, so a
+    /// failure here can only be the diagnosis and never the decision.
+    /// </summary>
+    [Fact]
+    public async Task Authorize_with_an_action_this_build_does_not_recognise_names_the_value_that_arrived()
+    {
+        CapturingLogger<AuthorizeWhepCommandHandler> logger = new();
+        AuthorizeWhepCommandHandler handler = new(AKioskValidator(), new InMemoryStreamRepository(), logger);
+
+        Result<MediaMtxPath, AuthorizeWhepError> result = await handler.HandleAsync(
+            new AuthorizeWhepCommand(
+                MediaMtxPath.For(SomeCamera()),
+                "Bearer.kiosk",
+                MediaMtxAction.TryFrom("stream"),
+                ReportedMediaMtxAction.TryFrom("stream")),
+            CancellationToken.None);
+
+        result.Error.ShouldBeOfType<AuthorizeWhepError.ActionUnknown>();
+        logger.Entries.ShouldHaveSingleItem().Message.ShouldContain("stream");
+    }
+
+    /// <summary>
+    /// <b>Spec 115.</b> "The field was absent" and "the field held something we
+    /// do not know" are two different things to go and look at. One hedged
+    /// message that covers both tells an operator neither.
+    /// </summary>
+    [Fact]
+    public async Task An_absent_action_and_an_unrecognised_one_are_refused_with_different_messages()
+    {
+        MediaMtxPath path = MediaMtxPath.For(SomeCamera());
+        CapturingLogger<AuthorizeWhepCommandHandler> absentLogger = new();
+        CapturingLogger<AuthorizeWhepCommandHandler> reportedLogger = new();
+
+        await new AuthorizeWhepCommandHandler(AKioskValidator(), new InMemoryStreamRepository(), absentLogger)
+            .HandleAsync(
+                new AuthorizeWhepCommand(path, "Bearer.kiosk", Option<MediaMtxAction>.None, Option<ReportedMediaMtxAction>.None),
+                CancellationToken.None);
+
+        await new AuthorizeWhepCommandHandler(AKioskValidator(), new InMemoryStreamRepository(), reportedLogger)
+            .HandleAsync(
+                new AuthorizeWhepCommand(path, "Bearer.kiosk", MediaMtxAction.TryFrom("stream"), ReportedMediaMtxAction.TryFrom("stream")),
+                CancellationToken.None);
+
+        string absent = absentLogger.Entries.ShouldHaveSingleItem().Message;
+        string reported = reportedLogger.Entries.ShouldHaveSingleItem().Message;
+
+        absent.ShouldNotBe(reported);
+        absent.ShouldContain("absent");
+        reported.ShouldNotContain("absent");
+    }
+
+    /// <summary>
+    /// <b>Spec 115.</b> MediaMTX composes the hook body, so the value is only
+    /// indirectly attacker-influenced — but an unbounded one in a log is a
+    /// finding whoever put it there, and the whole value must not reach the sink.
+    /// </summary>
+    [Fact]
+    public async Task A_value_longer_than_the_cap_is_truncated_in_the_refusal()
+    {
+        string raw = new('a', 200);
+        CapturingLogger<AuthorizeWhepCommandHandler> logger = new();
+        AuthorizeWhepCommandHandler handler = new(AKioskValidator(), new InMemoryStreamRepository(), logger);
+
+        Result<MediaMtxPath, AuthorizeWhepError> result = await handler.HandleAsync(
+            new AuthorizeWhepCommand(
+                MediaMtxPath.For(SomeCamera()),
+                "Bearer.kiosk",
+                MediaMtxAction.TryFrom(raw),
+                ReportedMediaMtxAction.TryFrom(raw)),
+            CancellationToken.None);
+
+        result.Error.ShouldBeOfType<AuthorizeWhepError.ActionUnknown>();
+
+        string message = logger.Entries.ShouldHaveSingleItem().Message;
+        message.ShouldNotContain(raw);
+        message.ShouldContain(new string('a', ReportedMediaMtxAction.MaximumLength) + "…");
     }
 
     /// <summary>
@@ -318,7 +410,8 @@ public class AuthorizeWhepCommandHandlerTests
             new AuthorizeWhepCommand(
                 MediaMtxPath.For(SomeCamera()),
                 "Bearer.kiosk",
-                Option<MediaMtxAction>.Some(MediaMtxAction.Playback)),
+                Option<MediaMtxAction>.Some(MediaMtxAction.Playback),
+                ReportedMediaMtxAction.TryFrom("playback")),
             CancellationToken.None);
 
         result.IsSuccess.ShouldBeTrue();
@@ -342,11 +435,14 @@ public class AuthorizeWhepCommandHandlerTests
         MediaMtxPath path = MediaMtxPath.For(SomeCamera());
 
         Result<MediaMtxPath, AuthorizeWhepError> result = await handler.HandleAsync(
-            new AuthorizeWhepCommand(path, "Bearer.kiosk", Option<MediaMtxAction>.Some(MediaMtxAction.Read)),
+            new AuthorizeWhepCommand(path, "Bearer.kiosk", Option<MediaMtxAction>.Some(MediaMtxAction.Read), ReportedMediaMtxAction.TryFrom("read")),
             CancellationToken.None);
 
         result.Value.ShouldBe(path);
     }
 
     private static CameraIdentifier SomeCamera() => CameraIdentifier.From(Guid.CreateVersion7());
+
+    private static FakeWhepAuthValidator AKioskValidator() =>
+        new() { Subject = Option<WhepAuthSubject>.Some(new WhepAuthSubject("kiosk-id", AKioskPersona)) };
 }

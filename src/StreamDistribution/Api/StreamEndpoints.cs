@@ -367,13 +367,19 @@ public static class StreamEndpoints
 
         Option<MediaMtxAction> parsedAction = MediaMtxAction.TryFrom(body.Action);
 
+        // Parsed twice on purpose. The first collapses "absent" and "not one of
+        // ours" into None, which is what the decision needs and what the refusal
+        // cannot diagnose from; the second keeps what actually arrived, so the
+        // refusal names it (spec 115). Neither decides anything here.
+        Option<ReportedMediaMtxAction> reportedAction = ReportedMediaMtxAction.TryFrom(body.Action);
+
         string bearer = body.Token ?? string.Empty;
         if (bearer.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {
             bearer = bearer["Bearer ".Length..].Trim();
         }
 
-        Result<MediaMtxPath, AuthorizeWhepError> result = await handler.HandleAsync(new AuthorizeWhepCommand(parsedPath, bearer, parsedAction), cancellationToken);
+        Result<MediaMtxPath, AuthorizeWhepError> result = await handler.HandleAsync(new AuthorizeWhepCommand(parsedPath, bearer, parsedAction, reportedAction), cancellationToken);
 
         return result.Match<IResult>(onSuccess: _ => Results.Ok(), onFailure: error => error.ToProblem());
     }

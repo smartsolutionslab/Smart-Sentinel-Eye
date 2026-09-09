@@ -36,7 +36,7 @@ public sealed class AuthorizeWhepCommandHandler(
     {
         Ensure.That(command).IsNotNull();
 
-        (MediaMtxPath? path, string? bearerToken, Option<MediaMtxAction> action) = command;
+        (MediaMtxPath? path, string? bearerToken, Option<MediaMtxAction> action, _) = command;
 
         // The action is answered before the token, and that order is the point:
         // an absent or unpermitted action is refused whatever the caller holds,
