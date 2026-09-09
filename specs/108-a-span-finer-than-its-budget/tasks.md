@@ -71,6 +71,29 @@ cleaner, so long as the injected quantity is exact and named).
 > to fire — and in **either** case **no figure from this harness may be quoted**. This is the
 > single most important thing to verify about this feature.
 
+> **What C1 cannot see, added at phase 6 and load-bearing.** The injection is on the
+> **kiosk side**, so the delayed and undelayed arms both go through the same
+> `t1(kiosk) − t0(operator)` subtraction and a **constant offset between the two renderer
+> processes cancels in the difference**. A −60 ms offset would make every sample 60 ms too
+> small — the headroom-flattering direction — while C1 still recovered 296 of 300 exactly.
+> C1 establishes **scale and linearity**, and nothing about the **origin**.
+>
+> Two smaller limits, recorded so the figure is not quoted tighter than it is: C1 injects
+> into the **tail**, so it says nothing about the head (click dispatch, actionability, the
+> `fetch`); and its `±32 ms` is a **dispersion over pairs**, not a per-sample bound — the ten
+> pairs ran 277–340 against 300, i.e. **−23/+40 per pair**.
+
+**C3 — bound the cross-context clock offset by bracketing (added at phase 6).** Read the
+kiosk clock, then the operator clock, then the kiosk clock again. The middle read happened
+between the outer two, so `δ ∈ [middle − after, middle − before]` — width equal to the round
+trip, and ordering-independent, which is exactly what a one-way probe cannot offer. Seven
+brackets intersected, taken **before and after** the loop so drift shows.
+
+> **Prediction:** an interval containing zero and narrow against the p50. If it **excludes**
+> zero, every figure this harness has produced is wrong by the offset and none may be quoted
+> without the correction. If the two probes of one run **disagree**, the clocks drifted
+> during it and the run is a range, not a figure.
+
 **C2 — remove the arming and confirm it is loud.** Skip installing the kiosk-side observer
 for one iteration.
 

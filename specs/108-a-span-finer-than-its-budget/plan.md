@@ -194,7 +194,7 @@ kiosk + wall projects after this change, not only the edited file.
 | The MutationObserver never fires (G3) | every iteration times out | It surfaces as a **failure naming the iteration**, not a wrong figure. Verify the observer on one iteration before quoting anything |
 | The observer fires on a stale re-render | figures implausibly small; disagreement with #2072 | Distinguishable per-iteration values (`SPAN{n}`) make a stale match impossible; if it still happens, the value check is wrong, not the clock |
 | `Date.now()` steps mid-run (NTP) | one negative or one huge sample | Fails the run by §3c's guards. Never clamped |
-| The two pages do not share a clock (G1) | figures wrong by a constant offset | **SC-002's calibration is the test for this**: an injected delay of known size must come back the same size |
+| The two pages do not share a clock (G1) | figures wrong by a constant offset | ~~SC-002's calibration is the test for this~~ — **wrong, corrected at phase 6.** C1 injects on the kiosk side, so both arms of a paired run go through the same two-clock subtraction and a **constant offset cancels in the difference**; C1 recovers 296 of 300 whether the offset is 0 or −60 ms. The test is the **bracketed probe** (spec §3b): kiosk → operator → kiosk bounds the offset by the round trip, ordering-independently. Measured: δ ∈ [−4, +6] ms and δ ∈ [−3, +4] ms |
 | The head overshoot dominates | submit round trip comparable to the span | FR-003 prints it, so this is *observed* rather than suspected. The escalation is named in spec §6 |
 | US3 destabilises other kiosk specs | unrelated wall specs go red | Run the whole `kiosk` and `wall` projects, not the edited file |
 | The figure breaches 800 ms | expected, per #2072 | **A finding for a human, never a threshold to move.** No assertion exists to weaken |
@@ -223,7 +223,9 @@ The plan is aligned if a reader agrees that:
 
 1. No `src/` or `apps/` file needs to change for US1 and US2. *(If phase 4 finds one does,
    that is a finding and a scope question, not a quiet edit.)*
-2. The clock argument in spec §3b is sound for **two pages**, and SC-002's calibration is
-   the thing that tests it rather than an argument that replaces it.
+2. The clock argument in spec §3b is sound for **two pages**, and something *measures* it
+   rather than an argument replacing it. **Corrected at phase 6:** the thing that measures
+   it is the bracketed probe in §3b, not SC-002's calibration — which cannot see a constant
+   offset at all, because both arms of a paired run go through the same subtraction.
 3. Printing without asserting is the right posture here, for the two reasons in spec §7.
 4. #1714 does not close on this work, and the artefacts say so.
