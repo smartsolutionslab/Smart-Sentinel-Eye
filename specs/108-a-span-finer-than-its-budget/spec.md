@@ -159,6 +159,35 @@ The existing `sharesOneClock()` refusal (`:255-264`) is **kept and extended**: i
 refuses when `PW_TEST_CONNECT_WS_ENDPOINT` names a remote browser. Both pages come from the
 same browser instance, so the one guard covers both ends.
 
+> **Corrected at phase 6 (2026-09-09). One browser is one *machine*, not one clock, and
+> §3b was written as though it were.**
+>
+> The two stamps are taken in **two Chromium renderer processes**. Each extrapolates
+> `base::Time::Now()` from its own latched tick/wall pair, so `Date.now()` in one can sit a
+> constant offset away from `Date.now()` in the other even though both descend from one OS
+> clock. That offset lands **whole** in every sample, in whichever direction it happens to
+> point.
+>
+> **`sharesOneClock()` does not test this and cannot.** It reads an environment variable. It
+> rules out the remote-browser case and says nothing about the two local contexts.
+>
+> **Neither does SC-002's calibration** — see the correction under SC-002 below. So the
+> harness now **bounds the offset directly**, by bracketing: read the kiosk clock, then the
+> operator clock, then the kiosk clock again. The middle read happened between the outer
+> two, so with K the kiosk clock and O = K + δ the operator's,
+> `δ ∈ [middle − after, middle − before]` — an interval whose width is the round trip, and
+> whose derivation does not depend on which page is read first. Seven brackets are
+> intersected, and the bound is taken **before and after** the loop so drift across the run
+> is visible rather than assumed. It is printed as a **named term** in the instrument-error
+> line.
+>
+> This also settles an old reading. A one-way probe once reported `min −88 ms` and it was
+> attributed to round-trip jitter — an explanation available only if the kiosk was read
+> first, because under the other ordering a round trip can only push the figure positive.
+> A one-way probe cannot tell real skew from its own jitter. The bracket does not have to:
+> **measured at phase 6, δ ∈ [−4, +6] ms and δ ∈ [−3, +4] ms across two runs, both intervals
+> containing zero.**
+
 **On a distributed deployment this subtraction would be meaningless.** Recorded in the file,
 not only here.
 
@@ -185,6 +214,20 @@ The honest statement of what a run licenses:
 and what it does **not** license:
 
 > The 800 ms SLO holds. / §IV's event → overlay state leg is measured. / The path is watched.
+
+**How much of the 800 ms this span can possibly account for — 250 ms, and the arithmetic is
+not a subtraction.** §IV's 800 is `80 + 120 + 200 + 200 + 50 + 150`. This span covers **two**
+of those rows: *event → overlay state* (200) and *overlay composite + render* (50). The other
+**400 ms of budgeted legs — camera → SFU, SFU → kiosk decode, presentation buffer — are not
+serial terms of this span at all** (ADR-0129, §3e): they are the picture's path, and they
+enter the label's only by holding it back to the tile's frame age. The remaining 150 ms is
+headroom, an arithmetic remainder rather than a term.
+
+So a p50 read against 800 ms suggests headroom that has not been demonstrated. **Against the
+250 ms this span actually covers it is a little over 3× at phase 5's warm figures and under
+2× at phase 6's cold ones** — and even that omits the hold. The harness prints this
+arithmetic beside every set of figures rather than leaving a reader to make the comparison
+themselves.
 
 ### 3d. Consistency with #2072 — the check the brief requires
 
@@ -457,6 +500,22 @@ permitted: `OBSERVE_TIMEOUT_MS` is 60 s today, against an observed cold worst ca
   into the observed path and the instrument reports it within its stated error. An
   instrument that cannot see an injected delay is not an instrument. The prediction is
   written down before the run.
+
+  > **Corrected at phase 6: C1 establishes scale and linearity, and nothing about the
+  > origin.** The injection is on the **kiosk side** — it defers the observed mutation — so
+  > the delayed and undelayed arms of a paired run both go through the **same two-clock
+  > subtraction**, and a **constant offset between the two contexts cancels in the
+  > difference**. Concretely: a −60 ms offset would make every sample 60 ms too small, which
+  > is the headroom-flattering direction, while C1 still recovered 296 ms of 300 exactly.
+  >
+  > Two further limits of C1, stated where the criterion is rather than left to be inferred:
+  > it injects into the **tail**, so it says nothing about the head (click dispatch,
+  > Playwright's actionability checks, the browser's `fetch`); and its `±32 ms` is a
+  > **dispersion over pairs**, not a per-sample bound — the ten pairs ran 277–340 against
+  > 300, i.e. **−23/+40 per pair**.
+  >
+  > SC-002 is therefore **necessary and not sufficient**. The constant offset is bounded by
+  > the bracketed probe in §3b, which is a separate mechanism and reports its own figure.
 - **SC-003** The new instrument's figures are compared with the old harness's on the same
   machine, and the difference is explained rather than merely noted.
 - **SC-004** The verification note states the §3d comparison with #2072's 555/758 ms, and
@@ -478,7 +537,9 @@ permitted: `OBSERVE_TIMEOUT_MS` is 60 s today, against an observed cold worst ca
 | Cross-page subtraction | `Date.now()`, two readers of one OS clock | spec 053; existing `sharesOneClock()` |
 | Per-leg browser figures | `page.on('console')` on the shipped `[latency]` line | existing: `kioskLatency.ts:87` |
 | The wall | the seeded live-video wall | existing: `e2e/support/live-video-wall.ts`, `seed-live-video-wall.setup.ts` |
-| Percentile index arithmetic | `Math.ceil(n * 0.95) - 1` | existing: `e2e/click-to-first-frame.spec.ts:486-488` |
+| Percentile index arithmetic | `Math.ceil(n * 0.95) - 1`, **and no p95 below n = 20** | existing: `e2e/click-to-first-frame.spec.ts:486-488`, which takes **20** samples |
+| Median at an even count | the **mean of the two middles**, never a silently chosen side | phase 6 |
+| Cross-context clock offset | **bracketed** kiosk → operator → kiosk, bounded by the round trip | phase 6, §3b |
 | Figures stated as a range | every sample printed, never a lone median | existing: `:294-300`; spec 106 verification |
 
 **Is a new ADR the honest answer? No — for what this feature builds.** Every mechanism is
@@ -540,6 +601,13 @@ rows and a finding issue** — both written by a human.
   the two-*page* case specifically is a new application of it. **Marked because the whole
   figure rests on it.** SC-002's calibration is what tests it: an injected delay of known
   size must come back the same size.
+
+  > **G1 is no longer a guess, and the sentence above named the wrong test for it.**
+  > SC-002 cannot see a constant offset — both arms of a paired run go through the same
+  > subtraction, so it cancels (see SC-002). The bracketed probe added at phase 6 (§3b) is
+  > what tests G1, and it **measures** rather than argues: two runs, δ ∈ [−4, +6] ms and
+  > δ ∈ [−3, +4] ms, both containing zero, both taken twice per run so drift would show.
+  > G1 held. It was not established by the evidence originally cited for it.
 - **G2** That the head overshoot (§3c) is small relative to the span. `CommandLatencyTests`
   puts a comparable write's p95 under 200 ms server-side, but that excludes the browser's
   own `fetch` and the gateway. FR-003 measures it rather than assuming it — if it turns out
