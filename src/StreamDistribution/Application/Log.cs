@@ -59,6 +59,9 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Warning, Message = "Refused a WHEP {Action} on path {Path}: nothing in this product publishes through the external-auth hook, so no token admits this action.")]
     public static partial void RefusedWhepAction(this ILogger logger, MediaMtxAction action, MediaMtxPath path);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Refused a WHEP request on path {Path}: MediaMTX named no action this build recognises — the field was absent, or held a value other than read, publish or playback. Check for MediaMTX version skew first: the broker image tracks a floating latest tag, so an upgrade that renames, moves or drops the action field arrives here as unknown and every viewer is refused closed until this build learns the new vocabulary.")]
-    public static partial void RefusedUnknownWhepAction(this ILogger logger, MediaMtxPath path);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Refused a WHEP request naming action {ReportedAction} on path {Path}: this build recognises only read, publish and playback. Check for MediaMTX version skew first — the broker image is pinned, so compare that pin against the release that renamed or replaced this action; every viewer stays refused closed until this build learns it.")]
+    public static partial void RefusedUnrecognisedWhepAction(this ILogger logger, ReportedMediaMtxAction reportedAction, MediaMtxPath path);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Refused a WHEP request on path {Path}: MediaMTX sent no action field at all — the field was absent, not merely unfamiliar. Check for MediaMTX version skew first — the broker image is pinned, so compare that pin against the release that moved or dropped the field; every viewer stays refused closed until this build reads it from wherever it went.")]
+    public static partial void RefusedAbsentWhepAction(this ILogger logger, MediaMtxPath path);
 }
