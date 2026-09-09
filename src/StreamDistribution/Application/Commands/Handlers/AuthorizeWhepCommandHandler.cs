@@ -36,7 +36,7 @@ public sealed class AuthorizeWhepCommandHandler(
     {
         Ensure.That(command).IsNotNull();
 
-        (MediaMtxPath? path, string? bearerToken, Option<MediaMtxAction> action, _) = command;
+        (MediaMtxPath? path, string? bearerToken, Option<MediaMtxAction> action, Option<ReportedMediaMtxAction> reportedAction) = command;
 
         // The action is answered before the token, and that order is the point:
         // an absent or unpermitted action is refused whatever the caller holds,
@@ -45,7 +45,7 @@ public sealed class AuthorizeWhepCommandHandler(
         // make this request acceptable.
         if (!action.HasValue)
         {
-            logger.RefusedUnknownWhepAction(path);
+            RefuseUnknownAction(reportedAction, path);
             return Failure(AuthorizeWhepFailures.ActionUnknown());
         }
 
@@ -87,5 +87,30 @@ public sealed class AuthorizeWhepCommandHandler(
         }
 
         return Success(path);
+    }
+
+    /// <summary>
+    /// The refusal is identical either way — <c>WHEP_ACTION_UNKNOWN</c>, 403,
+    /// same detail back to MediaMTX. Only the diagnosis differs, and it has to:
+    /// a field that moved and a field that was renamed are two different things
+    /// to go and read the release notes about, and spec 074's single hedged
+    /// message told an operator neither (spec 115, issue #2105).
+    ///
+    /// <para>
+    /// What arrived is a log field and never part of the answer. Echoing it back
+    /// to the sender would reflect input across a trust boundary for no
+    /// diagnostic gain — the operator reads it here.
+    /// </para>
+    /// </summary>
+    private void RefuseUnknownAction(Option<ReportedMediaMtxAction> reportedAction, MediaMtxPath path)
+    {
+        if (reportedAction.HasValue)
+        {
+            logger.RefusedUnrecognisedWhepAction(reportedAction.Value, path);
+        }
+        else
+        {
+            logger.RefusedAbsentWhepAction(path);
+        }
     }
 }
