@@ -18,9 +18,18 @@ namespace SmartSentinelEye.StreamDistribution.Application.Commands;
 /// <c>default</c>, so a defaulted parameter would silently read "unknown" at
 /// every call site that forgot to pass one.
 /// </para>
+///
+/// <para>
+/// <c>ReportedAction</c> is that same field as text, kept because <c>Action</c>
+/// collapses two diagnoses into one (spec 115): <see cref="Option{T}.None"/>
+/// here means MediaMTX sent <em>no</em> <c>action</c> field, while a value means
+/// it sent one this build does not recognise — and the refusal can then name it.
+/// Same reason for no default value.
+/// </para>
 /// </summary>
 public sealed record AuthorizeWhepCommand(
     MediaMtxPath Path,
     string BearerToken,
-    Option<MediaMtxAction> Action)
+    Option<MediaMtxAction> Action,
+    Option<ReportedMediaMtxAction> ReportedAction)
     : ICommand<Result<MediaMtxPath, AuthorizeWhepError>>;
