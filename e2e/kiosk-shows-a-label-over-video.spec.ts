@@ -266,13 +266,54 @@ test('a tile shows an overlay label over video that is actually decoding', async
  *
  * <para>
  * The old five took 8.6 s of a 300 s test budget, so the envelope was not what
- * bounded them. Ten gives a p95 that is the second-largest sample rather than
- * the largest, and it keeps the run long enough for the per-leg listener below
- * to see the 2 s and 5 s sampling cadences it reads.
+ * bounded them. Ten keeps the run long enough for the per-leg listener below to
+ * see the 2 s and 5 s sampling cadences it reads.
+ * </para>
+ *
+ * <para>
+ * <b>Ten does not buy a p95, and this comment used to say it did.</b> It claimed
+ * ten gives "a p95 that is the second-largest sample rather than the largest".
+ * The index arithmetic borrowed from `click-to-first-frame.spec.ts:488` is
+ * `Math.ceil(n × 0.95) − 1`, and that file takes <b>twenty</b> samples, where the
+ * index is 18 and genuinely the 19th of 20. At ten it is 9 — <i>the largest
+ * sample</i>, which is the maximum wearing a percentile's name. So no p95 is
+ * reported at this sample size; `percentiles` refuses to compute one rather than
+ * printing the maximum twice under two labels.
  * </para>
  */
 const ITERATIONS = 10;
-const OBSERVE_TIMEOUT_MS = 60_000;
+
+/** The test's own budget, named so the per-iteration arithmetic below can use it. */
+const TEST_TIMEOUT_MS = 300_000;
+
+/**
+ * The ceiling on one iteration's observation — <b>not the budget actually used</b>.
+ *
+ * <para>
+ * Ten iterations at this ceiling is 600 s against a 300 s test, and the loop
+ * already spends ~45 s on the `live-updates-degraded` wait plus two sign-ins. A
+ * run where three iterations went long therefore died on Playwright's own timeout
+ * having printed <b>nothing</b> — the failure where the figures would have been
+ * most informative. `observeBudget` derives the real per-iteration budget from
+ * the time left, and every sample is printed as it lands rather than at the end.
+ * </para>
+ */
+const OBSERVE_CEILING_MS = 60_000;
+
+/**
+ * Held back from the loop for the post-loop decode samples, the report and the
+ * assertions, so a slow run still reaches its own output.
+ */
+const REPORT_RESERVE_MS = 30_000;
+
+/** Below this an observation is not worth attempting; the refusal names it instead. */
+const MINIMUM_OBSERVE_MS = 5_000;
+
+/** How many bracketed reads the cross-context skew probe takes. */
+const SKEW_BRACKETS = 7;
+
+/** How long a sample waits for its own submit request to finish before giving up. */
+const SUBMIT_SETTLE_MS = 2_000;
 
 /** The legs this span covers, and the ones it does not. Reported, never implied. */
 const LEGS_COVERED = ['event → overlay state', 'overlay composite + render'] as const;
@@ -284,8 +325,21 @@ const LEGS_NOT_COVERED = ['camera → SFU', 'SFU → kiosk decode', 'presentatio
  * could fix, when it is a property of what is being timed.
  */
 const WHY_NOT_COVERED =
-  'they are legs of the picture path, not the label path; since ADR-0129 they enter this span ' +
-  'only by holding the label back to its tile frame age (capped 200 ms)';
+  'they are legs of the picture path, not the label path; since ADR-0129 they are not serial ' +
+  'terms of this span at all, and enter it only by holding the label back to its tile frame ' +
+  'age (cap 200 ms)';
+
+/**
+ * How much of §IV's 800 ms this span can possibly account for, printed beside the
+ * figures so nobody reads "p50 79 ms against 800 ms" as the budget verified.
+ *
+ * <para>
+ * 200 (event → overlay state) + 50 (composite + render) = <b>250</b>. The other
+ * 400 ms of budgeted legs are the picture's, not the label's, and 150 ms is an
+ * arithmetic remainder rather than a term.
+ * </para>
+ */
+const BUDGETED_MILLISECONDS_SPANNED = 250;
 
 /**
  * The closed set of measurement names the kiosk emits
@@ -344,12 +398,54 @@ interface LatencyLine {
 }
 
 /**
+ * How the operator page's clock sits against the kiosk page's, <b>bounded rather
+ * than assumed</b>.
+ *
+ * <para>
+ * `elapsed = t1 − t0` subtracts a stamp taken in the operator renderer from one
+ * taken in the kiosk renderer. They are separate Chromium processes, each
+ * extrapolating `base::Time::Now()` from its own latched tick/wall pair, so a
+ * constant offset between them is possible and lands directly in every figure.
+ * </para>
+ *
+ * <para>
+ * <b>The calibration cannot see this and never could.</b> C1 defers the observed
+ * mutation on the kiosk side by 300 ms; both the delayed and the undelayed arm go
+ * through the same two-clock subtraction, so a constant offset <i>cancels in the
+ * difference</i>. C1 establishes scale and linearity, and nothing about the
+ * origin. A −60 ms offset would make every sample 60 ms too small — in the
+ * headroom-flattering direction — while C1 still recovered 296 of 300.
+ * </para>
+ */
+interface ClockSkewBound {
+  /** The lowest offset (operator clock − kiosk clock, ms) the brackets permit. */
+  lowMilliseconds: number;
+  /** The highest offset the brackets permit. */
+  highMilliseconds: number;
+  /** The tightest single bracket's round trip — the width one bracket alone bounds. */
+  tightestRoundTripMilliseconds: number;
+  /** How many brackets were taken. */
+  brackets: number;
+  /**
+   * Whether the brackets agreed. `false` means their intervals did not intersect —
+   * the clocks drifted, or a read was descheduled — and the reported interval is
+   * then the envelope of all of them rather than their intersection.
+   */
+  consistent: boolean;
+}
+
+/**
  * Whether both ends of the span can be stamped on one clock.
  *
  * <para>
  * True only when this process drives both pages from one browser on this
  * machine. A remote browser or a distributed grid breaks that, and the honest
  * answer there is a refusal rather than a subtraction across two clocks.
+ * </para>
+ *
+ * <para>
+ * <b>One browser is not one clock, only one <i>machine</i>.</b> This guard rules
+ * out the remote case; `bracketClockSkew` bounds what is left.
  * </para>
  */
 function sharesOneClock(): { ok: true } | { ok: false; because: string } {
@@ -361,6 +457,92 @@ function sharesOneClock(): { ok: true } | { ok: false; because: string } {
     };
   }
   return { ok: true };
+}
+
+// ── the cross-context clock, bracketed ───────────────────────────────────
+
+async function readNow(page: Page): Promise<number> {
+  const raw: unknown = await page.evaluate(() => Date.now());
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    throw new Error(`a page returned an unusable clock reading: ${JSON.stringify(raw)}`);
+  }
+  return raw;
+}
+
+/**
+ * Bounds the operator page's clock against the kiosk page's by <b>bracketing</b>:
+ * kiosk → operator → kiosk.
+ *
+ * <para>
+ * Write the kiosk clock K and the operator clock O = K + δ. Reading `before` on
+ * the kiosk, `middle` on the operator and `after` on the kiosk, the instant of the
+ * middle read lies between the outer two, so
+ * <c>δ ∈ [middle − after, middle − before]</c>. The interval's width is the round
+ * trip, and the derivation does not depend on which page is read first — which is
+ * exactly what a one-way probe cannot offer. A one-way `min −88 ms` was previously
+ * attributed to round-trip jitter, and that reading is only available if the kiosk
+ * was read first; under the other ordering a round trip can only push the figure
+ * positive, so −88 ms would have been real skew. A one-way probe cannot tell those
+ * apart. This one does not have to.
+ * </para>
+ *
+ * <para>
+ * Several brackets are intersected, because each is only as tight as its own round
+ * trip. If they do not intersect, the clocks moved relative to each other during
+ * the probe; that is reported rather than hidden, and the envelope is used instead.
+ * </para>
+ */
+async function bracketClockSkew(kioskPage: Page, operatorPage: Page): Promise<ClockSkewBound> {
+  const lows: number[] = [];
+  const highs: number[] = [];
+  const roundTrips: number[] = [];
+
+  for (let bracket = 0; bracket < SKEW_BRACKETS; bracket += 1) {
+    const before = await readNow(kioskPage);
+    const middle = await readNow(operatorPage);
+    const after = await readNow(kioskPage);
+
+    if (after < before) {
+      throw new Error(`the kiosk clock stepped backwards during a skew bracket: ${before} then ${after}`);
+    }
+
+    lows.push(middle - after);
+    highs.push(middle - before);
+    roundTrips.push(after - before);
+  }
+
+  const intersectionLow = Math.max(...lows);
+  const intersectionHigh = Math.min(...highs);
+  const consistent = intersectionLow <= intersectionHigh;
+
+  return {
+    lowMilliseconds: consistent ? intersectionLow : Math.min(...lows),
+    highMilliseconds: consistent ? intersectionHigh : Math.max(...highs),
+    tightestRoundTripMilliseconds: Math.min(...roundTrips),
+    brackets: SKEW_BRACKETS,
+    consistent,
+  };
+}
+
+/** The largest magnitude the bound permits — the term that enters the error budget. */
+function skewMagnitude(bound: ClockSkewBound): number {
+  return Math.max(Math.abs(bound.lowMilliseconds), Math.abs(bound.highMilliseconds));
+}
+
+function describeSkew(label: string, bound: ClockSkewBound | null): string {
+  if (bound === null) {
+    return `[span] cross-context clock skew ${label}: UNMEASURED — no bound is in the error below`;
+  }
+
+  const containsZero = bound.lowMilliseconds <= 0 && bound.highMilliseconds >= 0;
+  return (
+    `[span] cross-context clock skew ${label}: operator − kiosk ∈ ` +
+    `[${bound.lowMilliseconds.toFixed(0)}, ${bound.highMilliseconds.toFixed(0)}] ms ` +
+    `(|δ| ≤ ${skewMagnitude(bound).toFixed(0)} ms; ${bound.brackets} brackets, tightest round trip ` +
+    `${bound.tightestRoundTripMilliseconds.toFixed(0)} ms; ` +
+    `${bound.consistent ? 'brackets agree' : 'brackets DISAGREE — envelope reported, the clocks moved'}; ` +
+    `${containsZero ? 'consistent with one shared clock' : 'EXCLUDES zero — the two contexts do not agree'})`
+  );
 }
 
 // ── the in-page clock ────────────────────────────────────────────────────
@@ -541,29 +723,91 @@ function at(sorted: ReadonlyArray<number>, index: number): number {
   return value;
 }
 
-/** Same index arithmetic as `click-to-first-frame.spec.ts:486-488`. */
-function percentiles(values: ReadonlyArray<number>): { p50: number; p95: number; max: number; min: number } {
+/**
+ * The median of an already-sorted set.
+ *
+ * <para>
+ * <b>The two middles are averaged at an even count.</b> The upper-middle of an
+ * even count is not the median, and neither is the lower-middle; silently picking
+ * a side is what this restores the guard against. At n = 10 it is the mean of the
+ * 5th and 6th samples, which is why a p50 here can carry a half.
+ * </para>
+ */
+function median(sorted: ReadonlyArray<number>): number {
+  const count = sorted.length;
+  if (count === 0) throw new Error('a median was read from an empty sample set');
+
+  const upper = Math.floor(count / 2);
+  if (count % 2 === 1) return at(sorted, upper);
+  return (at(sorted, upper - 1) + at(sorted, upper)) / 2;
+}
+
+/**
+ * <b>`p95` is null where the sample size cannot support one.</b>
+ *
+ * <para>
+ * The index is `click-to-first-frame.spec.ts:488`'s: `Math.ceil(n × 0.95) − 1`.
+ * At n = 20 that is 18, the 19th of 20 — a real percentile. At n = 10 it is 9,
+ * <i>the largest sample</i>. Printing the maximum twice, once labelled `p95`, is
+ * how a figure acquires a precision nobody measured, so this returns null instead
+ * and the caller says why.
+ * </para>
+ */
+function percentiles(values: ReadonlyArray<number>): { p50: number; p95: number | null; max: number; min: number } {
   const sorted = [...values].sort((left, right) => left - right);
+  const p95Index = Math.ceil(sorted.length * 0.95) - 1;
+
   return {
-    p50: at(sorted, sorted.length / 2),
-    p95: at(sorted, Math.ceil(sorted.length * 0.95) - 1),
+    p50: median(sorted),
+    p95: p95Index < sorted.length - 1 ? at(sorted, p95Index) : null,
     max: at(sorted, sorted.length - 1),
     min: at(sorted, 0),
   };
 }
 
+/** One decimal, because an averaged median at an even count carries a half. */
+function milliseconds(value: number): string {
+  return Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
+}
+
 /**
- * Reports every figure, its percentiles and range, the submit round trip beside
- * each sample, and the legs it does not cover with the reason.
+ * Printed <b>as the sample lands</b>, not after the loop.
+ *
+ * <para>
+ * A run whose loop overran used to die on the Playwright timeout having printed
+ * nothing at all — the one failure where the figures would have been most worth
+ * having.
+ * </para>
  */
-function report(measurements: ReadonlyArray<SpanMeasurement>): void {
-  const samples = measurements
+function printSample(sample: SpanSample): void {
+  const submit =
+    sample.submitRoundTripMilliseconds === null
+      ? 'submit round trip unseen'
+      : `submit round trip ${sample.submitRoundTripMilliseconds.toFixed(0)} ms`;
+  console.info(`[span] iteration ${sample.iteration}: ${sample.elapsedMilliseconds} ms (${submit})`);
+}
+
+interface SpanRun {
+  measurements: ReadonlyArray<SpanMeasurement>;
+  /** The bracketed skew taken before the loop, or null where none was taken. */
+  skewBefore: ClockSkewBound | null;
+  /** And again after it, so drift across the run is visible rather than assumed. */
+  skewAfter: ClockSkewBound | null;
+}
+
+/**
+ * Reports every figure, its distribution and range, the submit round trip beside
+ * each sample, the legs it does not cover with the reason, and the instrument's
+ * own error — including the cross-context skew term, measured rather than argued.
+ */
+function report(run: SpanRun): void {
+  const samples = run.measurements
     .map((measurement) => measurement.sample)
     .filter((sample): sample is SpanSample => sample !== undefined);
 
   // Every refusal, named and first, so a run that produced no figure says why
   // rather than printing an empty distribution.
-  for (const measurement of measurements) {
+  for (const measurement of run.measurements) {
     if (measurement.refusal !== undefined) console.info(`[span] REFUSED — ${measurement.refusal}`);
   }
 
@@ -573,27 +817,35 @@ function report(measurements: ReadonlyArray<SpanMeasurement>): void {
     return;
   }
 
-  // Every figure, not a summary. A median without its spread hides whether the
-  // system under test or the machine is the bottleneck.
-  for (const sample of samples) {
-    const submit =
-      sample.submitRoundTripMilliseconds === null
-        ? 'submit round trip unseen'
-        : `submit round trip ${sample.submitRoundTripMilliseconds.toFixed(0)} ms`;
-    console.info(`[span] iteration ${sample.iteration}: ${sample.elapsedMilliseconds} ms (${submit})`);
-  }
-
   const figures = samples.map((sample) => sample.elapsedMilliseconds);
   console.info(`[span] ${figures.length} sample(s) — ${[...figures].sort((a, b) => a - b).join(' / ')} ms`);
 
   if (figures.length === 1) {
-    console.info('[span] one figure only — no percentiles, no range; a single run is not a measurement');
+    console.info('[span] one figure only — no distribution, no range; a single run is not a measurement');
   } else {
     const span = percentiles(figures);
+    const half = figures.length / 2;
+    const middles =
+      figures.length % 2 === 0
+        ? `mean of the ${half}th and ${half + 1}th of ${figures.length}`
+        : `the middle of ${figures.length}`;
+
     console.info(
-      `[span] p50 ${span.p50} ms, p95 ${span.p95} ms, max ${span.max} ms, ` +
-        `range ${span.min}-${span.max} ms, spread ${span.max - span.min} ms`,
+      `[span] p50 ${milliseconds(span.p50)} ms (${middles}), max ${milliseconds(span.max)} ms, ` +
+        `range ${milliseconds(span.min)}-${milliseconds(span.max)} ms, spread ${milliseconds(span.max - span.min)} ms`,
     );
+
+    if (span.p95 === null) {
+      console.info(
+        `[span] no p95 at n=${figures.length}: Math.ceil(${figures.length} × 0.95) − 1 = ` +
+          `${Math.ceil(figures.length * 0.95) - 1} is the largest sample, which is the max above. This index ` +
+          'arithmetic needs n ≥ 20 for a real p95, so none is reported rather than the max printed twice.',
+      );
+    } else {
+      console.info(
+        `[span] p95 ${milliseconds(span.p95)} ms (the ${Math.ceil(figures.length * 0.95)}th of ${figures.length})`,
+      );
+    }
   }
 
   const submits = samples
@@ -604,14 +856,21 @@ function report(measurements: ReadonlyArray<SpanMeasurement>): void {
   } else {
     const submit = percentiles(submits);
     console.info(
-      `[span] submit round trip: p50 ${submit.p50.toFixed(0)} ms, max ${submit.max.toFixed(0)} ms ` +
-        `over ${submits.length} sample(s) — subtract it to approach the section IV span start`,
+      `[span] submit round trip: p50 ${milliseconds(submit.p50)} ms, max ${milliseconds(submit.max)} ms ` +
+        `over ${submits.length} sample(s) — subtract each sample's own printed figure to approach the ` +
+        'section IV span start',
     );
   }
 
   console.info(`[span] covers: ${LEGS_COVERED.join(', ')}`);
   console.info(`[span] NOT covered: ${LEGS_NOT_COVERED.join(', ')} — ${WHY_NOT_COVERED}`);
-  console.info('[span] includes the label hold (ADR-0129): yes — this wall has video');
+  console.info(
+    `[span] this span covers ${BUDGETED_MILLISECONDS_SPANNED} ms of section IV's 800 ms — ` +
+      'event → overlay state (200) + composite + render (50). The other 400 ms of budgeted legs are the ' +
+      'picture path and are NOT serial terms of this span; 150 ms is headroom, an arithmetic remainder. ' +
+      'A figure here is NOT the 800 ms budget verified.',
+  );
+  console.info('[span] includes the label hold (ADR-0129): see the [legs] label_delay line below');
   console.info(`[span] conditions: ${process.platform}, CI=${process.env['CI'] ?? 'false'}, one tile, one clip`);
 
   // **The instrument's own error, beside its figures, and replaced rather than
@@ -622,18 +881,46 @@ function report(measurements: ReadonlyArray<SpanMeasurement>): void {
   //   click dispatch          ~ 1 frame   ~ 17 ms
   //   Date.now() resolution   2 x 1 ms
   //                           ---------
-  //                                      ~ +/-52 ms
+  //                                      ~ +/-52 ms, PLUS the skew term below
+  const quantisation = 52;
+  const bounds = [run.skewBefore, run.skewAfter].filter((bound): bound is ClockSkewBound => bound !== null);
+  const skew = bounds.length === 0 ? null : Math.max(...bounds.map(skewMagnitude));
+
   console.info(
-    '[span] instrument error: ~±52 ms (2 rAF ≈ 33 ms + click dispatch ≈ 17 ms + 2 × Date.now() 1 ms) — ' +
-      'in-page stamps at both ends; the polled assertion no longer produces the figure',
+    `[span] instrument error: ±${quantisation} ms of quantisation (2 rAF ≈ 33 ms + click dispatch ≈ 17 ms + ` +
+      '2 × Date.now() 1 ms) PLUS the cross-context clock skew term below — the two ends are stamped in ' +
+      'different Chromium renderer processes, and that term was missing from this line until spec 108 phase 6',
   );
-  // The arithmetic above is a ceiling. A paired calibration — a known 300 ms
+  console.info(describeSkew('before the loop', run.skewBefore));
+  console.info(describeSkew('after the loop', run.skewAfter));
+  console.info(
+    skew === null
+      ? `[span] total instrument error: at least ±${quantisation} ms, and NOT boundable — the skew probe did not run`
+      : `[span] total instrument error: ~±${(quantisation + skew).toFixed(0)} ms ` +
+          `(${quantisation} ms quantisation + ${skew.toFixed(0)} ms skew bound)`,
+  );
+  console.info(
+    '[span] skew direction: elapsed = t1(kiosk) − t0(operator), so an operator clock running δ ms AHEAD of ' +
+      'the kiosk clock makes every sample δ ms too SMALL. Correcting means ADDING δ to every figure above.',
+  );
+
+  // The arithmetic above is a ceiling on quantisation only. C1 — a known 300 ms
   // deferred into the observed path on alternate iterations of one run, so both
   // populations meet the same stack — recovered 296 ms as the mean of the ten
-  // adjacent pairs, every pair inside 277-340 ms. So the observed error is
-  // ~±32 ms and the stated ±52 ms holds with room. The apparatus was reverted;
-  // the figures are in spec 108's verification note.
-  console.info('[span] calibration: a 300 ms injected delay was recovered as 296 ms (10 paired iterations)');
+  // adjacent pairs. The apparatus was reverted; the figures are in spec 108's
+  // verification note.
+  console.info(
+    '[span] calibration C1: a 300 ms delay, injected on the KIOSK side only, recovered as a 296 ms mean over ' +
+      '10 paired iterations, every pair inside 277-340 ms — i.e. −23/+40 ms per pair. ±32 ms is the ' +
+      'dispersion over pairs, NOT a per-sample bound; the per-pair worst case is ±40 ms.',
+  );
+  console.info(
+    '[span] what C1 does and does not establish: it defers the TAIL, so it calibrates scale and linearity ' +
+      'from the mutation onward. It says nothing about the head (click dispatch, actionability, the fetch), ' +
+      'and nothing about a CONSTANT cross-context offset — both arms of a paired run go through the same ' +
+      'two-clock subtraction, so a constant offset cancels in the difference. The bracketed probe above is ' +
+      'the only thing here that bounds that.',
+  );
   console.info(
     '[span] no budget is asserted here: this also runs on a shared CI runner, and #2072 has already ' +
       'measured 555/758 ms on an enclosed leg against 200 ms. Figures are recorded, not gated.',
@@ -668,7 +955,26 @@ function reportLegs(lines: ReadonlyArray<LatencyLine>, malformed: number): void 
 
     const leg = percentiles(values);
     console.info(
-      `[legs] ${name}: ${values.length} sample(s), p50 ${leg.p50.toFixed(0)} ms, max ${leg.max.toFixed(0)} ms${suffix}`,
+      `[legs] ${name}: ${values.length} sample(s), p50 ${milliseconds(leg.p50)} ms, ` +
+        `max ${milliseconds(leg.max)} ms${suffix}`,
+    );
+  }
+
+  // **Why the hold reads empty here, and what its size actually is.** Spec 108
+  // phase 4a attributed this to `frameAgeFor` returning null on a wall with no
+  // alignment target. That is not the mechanism. `frameAgeFor`
+  // (`apps/kiosk-web/src/features/cell/useWallAlignment.ts:243`) does not gate on
+  // tile count — it reads a ref during `CellPage`'s render. Below two tiles the
+  // settle interval never runs, so nothing re-renders `CellPage` after the first
+  // lag sample and the tile keeps the `null` it mounted with. Phase 5 proved it
+  // with paired probes on this fixture: one tile gave 0 samples, two tiles gave 10.
+  if (!lines.some((line) => line.measurement === 'label_delay')) {
+    console.info(
+      '[legs] label_delay reading `no samples` on this ONE-TILE wall is structural, not a quiet run: the ' +
+        'frame age reaches the tile only on a render CellPage performs, and below two tiles the settle ' +
+        'interval that performs one never runs. On a two-tile wall the same fixture yields it at 35-45 ms ' +
+        '(spec 108 verification). So the hold is a real term this span does not contain — and 200 ms is the ' +
+        'cap the budget PERMITS, never an observation.',
     );
   }
 
@@ -688,8 +994,52 @@ async function submitValue(operatorPage: Page, variableName: string): Promise<vo
   await row.getByRole('button', { name: /^set value$/i }).click();
 }
 
+/**
+ * What one iteration may spend waiting, derived from the time actually left.
+ *
+ * <para>
+ * A fixed 60 s ceiling times ten iterations is 600 s against a 300 s test. The
+ * share is what remains after the report's reserve, divided by the iterations
+ * still to come, and it is floored so a squeezed run still attempts an
+ * observation and refuses <i>by name</i> rather than dying anonymously.
+ * </para>
+ */
+function observeBudget(startedAt: number, iterationsLeft: number): number {
+  const remaining = TEST_TIMEOUT_MS - (Date.now() - startedAt) - REPORT_RESERVE_MS;
+  const share = Math.floor(remaining / Math.max(1, iterationsLeft));
+  return Math.max(MINIMUM_OBSERVE_MS, Math.min(OBSERVE_CEILING_MS, share));
+}
+
+/**
+ * The submit round trip for <b>this iteration's own value</b>.
+ *
+ * <para>
+ * <b>Keyed by the value the request carried, never by arrival order.</b> The old
+ * `submitRoundTrips[roundTripsBefore]` assumed iteration N's `requestfinished`
+ * landed before N+1 read its index; a late-finishing PUT made N print
+ * `submit round trip unseen` and handed its figure to N+1, so a reader subtracted
+ * the wrong number. Phase 5 found both runs' maxima were almost entirely this
+ * round trip (236 ms of which 177; 226 ms of which 136), so a mispairing corrupts
+ * exactly the samples that matter most.
+ * </para>
+ */
+async function settleSubmitRoundTrip(
+  roundTrips: ReadonlyMap<string, number>,
+  value: string,
+  budgetMilliseconds: number,
+): Promise<number | null> {
+  const deadline = Date.now() + budgetMilliseconds;
+  for (;;) {
+    const seen = roundTrips.get(value);
+    if (seen !== undefined) return seen;
+    if (Date.now() >= deadline) return null;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 test('the span from a value being submitted to it being visible', async ({ page, context }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(TEST_TIMEOUT_MS);
+  const startedAt = Date.now();
 
   const wall = readLiveVideoWall();
   const clock = sharesOneClock();
@@ -738,6 +1088,12 @@ test('the span from a value being submitted to it being visible', async ({ page,
           // The handle dies with the page; a line lost at teardown is counted,
           // never quietly treated as a leg that reported nothing.
           malformedLatencyLines += 1;
+        })
+        .finally(async () => {
+          // The handle pins an object in the page until it is released, and this
+          // fires for every latency line of the run. A page already gone at
+          // teardown is not a lost measurement, so that rejection is not counted.
+          await structured.dispose().catch(() => undefined);
         }),
     );
   });
@@ -761,7 +1117,7 @@ test('the span from a value being submitted to it being visible', async ({ page,
   // **Refused before it is attempted**, so a run that cannot be measured says so
   // rather than producing a figure whose two ends came from different clocks.
   if (!clock.ok) {
-    report([{ refusal: clock.because }]);
+    report({ measurements: [{ refusal: clock.because }], skewBefore: null, skewAfter: null });
     test.skip(true, `span unmeasured: ${clock.because}`);
     return;
   }
@@ -769,6 +1125,8 @@ test('the span from a value being submitted to it being visible', async ({ page,
   const operatorContext = await context.browser()!.newContext({ baseURL: 'http://localhost:5173' });
   const operatorPage = await operatorContext.newPage();
   const measurements: SpanMeasurement[] = [];
+  let skewBefore: ClockSkewBound | null = null;
+  let skewAfter: ClockSkewBound | null = null;
 
   // The head overshoot, bounded rather than described (spec 108 FR-003): the
   // submit's own round trip, taken from the request's resource timing so it is
@@ -779,30 +1137,45 @@ test('the span from a value being submitted to it being visible', async ({ page,
   // finishes — so a listener on `response` reads -1 every time and the head
   // overshoot silently prints as `unseen`. Observed on the first run of this
   // instrument.
-  const submitRoundTrips: number[] = [];
+  const submitRoundTrips = new Map<string, number>();
   operatorPage.on('requestfinished', (request) => {
     if (request.method() !== 'PUT') return;
     if (!/\/system-variables\/[^/]+\/value$/.test(new URL(request.url()).pathname)) return;
     const responseEnd = request.timing().responseEnd;
-    if (responseEnd >= 0) submitRoundTrips.push(responseEnd);
+    if (responseEnd < 0) return;
+
+    // Keyed by the value the body carried (`systemVariables.api.ts:154`), so a
+    // late-finishing PUT can never hand its figure to the next iteration.
+    const body = request.postDataJSON() as { value?: unknown } | null;
+    const value = body?.value;
+    if (typeof value !== 'string') return;
+    submitRoundTrips.set(value, responseEnd);
   });
 
   try {
     await signInAsOperator(operatorPage);
     await operatorPage.getByRole('link', { name: /^system variables$/i }).click();
 
+    // **Bounded before anything is subtracted.** t0 and t1 are stamped in two
+    // Chromium renderer processes, so a constant offset between their clocks lands
+    // whole in every sample — and the C1 calibration structurally cannot see it,
+    // because both arms of a paired run go through the same subtraction.
+    skewBefore = await bracketClockSkew(page, operatorPage);
+    console.info(describeSkew('before the loop', skewBefore));
+
     for (let iteration = 0; iteration < ITERATIONS; iteration += 1) {
       // Distinguishable per iteration, so the observation cannot match a value
-      // left over from the previous one.
+      // left over from the previous one — and so the submit round trip can be
+      // paired by value rather than by arrival order.
       const value = `SPAN${iteration}`;
-      const roundTripsBefore = submitRoundTrips.length;
+      const budget = observeBudget(startedAt, ITERATIONS - iteration);
 
       await armOverlayPaint(page, value);
       await fillValue(operatorPage, wall.variableName, value);
       await armClickStamp(operatorPage);
       await submitValue(operatorPage, wall.variableName);
 
-      const painted = await awaitOverlayPaint(page, OBSERVE_TIMEOUT_MS);
+      const painted = await awaitOverlayPaint(page, budget);
       const t0 = await readClickStamp(operatorPage);
 
       if (!painted.armed) {
@@ -816,7 +1189,7 @@ test('the span from a value being submitted to it being visible', async ({ page,
       if (painted.t1 === null) {
         measurements.push({
           refusal:
-            `iteration ${iteration}: the value never painted on the tile within ${OBSERVE_TIMEOUT_MS} ms ` +
+            `iteration ${iteration}: the value never painted on the tile within ${budget} ms ` +
             `(${painted.mutations} label mutation(s) were seen)`,
         });
         break;
@@ -832,28 +1205,33 @@ test('the span from a value being submitted to it being visible', async ({ page,
         });
         break;
       }
-      if (elapsed > OBSERVE_TIMEOUT_MS) {
+      if (elapsed > budget) {
         measurements.push({
-          refusal: `iteration ${iteration}: ${elapsed} ms exceeds the ${OBSERVE_TIMEOUT_MS} ms observe timeout`,
+          refusal: `iteration ${iteration}: ${elapsed} ms exceeds this iteration's ${budget} ms observe budget`,
         });
         break;
       }
 
-      measurements.push({
-        sample: {
-          iteration,
-          elapsedMilliseconds: elapsed,
-          submitRoundTripMilliseconds: submitRoundTrips[roundTripsBefore] ?? null,
-        },
-      });
+      const sample: SpanSample = {
+        iteration,
+        elapsedMilliseconds: elapsed,
+        submitRoundTripMilliseconds: await settleSubmitRoundTrip(submitRoundTrips, value, SUBMIT_SETTLE_MS),
+      };
+
+      measurements.push({ sample });
+      printSample(sample);
     }
+
+    // Again at the end: two bounds that disagree are drift across the run, which
+    // one probe at one instant cannot show.
+    skewAfter = await bracketClockSkew(page, operatorPage);
   } finally {
     await operatorPage.close();
     await operatorContext.close();
   }
 
   // **Printed before any assertion** (FR-008), so the figures survive a red.
-  report(measurements);
+  report({ measurements, skewBefore, skewAfter });
   await Promise.all(pending);
   reportLegs(latencyLines, malformedLatencyLines);
 
