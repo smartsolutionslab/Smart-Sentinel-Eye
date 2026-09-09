@@ -84,11 +84,14 @@ files are genuinely disjoint.
 
 ## Phase 5-7 — verification, review, PR
 
-- [ ] **T007 [US1]** Verification note: the two runs from T002 and T006, quoted,
+- [x] **T007 [US1]** Verification note: the two runs from T002 and T006, quoted,
   plus the empty grep. **Latency: N/A, no §IV leg** — the WHEP hook runs once at
   session setup, before any of the six legs (spec §Latency-budget impact).
-  The Docker-backed `WhepAuthIntegrationTests` is unchanged and is observed via
-  CI, not re-run locally (**C: at 96%, ~11 GB free**).
+  ~~The Docker-backed `WhepAuthIntegrationTests` is unchanged and is observed via
+  CI, not re-run locally (**C: at 96%, ~11 GB free**).~~ **It was run locally,
+  twice, and it had to be**: every unit test stubs the metadata source, so
+  nothing else executes the *public* constructor this change rewrote. 6/6 both
+  runs, on ~11 GB free — see `verification.md` §2.
 
 - [ ] **T008 [US1]** Phase 6 runs **both** `backend-reviewer` and
   `security-reviewer` — this touches auth. The security question to answer
