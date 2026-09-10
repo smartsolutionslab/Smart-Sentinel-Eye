@@ -26,8 +26,25 @@ public sealed class FakeKeycloakAdminClient : IKeycloakAdminClient
     /// A <b>set</b>, so a test can assert the removal is idempotent without
     /// counting: sweeping twice must not change what it holds.
     /// </para>
+    ///
+    /// <para>
+    /// <b>Which is also why a set alone cannot see a sweep doing more work</b>
+    /// (#2151): repeated calls collapse into it. Use <see cref="StripCalls"/>
+    /// when the count is the claim.
+    /// </para>
     /// </summary>
     public HashSet<string> Stripped { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Every <see cref="StripInheritedRealmRolesAsync"/> call, in order,
+    /// repeats included — the record <see cref="Stripped"/> discards.
+    ///
+    /// <para>
+    /// Enrolment's own strip is deliberately not recorded here: it happens
+    /// inside <see cref="CreateClientAsync"/> and is not a call any sweep made.
+    /// </para>
+    /// </summary>
+    public List<string> StripCalls { get; } = [];
 
     /// <summary>Client ids for which the strip should fail, however it is reached.</summary>
     public HashSet<string> StripFailsFor { get; } = new(StringComparer.Ordinal);
@@ -172,6 +189,7 @@ public sealed class FakeKeycloakAdminClient : IKeycloakAdminClient
         string clientId, CancellationToken cancellationToken)
     {
         CallCount++;
+        StripCalls.Add(clientId);
         if (StripFailsFor.Contains(clientId))
         {
             throw new InvalidOperationException($"Keycloak refused to strip '{clientId}'.");
