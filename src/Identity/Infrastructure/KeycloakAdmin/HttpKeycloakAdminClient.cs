@@ -101,7 +101,8 @@ public sealed class HttpKeycloakAdminClient(
             // retry — the existence probe above would answer "already enrolled"
             // for a client that was never finished, while its account keeps the
             // privilege this step exists to remove.
-            await TryDeleteClientAsync(realm, clientUuid, cancellationToken);
+            await TryDeleteClientAsync(
+                realm, representation.ClientId, clientUuid, cancellationToken);
             throw;
         }
     }
@@ -357,20 +358,49 @@ public sealed class HttpKeycloakAdminClient(
         removeResponse.EnsureSuccessStatusCode();
     }
 
+    /// <summary>
+    /// Removes the client an interrupted enrolment left half-made. Best effort
+    /// in that it never throws — the caller is already failing, and its error
+    /// is the one that explains why compensation was needed at all — but not
+    /// silent: what it could not remove is reported (spec 122, #2166).
+    ///
+    /// <para>
+    /// <b>The startup sweep is not the backstop this used to name.</b>
+    /// <c>KioskPrivilegeSweep</c> takes a residue's realm roles away and leaves
+    /// the client, and its enrolled-kiosk query cannot tell a residue from a
+    /// healthy kiosk. So a client that survives here survives every sweep, and
+    /// the existence probe in <c>CreateClientAsync</c> keeps answering
+    /// already-enrolled for it — that kiosk cannot be enrolled again until
+    /// someone deletes the client by hand. Nothing else will.
+    /// </para>
+    /// </summary>
     private async Task TryDeleteClientAsync(
-        string realm, string clientUuid, CancellationToken cancellationToken)
+        string realm, string clientId, string clientUuid, CancellationToken cancellationToken)
     {
         try
         {
             using HttpResponseMessage response = await httpClient
                 .DeleteAsync($"admin/realms/{realm}/clients/{clientUuid}", cancellationToken);
+
+            if (response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            // 404 is Keycloak reporting no such client, which is the outcome
+            // this call wanted. Reporting a residue for it would send someone
+            // hunting a client that is not there.
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                logger.HalfEnrolledClientWasAlreadyAbsent(clientId, clientUuid);
+                return;
+            }
+
+            logger.HalfEnrolledClientSurvived(clientId, clientUuid, response.StatusCode);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // Best effort. The caller is already failing and will report that;
-            // a client left behind is caught by the startup sweep, which is
-            // exactly the backstop it exists to be.
-            logger.CouldNotRemoveHalfEnrolledClient(clientUuid, exception);
+            logger.CouldNotRemoveHalfEnrolledClient(clientId, clientUuid, exception);
         }
     }
 
