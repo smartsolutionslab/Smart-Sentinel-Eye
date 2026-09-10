@@ -91,21 +91,56 @@ public class SystemVariableValueRequestedV1HandlerTests
         oeeLine1.Value.ShouldBeOfType<VariableValue.NumberValue>().Value.ShouldBe(82.5);
     }
 
+    /// <summary>
+    /// <b>The two halves of this test are not equally strong, and saying which
+    /// is which is the point</b> (#2151, census detection 4).
+    ///
+    /// <para>
+    /// <c>repo.Variables.ShouldBeEmpty()</c> is true by construction: the
+    /// handler dispatches <c>SetVariableValueCommand</c>, and setting a value
+    /// never calls <c>IVariableRepository.Add</c>. There is no create path to
+    /// get wrong, so no double can make that line red — it is a
+    /// <b>forward-looking regression guard</b> on a create path nobody has
+    /// written, and the double is already able to catch one (the repository is
+    /// the same seam <c>DefineVariableCommandHandler</c> creates through, and
+    /// this fake records every <c>Add</c>). It stays for that reason, not
+    /// because it proves anything today.
+    /// </para>
+    ///
+    /// <para>
+    /// The half that <i>can</i> fail is the logging, and it was previously
+    /// unasserted: the handler was handed a <c>NullLogger</c>, so the "is
+    /// logged" in this test's own name was carried by nothing at all. A drop
+    /// that says nothing — or that says something without naming the value that
+    /// failed — is indistinguishable from automation quietly having stopped,
+    /// which is the failure mode this file's neighbours were written for.
+    /// </para>
+    /// </summary>
     [Fact]
     public async Task Invalid_variable_name_is_logged_and_dropped()
     {
         InMemoryVariableRepository repo = new();
         FakeDedupStore dedup = new();
+        CapturingLogger<SystemVariableValueRequestedV1Handler> logger = new();
         SystemVariableValueRequestedV1Handler handler = new(
-            dedup, BuildSetHandler(repo), new RecordingLatencyBudget(),
-            NullLogger<SystemVariableValueRequestedV1Handler>.Instance);
+            dedup, BuildSetHandler(repo), new RecordingLatencyBudget(), logger);
 
         // The handler should not throw; it logs + returns.
         await handler.Handle(
             new SystemVariableValueRequestedV1("1bad", "1", Moment, Guid.CreateVersion7(), Metadata: TestMetadata),
             CancellationToken.None);
 
-        repo.Variables.ShouldBeEmpty();
+        (LogLevel Level, string Message, Exception? Exception) entry = logger.Entries.ShouldHaveSingleItem();
+        entry.Level.ShouldBe(LogLevel.Warning);
+        entry.Message.ShouldContain(
+            "1bad",
+            customMessage: "the rejected name is the only thing that tells the Automation "
+            + "team which rule authored it; a line without it sends nobody anywhere");
+
+        repo.Variables.ShouldBeEmpty(
+            "a value request must never bring a variable into existence — the create path "
+            + "is DefineVariable's alone. Vacuous today (see the remarks): kept as the guard "
+            + "on the day someone adds one");
     }
 
     // ---- spec 014 T020: the downstream effect, not merely "nothing threw" ----
