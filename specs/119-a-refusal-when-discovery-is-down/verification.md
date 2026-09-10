@@ -301,3 +301,41 @@ No test was edited, renamed, relaxed or skipped by this phase.
   measurement stands as phase 4 made it: a probe app configured with
   `AuthenticationDefaults`' options against a dead authority, answering `401`.
 - **CI has not run this branch.** Everything above is local, on one machine.
+
+---
+
+# Addendum — the transition logging (phase 6 fix)
+
+Added after phase 5. **Nothing above changes**: the A/B status measurements, the
+warm-cache finding and the red/green evidence all stand, and this change touches
+neither the status returned nor what is admitted.
+
+**What it alters in the live window.** Before: one `Warning` plus a full
+IDX20803 exception chain **per WHEP authorize** for as long as a cold-cache
+outage lasts, on an `AllowAnonymous` endpoint nothing rate-limits. After: one
+`Warning` with that exception when the realm stops answering, and one
+`Information` when it answers again. The refusal itself — status, code, body,
+what MediaMTX copies into its own log — is byte-for-byte unchanged, so the phase
+5 A/B stands as measured.
+
+**Counterfactuals, both run:**
+
+```
+logging unconditionally (what shipped before this fix):
+  An_outage_is_logged_once_however_many_viewers_are_refused [FAIL]
+  Shouldly.ShouldAssertException : logs.Entries.Count(entry => entry.Level == LogLevel.Warning)
+    should be 1 but was 25
+  Additional Info: the outage was logged once per refused viewer. Twenty-five WHEP
+  opens wrote twenty-five stack traces, and a fab has 250 kiosks.
+
+latched — the flag set but never reset on recovery:
+  A_recovery_is_logged_and_a_second_outage_speaks_again [FAIL]
+```
+
+**Green:** `StreamDistribution.Infrastructure.Tests` 28/28,
+`StreamDistribution.Application.Tests` 65/65, `dotnet build -c Release` clean.
+
+**Not re-provoked against the stack.** The live window was not re-measured,
+because what the SFU sees is unchanged and the change is observable only in this
+service's own log volume. If phase 5 is repeated, the cold-cache outage should
+now show one warning and one recovery line rather than one per open.
