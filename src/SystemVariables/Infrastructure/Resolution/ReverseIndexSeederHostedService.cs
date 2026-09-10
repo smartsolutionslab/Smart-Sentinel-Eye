@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
@@ -9,17 +10,29 @@ namespace SmartSentinelEye.SystemVariables.Infrastructure.Resolution;
 /// <summary>
 /// Seeds the in-memory <see cref="IReverseIndex"/> on startup by
 /// calling <c>GET /overlays?state=Published</c> on the
-/// overlay-designer service (spec 005 plan.md). Best-effort — if the
-/// seeder fails (overlay-designer down, auth missing, etc.), the
-/// index starts empty and self-heals as new
-/// <c>OverlayRevisionPublishedV1</c> events arrive via Wolverine.
+/// overlay-designer service (spec 005 plan.md). Best-effort — if
+/// overlay-designer is down the index starts empty and self-heals as
+/// new <c>OverlayRevisionPublishedV1</c> events arrive via Wolverine.
 ///
 /// <para>
 /// The HTTP call uses Aspire's <c>http://overlay-designer</c> service
-/// discovery URI. Auth is deferred — v1 hits the endpoint
-/// unauthenticated and accepts a 401 as "skip seeding for now"; a
-/// production deployment would use a service-account Keycloak token
-/// (deferred to spec 007's Identity hardening).
+/// discovery URI and carries the <c>system-variables-seeder</c>
+/// service account, attached by
+/// <see cref="OverlayDesignerAuthorizationHandler"/> on the named
+/// client. Spec 005 T061 specified that account; it did not ship, and
+/// once <c>GET /overlays</c> gained <c>sse.overlays.read</c> every cold
+/// start was refused (#2158, spec 126).
+/// </para>
+///
+/// <para>
+/// <b>A refusal is not a self-healing condition and is no longer
+/// reported as one.</b> Self-healing needs an event, and an overlay
+/// published before this process started raises none — so a 401 or 403
+/// leaves the index empty until someone fixes the credential.
+/// <see cref="Log.SeedRefused"/> says that at <c>Error</c>. It still
+/// does not stop the host: refusing to start would trade a degraded
+/// index for no SystemVariables at all, which is the trade ADR-0116
+/// declined for StreamDistribution's startup attribution.
 /// </para>
 /// </summary>
 public sealed class ReverseIndexSeederHostedService(
@@ -41,7 +54,15 @@ public sealed class ReverseIndexSeederHostedService(
 
             if (!response.IsSuccessStatusCode)
             {
-                logger.SeedNonSuccessStatus(response.StatusCode);
+                if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                {
+                    logger.SeedRefused(response.StatusCode);
+                }
+                else
+                {
+                    logger.SeedNonSuccessStatus(response.StatusCode);
+                }
+
                 return;
             }
 

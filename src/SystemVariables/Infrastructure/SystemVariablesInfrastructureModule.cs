@@ -1,7 +1,9 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using SmartSentinelEye.ServiceDefaults;
 using SmartSentinelEye.ServiceDefaults.Idempotency;
+using SmartSentinelEye.ServiceDefaults.Resilience;
 using SmartSentinelEye.Shared.CQRS;
 using SmartSentinelEye.Shared.Kernel;
 using SmartSentinelEye.SystemVariables.Application.Commands;
@@ -85,8 +87,47 @@ public static class SystemVariablesInfrastructureModule
         builder.Services.AddScoped<IVariableValueRequestDedupStore, VariableValueRequestDedupStore>();
         builder.Services.AddScoped<SystemVariableValueRequestedV1Handler>();
 
-        // Startup seeder for the reverse-index. Best-effort — the
-        // Wolverine subscribers self-heal as overlay V1 events arrive.
+        BindReverseIndexSeeder(builder);
+
+        builder.AddWolverineForContext<SystemVariablesDbContext>(
+            moduleQueuePrefix: ContextName,
+            outboxSchema: OutboxSchema,
+            postgresConnectionName: SystemVariablesPersistenceModule.DatabaseConnectionName);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// The startup reverse-index seed and the credential it presents (spec 126,
+    /// #2158). Mirrors StreamDistribution's <c>BindStreamFabAttribution</c> —
+    /// same shape of call, same shape of wiring.
+    /// </summary>
+    private static void BindReverseIndexSeeder(IHostApplicationBuilder builder)
+    {
+        string keycloakBaseUrl =
+            builder.Configuration.GetConnectionString("keycloak")
+            ?? builder.Configuration["services:keycloak:http:0"]
+            ?? builder.Configuration["services:keycloak:https:0"]
+            ?? string.Empty;
+
+        builder.Services.Configure<ReverseIndexSeederOptions>(options =>
+        {
+            builder.Configuration.GetSection(ReverseIndexSeederOptions.SectionName).Bind(options);
+            options.KeycloakUrl = keycloakBaseUrl;
+            options.Realm = builder.Configuration["Keycloak:Realm"] ?? options.Realm;
+        });
+
+        // Idempotent POST — see ADR-0143; a second token supersedes the first.
+        // Without the opt-in, a Keycloak blip at host start would leave the index
+        // empty for the life of the process, which is the defect this fixes.
+        builder.Services.AddHttpClient(OverlayDesignerTokenProvider.HttpClientName).RetryEveryMethod();
+        // Singleton, which is what makes the token cache mean anything (#2037).
+        builder.Services.AddSingleton<OverlayDesignerTokenProvider>();
+        // On the seed client only. The token provider's own client mints the
+        // token this handler attaches, so authorising it would make the mint
+        // depend on itself.
+        builder.Services.AddTransient<OverlayDesignerAuthorizationHandler>();
+
         // Named rather than typed, because the seeder is a hosted service and so
         // a singleton: a typed client injected into one is held for the process
         // lifetime, which pins a single HttpMessageHandler and defeats the
@@ -97,15 +138,10 @@ public static class SystemVariablesInfrastructureModule
         // URI, scheme included, in dev and on k3s alike.
 #pragma warning disable S1075, S5332
         builder.Services.AddHttpClient("overlay-designer", client =>
-            client.BaseAddress = new Uri("http://overlay-designer"));
+                client.BaseAddress = new Uri("http://overlay-designer"))
 #pragma warning restore S1075, S5332
+            .AddHttpMessageHandler<OverlayDesignerAuthorizationHandler>();
+
         builder.Services.AddHostedService<ReverseIndexSeederHostedService>();
-
-        builder.AddWolverineForContext<SystemVariablesDbContext>(
-            moduleQueuePrefix: ContextName,
-            outboxSchema: OutboxSchema,
-            postgresConnectionName: SystemVariablesPersistenceModule.DatabaseConnectionName);
-
-        return builder;
     }
 }

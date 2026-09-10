@@ -54,6 +54,12 @@ var eventIngestionMqttClientSecret = builder.AddParameter("EventIngestionMqttCli
 // (scope sse.cameras.read) for the one-time startup attribution of streams
 // provisioned before spec 016 (ADR-0116).
 var streamDistributionAttributionClientSecret = builder.AddParameter("StreamDistributionAttributionClientSecret", "dev-only-stream-distribution-secret", secret: true);
+// Mirrors the `system-variables-seeder` confidential client seeded in
+// Realms/smart-sentinel-eye-realm.json. SystemVariables reads it as
+// `ReverseIndexSeeder:ClientSecret` to mint a client_credentials token
+// (scope sse.overlays.read) for the startup seed of the reverse index —
+// the half of spec 005 T061 that never shipped (#2158, spec 126).
+var systemVariablesSeederClientSecret = builder.AddParameter("SystemVariablesSeederClientSecret", "dev-only-system-variables-seeder-secret", secret: true);
 
 // Spec 009 ADR-0101: the postgres image carries the timescaledb
 // extension so the audit-observability hypertable + compression
@@ -394,6 +400,7 @@ var systemVariables = builder
     .WithReference(rabbitmq)
     .WithReference(keycloak)
     .WithReference(overlayDesigner)
+    .WithEnvironment("ReverseIndexSeeder__ClientSecret", systemVariablesSeederClientSecret)
     .WaitFor(rabbitmq)
     .WaitFor(keycloak)
     .WaitFor(overlayDesigner);

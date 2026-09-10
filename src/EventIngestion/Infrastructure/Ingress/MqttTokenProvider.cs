@@ -11,8 +11,10 @@ namespace SmartSentinelEye.EventIngestion.Infrastructure.Ingress;
 /// <para>
 /// Refreshing proactively at 80 % of <c>expires_in</c> is what keeps a reconnect
 /// from presenting an expired JWT; that behaviour now lives in
-/// <see cref="ClientCredentialsTokenProvider"/>, alongside the three sibling
-/// providers that had each written their own copy of it.
+/// <see cref="ClientCredentialsTokenProvider"/>, alongside the four sibling
+/// providers that share it — the three that had each written their own copy of
+/// it, and SystemVariables' reverse-index seeder, which was specified to have
+/// one from spec 005 and did not get it until spec 126.
 /// </para>
 /// </summary>
 public sealed class MqttTokenProvider(
