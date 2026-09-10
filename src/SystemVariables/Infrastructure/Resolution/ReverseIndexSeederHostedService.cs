@@ -28,7 +28,10 @@ namespace SmartSentinelEye.SystemVariables.Infrastructure.Resolution;
 /// <b>A refusal is not a self-healing condition and is no longer
 /// reported as one.</b> Self-healing needs an event, and an overlay
 /// published before this process started raises none — so a 401 or 403
-/// leaves the index empty until someone fixes the credential.
+/// leaves the index empty until someone fixes the credential. That holds
+/// whether the refusal arrives from overlay-designer as a status or out of
+/// the token mint as an exception, which is the shape a missing service
+/// account actually takes.
 /// <see cref="Log.SeedRefused"/> says that at <c>Error</c>. It still
 /// does not stop the host: refusing to start would trade a degraded
 /// index for no SystemVariables at all, which is the trade ADR-0116
@@ -94,6 +97,17 @@ public sealed class ReverseIndexSeederHostedService(
             }
 
             logger.SeededOverlays(seeded);
+        }
+        // A refused mint rather than a refused read: the token POST threw before
+        // the listing was ever requested, so the 401 arrives as an exception and
+        // not as a status. It is the same broken credential reaching the same
+        // dead end, so it takes the same branch. HttpClient propagates a
+        // handler's exception unwrapped, so the status is readable here without
+        // walking InnerException.
+        catch (HttpRequestException ex) when (
+            ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            logger.SeedRefused(ex.StatusCode.GetValueOrDefault());
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
