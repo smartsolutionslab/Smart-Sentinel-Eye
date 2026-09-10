@@ -10,7 +10,38 @@ namespace SmartSentinelEye.Integration.Tests.LayoutComposition;
 /// create a Draft via <c>POST /layouts</c>, publish revision 1 via
 /// <c>POST /layouts/{id}/revisions/1/publish</c>, and assert the
 /// transition is observable on <c>GET /layouts/{id}</c> within the
-/// 500 ms SLO budget for the synchronous command path.
+/// 500 ms budget.
+///
+/// <para>
+/// <b>What the 500 ms is a budget for</b> (issue #2119). It is a
+/// <b>local SLO for the layout-composition synchronous command path</b>:
+/// two HTTP round trips — create, then publish — against the fixture
+/// stack, and nothing else.
+/// </para>
+///
+/// <para>
+/// It is <b>not one of constitution §IV's six legs</b>. §IV budgets the
+/// asynchronous <i>event arrival → overlay rendered</i> path and divides
+/// 800 ms between RTP ingest, decode, presentation buffer, event →
+/// overlay state, composite and headroom. A synchronous HTTP command is
+/// on none of them, so §IV neither grants this figure nor governs it,
+/// and §VII's dashboard obligation — which binds implemented §IV legs —
+/// is not engaged by a change to it. The distinction is written here
+/// because a figure whose meaning lives nowhere near it is how a budget
+/// stops meaning anything.
+/// </para>
+///
+/// <para>
+/// Consequently the camera is registered <b>before the clock starts</b>.
+/// It is a precondition of building a layout (spec 017 FR-014: a tile's
+/// camera must exist), not part of the path being measured, and it is a
+/// round trip into the <b>camera-catalog</b> context — so timing it
+/// would put another context's work inside a budget named for this one.
+/// <c>SignalRRevocationIntegrationTests</c> hoists its version lookup
+/// out of its window for the same reason.
+/// <c>StopwatchWindowScopeTests</c> fails the build if the call moves
+/// back inside.
+/// </para>
 /// </summary>
 [Collection(AspireCollection.Name)]
 public class LayoutLifecycleIntegrationTests(AspireFixture aspire) : IAsyncLifetime
@@ -26,11 +57,12 @@ public class LayoutLifecycleIntegrationTests(AspireFixture aspire) : IAsyncLifet
     public async Task Create_and_publish_a_layout_yields_a_Published_revision_within_500_ms()
     {
         using HttpClient layouts = await aspire.CreateAdminClientAsync("layout-composition");
+        Guid camera = await LayoutRequests.RegisterCameraAsync(aspire);
 
         Stopwatch sw = Stopwatch.StartNew();
         HttpResponseMessage created = await layouts.PostAsJsonAsync(
             "/layouts",
-            SingleTileBody($"Line-{Guid.NewGuid():N}".Substring(0, 16), await LayoutRequests.RegisterCameraAsync(aspire)));
+            SingleTileBody($"Line-{Guid.NewGuid():N}".Substring(0, 16), camera));
         created.StatusCode.ShouldBe(HttpStatusCode.Created);
         Guid layoutIdentifier = await created.Content.ReadFromJsonAsync<Guid>();
         layoutIdentifier.ShouldNotBe(Guid.Empty);
