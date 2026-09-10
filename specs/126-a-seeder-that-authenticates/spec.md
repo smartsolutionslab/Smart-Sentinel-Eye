@@ -2,7 +2,7 @@
 
 **Issue:** #2158
 **Branch:** `fix/2158-a-seeder-that-authenticates`
-**Status:** Phase 3 complete — awaiting gate
+**Status:** Phases 1-5 complete — awaiting phase 6
 **Lane:** autonomous (ADR-0144)
 **ADRs:** 0037 (phases), 0144 (lane, 4a colour), 0036 (smallest change),
 0139 (red first), 0100 / 0111 / 0116 (the four existing
@@ -151,8 +151,12 @@ dashboard row.
 - **FR-003** The `system-variables-seeder` realm client holds
   `sse.overlays.read` and no scope that grants a write or an admin
   capability.
-- **FR-004** A 401 or 403 from overlay-designer is logged at `Error`, with a
-  message that does not claim the index will self-heal.
+- **FR-004** A refused credential is logged at `Error`, with a message that
+  does not claim the index will self-heal — whether the refusal arrives from
+  overlay-designer as a 401/403 status, or out of the token mint as an
+  `HttpRequestException` carrying one. The second is the shape a missing
+  service account actually takes, and was found by observing the first boot
+  after the fix (see `verification.md`).
 - **FR-005** Any other non-success status keeps the existing `Warning`.
 - **FR-006** A refusal, of any kind, still leaves the host started.
 - **FR-007** The doc comment counting the token-provider siblings is correct
