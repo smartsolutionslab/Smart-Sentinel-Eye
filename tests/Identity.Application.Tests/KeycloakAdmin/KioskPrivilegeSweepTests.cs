@@ -19,6 +19,7 @@ public class KioskPrivilegeSweepTests
 {
     private static readonly string[] BothKiosks = ["kiosk-a", "kiosk-b"];
     private static readonly string[] OneKiosk = ["kiosk-a"];
+    private static readonly string[] TwoPassesOverOneKiosk = ["kiosk-a", "kiosk-a"];
     private static readonly string[] TheReachableOnes = ["kiosk-a", "kiosk-c"];
     private static readonly string[] TheUnreachableOne = ["kiosk-b"];
 
@@ -87,6 +88,20 @@ public class KioskPrivilegeSweepTests
     /// account to nothing — and it would not throw while doing it, so a test
     /// that only checked the sweep finished would pass on the way past.
     /// </para>
+    ///
+    /// <para>
+    /// <b>The <c>ShouldNotContain</c> half cannot fail here, and this is where
+    /// the property it names is actually proved.</b> <c>KioskPrivilegeSweep</c>
+    /// contains no filter — it strips whatever
+    /// <c>GetEnrolledKioskClientIdsAsync</c> returns — so the boundedness lives
+    /// behind that seam, in <c>HttpKeycloakAdminClient</c>, which this assembly
+    /// deliberately cannot reference. Removing the production filter outright
+    /// leaves this test green (#2151, and spec 092 §"Whether the existing tests
+    /// can fail"). The assertion stays because the invariant is real and this is
+    /// where a reader looks for it; the falsifiable version of it is
+    /// <c>Identity.Infrastructure.Tests</c>'
+    /// <c>EnrolledKioskQueryTests.Only_a_client_this_system_stamped_as_a_kiosk_is_enrolled</c>.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task Does_not_touch_an_account_this_system_did_not_enrol()
@@ -109,6 +124,23 @@ public class KioskPrivilegeSweepTests
     /// <summary>
     /// What makes running this on every start acceptable. If a second sweep did
     /// more than the first, it could not be a startup step.
+    ///
+    /// <para>
+    /// <b><c>Stripped</c> alone could not see that.</b> It is a set, so a sweep
+    /// calling the removal three times per kiosk left this test green — measured
+    /// by counterfactual in spec 092 and filed on #2151. <c>StripCalls</c> keeps
+    /// the repeats, which is what makes "one removal per kiosk per pass" an
+    /// assertion rather than a title.
+    /// </para>
+    ///
+    /// <para>
+    /// The <i>other</i> half of the claim — that the second removal is a no-op
+    /// at Keycloak rather than an empty <c>DELETE</c> — is not visible at this
+    /// seam either: it is <c>HttpKeycloakAdminClient</c>'s
+    /// <c>if (assigned.Length == 0) return;</c>. See
+    /// <c>Identity.Infrastructure.Tests</c>'
+    /// <c>EnrolledKioskQueryTests.A_second_removal_sends_nothing_when_the_account_holds_no_realm_role</c>.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task Sweeping_twice_does_no_more_than_sweeping_once()
@@ -119,6 +151,8 @@ public class KioskPrivilegeSweepTests
         KioskSweepOutcome second = await SweepOver(keycloak).SweepAsync(CancellationToken.None);
 
         keycloak.Stripped.ShouldBe(OneKiosk);
+        // Two passes, one removal each. A set cannot tell that from twenty.
+        keycloak.StripCalls.ShouldBe(TwoPassesOverOneKiosk);
         second.Unreachable.ShouldBeEmpty();
     }
 
