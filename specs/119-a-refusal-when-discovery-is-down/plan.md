@@ -101,3 +101,27 @@ the handler instead would keep the fact and lose the reason.
 | `tests/StreamDistribution.Infrastructure.Tests/Auth/…` | the validator's two cases |
 
 No contention file is touched (`Shared.Kernel`, `Shared.Contracts`, `AppHost`).
+
+## D6 — the warning is a transition, not a per-request line (phase 6)
+
+One `int` flipped with `Interlocked.Exchange`: `1` on entering the catch, `0` on
+the next successful fetch, and a line written only when the value **changed**.
+The first exception is kept verbatim; the repeats say nothing it did not.
+
+`Interlocked` rather than a plain field because the validator is a singleton and
+every WHEP open runs through it at once — without it, "log the transition" means
+one line per caller that raced into the catch, which is the thing being fixed.
+
+**Not a throttling mechanism** (ADR-0036): no interval, no configuration surface,
+no reusable abstraction. Two `if`s and a field.
+
+**A transition and not a latch.** An outage that ends and returns is two outages,
+and the second must speak — a latch would silence it precisely for the operator
+who has already seen the recovery. Both halves are held by counterfactual:
+logging unconditionally fails `An_outage_is_logged_once_however_many_viewers_are_refused`
+(25 warnings against 1), and dropping the reset fails
+`A_recovery_is_logged_and_a_second_outage_speaks_again`.
+
+The recovery line is `Information`, not `Warning`: it closes the outage the
+warning opened, and an operator scanning warnings should not find an all-clear
+among them.

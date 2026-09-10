@@ -21,6 +21,12 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
 {
     private readonly IConfigurationManager<OpenIdConnectConfiguration> oidc;
     private readonly ILogger<WhepAuthValidator> logger;
+
+    // 0 while the realm is answering, 1 while it is not. Flipped with Interlocked
+    // because this validator is a singleton and every WHEP open runs through it at
+    // once, so the exchange is what makes a transition worth one log line rather
+    // than one line per caller that raced into the catch. Spec 119, phase 6.
+    private int realmUnreachable;
     private readonly TokenValidationParameters parameters;
     // Diverges from the bearer pipeline, which uses JsonWebTokenHandler. That should
     // eventually back both sides: Microsoft positions this one as the legacy path, and
@@ -118,8 +124,23 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
             // catch lets a caller that went away leave as a cancellation. Widening it
             // to catch Exception reports that caller as a refused viewer instead;
             // A_cancelled_request_stays_cancelled fails on exactly that edit.
-            logger.WhepIdentityProviderUnreachable(exception);
+            // Logged on the transition, not per request. /streams/authorize is
+            // AllowAnonymous and nothing rate-limits it, so one Warning and one full
+            // exception chain per WHEP open floods the single OTLP sink at exactly
+            // the moment an operator needs it readable — and the diagnosis this
+            // change exists for is the thing that drowns. The first exception is
+            // kept verbatim; the repeats say nothing the first did not.
+            if (Interlocked.Exchange(ref realmUnreachable, 1) == 0)
+            {
+                logger.WhepIdentityProviderUnreachable(exception);
+            }
+
             return Result<WhepAuthSubject, WhepAuthFailure>.Failure(WhepAuthFailure.IdentityProviderUnavailable);
+        }
+
+        if (Interlocked.Exchange(ref realmUnreachable, 0) == 1)
+        {
+            logger.WhepIdentityProviderReachable();
         }
 
         try

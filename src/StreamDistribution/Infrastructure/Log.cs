@@ -58,6 +58,9 @@ internal static partial class Log
     // Every WHEP open is refused for as long as this holds, so the exception is
     // carried: IDX20803 names the address that could not be reached and wraps the
     // transport failure that says why — DNS, refused, or TLS (spec 119 FR-005).
-    [LoggerMessage(Level = LogLevel.Warning, Message = "The realm's OIDC discovery document could not be obtained; no WHEP bearer token can be checked until it can. Every viewer stays refused, and this is not a bad credential.")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "The realm's OIDC discovery document could not be obtained; no WHEP bearer token can be checked until it can. Every viewer stays refused, and this is not a bad credential. Logged once per outage, not once per refused viewer — the recovery is logged too.")]
     public static partial void WhepIdentityProviderUnreachable(this ILogger logger, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "The realm's OIDC discovery document was obtained again; WHEP bearer tokens are being checked. This closes the outage the preceding warning opened.")]
+    public static partial void WhepIdentityProviderReachable(this ILogger logger);
 }

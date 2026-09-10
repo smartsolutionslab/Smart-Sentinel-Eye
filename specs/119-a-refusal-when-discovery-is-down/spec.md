@@ -94,10 +94,17 @@ absent `iss` is rejected before comparison. A guard there would be dead code.
   wraps whatever the retriever threw — a cancelled fetch included — in the same
   IDX20803 `InvalidOperationException`, so the two arrive as one type and must be
   told apart before either is answered.
-- **FR-005** The swallowed exception is logged once, at `Warning`, with the
-  exception attached, through a `[LoggerMessage]` extension (ADR-0050). A
-  swallowed exception with no trace is a review blocker, and IDX20803's message
-  is the only thing that says *why* the realm was unreachable.
+- **FR-005** The swallowed exception is logged at `Warning`, with the exception
+  attached, through a `[LoggerMessage]` extension (ADR-0050). A swallowed
+  exception with no trace is a review blocker, and IDX20803's message is the only
+  thing that says *why* the realm was unreachable.
+- **FR-006** That warning is written **once per outage, not once per refused
+  viewer**, and the recovery is written too. `/streams/authorize` is
+  `AllowAnonymous` and nothing rate-limits it, so a per-request warning plus a
+  full exception chain floods the single OTLP sink at exactly the moment an
+  operator needs it readable — the diagnosis FR-005 exists for is the thing that
+  drowns. An outage that ends and returns is two outages and says so twice
+  (phase 6).
 
 ## Non-functional
 
@@ -114,3 +121,32 @@ With the metadata source throwing, `AuthorizeWhepCommandHandler` returns
 `Result.Failure` carrying `HttpStatusCode.Unauthorized` and a code that is not
 `WHEP_UNAUTHORIZED`; with the metadata source cancelled, the same call throws
 `OperationCanceledException`. Both observed failing first (ADR-0139).
+
+## Accepted, not fixed (phase 6)
+
+Two findings were raised, weighed and **accepted**. Recorded so the next reader
+meets the reasoning rather than rediscovering the question:
+
+- **`WHEP_IDENTITY_PROVIDER_UNAVAILABLE` is an unauthenticated liveness oracle**
+  for the fab's Keycloak. Accepted: the same signal is available by dialling
+  Keycloak directly, and the diagnosis is worth more than the inference denied.
+- **A 401 could invite credential re-acquisition against a down IdP.** Traced and
+  it does not materialise: `WhepClient.ts:243` maps 401 to
+  `WhepError('unauthorized')`, and nothing in `kiosk-web` keys a silent renew or
+  a logout off that kind.
+
+## What phase 5 corrected about this issue
+
+- **MediaMTX 1.21.0 does not retry either status.** Measured A/B with the status
+  as the only variable: 500 → client 401 in 3.41 s, one hook call; 401 → client
+  401 in 4.06 s, one hook call; no back-off, path not torn down. The issue's
+  second justification does not hold. What survives is ADR-0089's contract rule —
+  and that MediaMTX copies the hook's status and body verbatim into its own log,
+  so `WHEP_IDENTITY_PROVIDER_UNAVAILABLE` now appears in the SFU's log where a
+  generic message used to. A narrower justification, and a good one.
+- **A warm discovery cache never reaches this path.** With a document already
+  cached and Keycloak stopped, the hook answered `200` and WHEP `201`. The defect
+  and the fix bite only on a **cold** cache — a restart or deploy landing inside
+  the outage. "Every WHEP open on the wall returns 500 for as long as discovery
+  is down" is wrong in the warm case. The narrowing makes FR-006 more pointed,
+  not less: the cold-cache window is precisely what this change exists for.

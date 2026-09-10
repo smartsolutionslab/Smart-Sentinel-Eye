@@ -130,6 +130,63 @@ public sealed class WhepValidatorUnreachableRealmTests : IDisposable
             + "nothing about the outage.");
     }
 
+
+    /// <summary>
+    /// <b>One line per outage, not one per refused viewer.</b>
+    /// <c>/streams/authorize</c> is <c>AllowAnonymous</c> and nothing rate-limits
+    /// it, so a wall of kiosks retrying through a cold-cache outage would write a
+    /// Warning and a full exception chain per request into the single OTLP sink —
+    /// drowning the very diagnosis this change exists to provide (phase 6).
+    /// </summary>
+    [Fact]
+    public async Task An_outage_is_logged_once_however_many_viewers_are_refused()
+    {
+        ScriptedRealm realm = new(SigningKey()) { Reachable = false };
+        WhepAuthValidator validator = ValidatorOver(realm);
+
+        for (int viewer = 0; viewer < 25; viewer++)
+        {
+            await validator.ValidateAsync(AToken(), CancellationToken.None);
+        }
+
+        logs.Entries.Count(entry => entry.Level == LogLevel.Warning).ShouldBe(
+            1,
+            customMessage: "the outage was logged once per refused viewer. Twenty-five WHEP opens "
+            + "wrote twenty-five stack traces, and a fab has 250 kiosks (spec 119, phase 6).");
+    }
+
+    /// <summary>
+    /// The transition is a transition, not a latch: an outage that ends and
+    /// returns is two outages, and the second one has to say so. A flag that was
+    /// only ever set would make the second outage silent — the worse failure of
+    /// the two, because by then the operator has seen the recovery.
+    /// </summary>
+    [Fact]
+    public async Task A_recovery_is_logged_and_a_second_outage_speaks_again()
+    {
+        ScriptedRealm realm = new(SigningKey()) { Reachable = false };
+        WhepAuthValidator validator = ValidatorOver(realm);
+
+        await validator.ValidateAsync(AToken(), CancellationToken.None);
+        realm.Reachable = true;
+        await validator.ValidateAsync(AToken(), CancellationToken.None);
+        realm.Reachable = false;
+        await validator.ValidateAsync(AToken(), CancellationToken.None);
+
+        logs.Entries.Count(entry => entry.Level == LogLevel.Warning).ShouldBe(
+            2,
+            customMessage: "the second outage was swallowed. The flag latched instead of tracking "
+            + "the transition, so an operator who saw the recovery is told nothing when it breaks "
+            + "again (spec 119, phase 6).");
+        logs.Entries.Count(entry => entry.Level == LogLevel.Information).ShouldBe(
+            1,
+            customMessage: "the recovery was not logged, so the outage warning has no closing "
+            + "bracket and an operator cannot tell a resolved outage from an ongoing one.");
+    }
+
+    private WhepAuthValidator ValidatorOver(IConfigurationManager<OpenIdConnectConfiguration> metadata) =>
+        new(metadata, logs);
+
     private WhepAuthValidator ValidatorOver(IDocumentRetriever retriever) =>
         new(
             new ConfigurationManager<OpenIdConnectConfiguration>(
@@ -152,11 +209,12 @@ public sealed class WhepValidatorUnreachableRealmTests : IDisposable
             """;
     }
 
+    private RsaSecurityKey SigningKey() =>
+        new(signingKey) { KeyId = SigningKeyIdentifier };
+
     private string AToken()
     {
-        SigningCredentials credentials = new(
-            new RsaSecurityKey(signingKey) { KeyId = SigningKeyIdentifier },
-            SecurityAlgorithms.RsaSha256);
+        SigningCredentials credentials = new(SigningKey(), SecurityAlgorithms.RsaSha256);
 
         JwtSecurityToken token = new(
             issuer: Authority,
@@ -213,6 +271,38 @@ public sealed class WhepValidatorUnreachableRealmTests : IDisposable
             }
 
             return DiscoveryDocument;
+        }
+    }
+
+    /// <summary>
+    /// A metadata source whose reachability is scripted. Used where the real
+    /// <see cref="ConfigurationManager{T}"/> cannot be: it caches a document once
+    /// obtained, so an outage <em>following</em> a success never reaches the
+    /// validator through it — and the transition back is exactly what these two
+    /// tests are about. The failure is the exception ConfigurationManager raises,
+    /// IDX20803 and all.
+    /// </summary>
+    private sealed class ScriptedRealm(SecurityKey signingKey) : IConfigurationManager<OpenIdConnectConfiguration>
+    {
+        public bool Reachable { get; set; }
+
+        public Task<OpenIdConnectConfiguration> GetConfigurationAsync(CancellationToken cancel)
+        {
+            if (!Reachable)
+            {
+                throw new InvalidOperationException(
+                    $"IDX20803: Unable to obtain configuration from: '{Authority}/.well-known/openid-configuration'.",
+                    new IOException("IDX20804: Unable to retrieve document."));
+            }
+
+            OpenIdConnectConfiguration configuration = new() { Issuer = Authority };
+            configuration.SigningKeys.Add(signingKey);
+
+            return Task.FromResult(configuration);
+        }
+
+        public void RequestRefresh()
+        {
         }
     }
 
