@@ -26,6 +26,18 @@ public sealed class StubKeycloakHandler(
     public IReadOnlyList<RecordedRequest> Requests => requests;
 
     /// <summary>
+    /// A Keycloak that refuses: the status to answer a given request with, or
+    /// <c>null</c> to let <paramref name="respond"/> answer it normally.
+    ///
+    /// <para>
+    /// Spec 122 (#2166). The compensating delete's defect is a status nobody
+    /// reads, so a stub able to answer only <c>200</c> and <c>204</c> cannot
+    /// express the case at all.
+    /// </para>
+    /// </summary>
+    public Func<RecordedRequest, HttpStatusCode?>? Refuse { get; init; }
+
+    /// <summary>
     /// How many requests so far — this one included — have a path containing
     /// <paramref name="fragment"/>. Lets a responder answer the same URL
     /// differently on a second visit, which <c>CreateClientAsync</c>'s
@@ -50,6 +62,19 @@ public sealed class StubKeycloakHandler(
             request.RequestUri!.PathAndQuery,
             body);
         requests.Add(recorded);
+
+        HttpStatusCode? refusal = Refuse?.Invoke(recorded);
+        if (refusal is not null)
+        {
+            // A body, because Keycloak sends one with every refusal it makes
+            // (`{"error":"Could not find client"}`), and a client that only
+            // works against an empty error body would be green here and wrong
+            // in the realm.
+            return new HttpResponseMessage(refusal.Value)
+            {
+                Content = new StringContent("""{"error":"stub refusal"}""", Encoding.UTF8, "application/json"),
+            };
+        }
 
         string? payload = respond(this, recorded);
         return payload is null
