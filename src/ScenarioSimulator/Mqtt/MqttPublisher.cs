@@ -236,7 +236,7 @@ public sealed class MqttPublisher : IAsyncDisposable
             await Task.Delay(delay, cancellationToken);
         }
 
-        DropSignal drop = new(client, logger, $"{host}:{port}");
+        DropSignal drop = new(logger, $"{host}:{port}");
         client.DisconnectedAsync += drop.OnDisconnectedAsync;
 
         try
@@ -390,25 +390,29 @@ public sealed class MqttPublisher : IAsyncDisposable
     /// One attempt's wait for its own connection to go.
     ///
     /// <para>
-    /// <b>The event is the nudge; the client's state is the authority.</b> A
-    /// disconnect event does not prove this connection ended — MQTTnet 5
-    /// dispatches the handler fire-and-forget from the <c>DisconnectInternal</c>
-    /// a refused CONNECT performs, so one can arrive while a later connection is
-    /// up. Taken for a drop it makes the loop reconnect a live client, which
-    /// <c>MqttClient.ThrowIfConnected</c> refuses — and nothing closes that
-    /// connection, so the refusal repeats for as long as the process runs.
+    /// <b>The event is the nudge; the args say whether there was a connection to
+    /// lose.</b> A disconnect event does not prove this connection ended —
+    /// MQTTnet 5 dispatches the handler fire-and-forget from the
+    /// <c>DisconnectInternal</c> a refused CONNECT performs, so one can arrive
+    /// while a later connection is up. Taken for a drop it makes the loop
+    /// reconnect a live client, which <c>MqttClient.ThrowIfConnected</c> refuses
+    /// — and nothing closes that connection, so the refusal repeats for as long
+    /// as the process runs.
     /// </para>
     ///
     /// <para>
-    /// Reading <c>IsConnected</c> here is decisive rather than a poll:
-    /// <c>DisconnectIsPendingOrFinished</c> moves the connection status off
-    /// <c>Connected</c> before <c>DisconnectCore</c> runs, and
-    /// <c>DisconnectCore</c> sets it to <c>Disconnected</c> before it builds the
-    /// event args, so a genuine drop cannot reach this handler with the client
-    /// still reporting a connection.
+    /// <b><c>ClientWasConnected</c> is captured at the disconnect and carried on
+    /// the args, so it does not depend on when this handler runs.</b> Asking
+    /// <c>IsConnected</c> here answered a different question — <i>is there a
+    /// connection now</i> — and suppressed a stale event only while one was up;
+    /// one landing while this attempt was still inside its CONNECT found none,
+    /// and ended the connection that attempt was about to establish (#2130). The
+    /// args have no such window. Measured off the real client in EventIngestion's
+    /// <c>MqttClientWasConnectedContractTests</c>; the subscriber's copy of this
+    /// comment carries the full reasoning.
     /// </para>
     /// </summary>
-    private sealed class DropSignal(IMqttClient client, ILogger logger, string broker)
+    private sealed class DropSignal(ILogger logger, string broker)
     {
         private readonly TaskCompletionSource dropped = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -418,7 +422,7 @@ public sealed class MqttPublisher : IAsyncDisposable
         {
             logger.MqttPublisherDisconnected(broker, args.Reason.ToString());
 
-            if (!client.IsConnected)
+            if (args.ClientWasConnected)
             {
                 dropped.TrySetResult();
             }
