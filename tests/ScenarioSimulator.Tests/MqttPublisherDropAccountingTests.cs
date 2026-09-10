@@ -27,6 +27,13 @@ public class MqttPublisherDropAccountingTests
 {
     private const string Topic = "fab/hamburg/plc/dev-1";
 
+    /// <summary>
+    /// Comfortably past the publisher's production 1 s backoff floor, jitter
+    /// included (it multiplies by a factor in [0.8, 1.2]), so a loop that
+    /// restarted its connect cycle has had two clear chances to show it.
+    /// </summary>
+    private static readonly TimeSpan StaleWindow = TimeSpan.FromSeconds(3);
+
     /// <summary>US2-AC1.</summary>
     [Fact]
     public async Task A_sample_published_while_disconnected_is_counted_and_nothing_is_thrown()
@@ -182,6 +189,61 @@ public class MqttPublisherDropAccountingTests
             1,
             "the broker never acknowledged the sample, so it is gone — a drop like any other, "
             + "counted and reported once when the outage ends.");
+    }
+
+    /// <summary>
+    /// #2130 — <c>DropSignal</c> suppressed a stale disconnect by asking the
+    /// client whether it was connected, which answers for the moment the handler
+    /// runs rather than for the moment the event describes. While the live
+    /// attempt is still inside its CONNECT the answer is <c>false</c>, so the
+    /// stale event is taken for a drop and completes the wait of the attempt
+    /// that is about to succeed: the connection is announced and then abandoned
+    /// on the spot, and the loop reconnects on a drop that never happened.
+    ///
+    /// <para>
+    /// <b>The event carries its own answer.</b>
+    /// <c>MqttClientDisconnectedEventArgs.ClientWasConnected</c> is captured at
+    /// the disconnect, so it reports <c>false</c> for a refused CONNECT however
+    /// late the handler runs — measured off the real client in
+    /// EventIngestion's <c>MqttClientWasConnectedContractTests</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>What this fake can and cannot show.</b> It does not emulate
+    /// <c>MqttClient.ThrowIfConnected</c>, so the second CONNECT here simply
+    /// succeeds rather than being refused; the visible symptom is the cycle
+    /// restarting, not the permanent stream of connect errors the subscriber's
+    /// copy of this test can see. Both start with the same false drop.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_stale_disconnect_landing_mid_connect_does_not_restart_the_connect_cycle()
+    {
+        await using PublisherUnderTest publisher = PublisherUnderTest.Create();
+        publisher.Client.RaiseStaleDisconnectDuringNextConnect();
+
+        await publisher.Publisher.StartAsync(CancellationToken.None);
+
+        (await PublisherUnderTest.WaitUntilAsync(
+            () => publisher.Logger.Entries.Any(entry => Announces(entry.Message)))).ShouldBeTrue(
+            "the publisher never connected, so there is nothing to disturb");
+
+        await Task.Delay(StaleWindow);
+
+        publisher.Logger.Entries.Count(entry => Announces(entry.Message)).ShouldBe(
+            1,
+            $"connections announced in {StaleWindow.TotalSeconds:F0}s. The stale disconnect arrived "
+            + "while this attempt was still inside its CONNECT and was captured with "
+            + "ClientWasConnected=false, so it describes a connection that never existed. Taken for "
+            + "this attempt's drop it ends a connection that is up, and every reconnect after it is "
+            + "an outage the operator is told about that did not occur.");
+
+        publisher.Client.ConnectAttempts.ShouldBe(
+            1,
+            "one CONNECT was answered and nothing dropped it. A second is the loop working its way "
+            + "through a backoff it should never have entered — and against the real client, where "
+            + "ThrowIfConnected refuses a CONNECT on a live connection, it is the start of a cycle "
+            + "that does not end.");
     }
 
     private static bool Announces(string message) =>

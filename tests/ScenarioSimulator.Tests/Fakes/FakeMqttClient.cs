@@ -37,6 +37,7 @@ internal sealed class FakeMqttClient : IMqttClient
     private TaskCompletionSource? connectGate;
     private int refusals;
     private int connectAttempts;
+    private bool staleDuringNextConnect;
 
     public event Func<MqttApplicationMessageReceivedEventArgs, Task>? ApplicationMessageReceivedAsync;
 
@@ -90,6 +91,51 @@ internal sealed class FakeMqttClient : IMqttClient
     /// </summary>
     public void RefuseEveryConnect() => refusals = int.MaxValue;
 
+    /// <summary>
+    /// Raises a disconnect for a connection that never existed, leaving
+    /// <see cref="IsConnected"/> alone.
+    ///
+    /// <para>
+    /// Not a contrivance: MQTTnet 5 calls <c>DisconnectInternal</c> on a
+    /// non-success CONNACK and dispatches the handler fire-and-forget
+    /// (<c>Task.Run(...).RunInBackground(_logger)</c>, not awaited), so a stale
+    /// disconnect is in flight after <em>every</em> refusal, by design. It
+    /// carries <c>ClientWasConnected=false</c>, captured at the moment of the
+    /// disconnect — measured off the real client in
+    /// <c>MqttClientWasConnectedContractTests</c>.
+    /// </para>
+    /// </summary>
+    public async Task RaiseStaleDisconnectAsync()
+    {
+        Func<MqttClientDisconnectedEventArgs, Task>? handler = DisconnectedAsync;
+        if (handler is not null)
+        {
+            await handler(new MqttClientDisconnectedEventArgs(
+                clientWasConnected: false,
+                connectResult: null!,
+                reason: MqttClientDisconnectReason.UnspecifiedError,
+                reasonString: "a refused CONNECT's disconnect, delivered late",
+                userProperties: [],
+                exception: null!));
+        }
+    }
+
+    /// <summary>
+    /// Delivers that stale disconnect from <b>inside</b> the next CONNECT,
+    /// before it is answered.
+    ///
+    /// <para>
+    /// The attempt has attached its handler and is waiting on a network round
+    /// trip, so the client reports no connection — and a guard reading
+    /// <c>IsConnected</c> therefore takes the stale event for a drop of a
+    /// connection that has not happened yet, completing the wait of the attempt
+    /// that is about to succeed. Delivering it from inside the call makes that
+    /// interleaving a fact of the test rather than a thread-pool starvation it
+    /// would have to provoke.
+    /// </para>
+    /// </summary>
+    public void RaiseStaleDisconnectDuringNextConnect() => staleDuringNextConnect = true;
+
     public async Task DropAsync()
     {
         IsConnected = false;
@@ -132,6 +178,12 @@ internal sealed class FakeMqttClient : IMqttClient
         await Task.Yield();
 
         Options = options;
+
+        if (staleDuringNextConnect)
+        {
+            staleDuringNextConnect = false;
+            await RaiseStaleDisconnectAsync();
+        }
 
         if (connectGate is not null)
         {

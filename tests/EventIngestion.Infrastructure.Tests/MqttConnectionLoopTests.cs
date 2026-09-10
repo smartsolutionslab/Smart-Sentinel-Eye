@@ -313,6 +313,64 @@ public class MqttConnectionLoopTests
     }
 
     /// <summary>
+    /// <b>The mirror of the case above, and the half the <c>IsConnected</c>
+    /// guard never covered.</b> That guard suppresses a stale disconnect by
+    /// asking the client whether it is connected — which answers for the moment
+    /// the handler runs, not for the moment the event describes. While the live
+    /// attempt is still inside its CONNECT the answer is <c>false</c>, so the
+    /// stale event is taken for a drop and completes the wait of the attempt
+    /// that is about to succeed.
+    ///
+    /// <para>
+    /// The attempt then connects, subscribes, and its <c>WaitAsync</c> returns
+    /// at once on a connection that is up. From there it is the cycle the case
+    /// above describes, and it does not end: <c>ThrowIfConnected</c> refuses
+    /// every reconnect, nothing closes the connection, and the attempt counter
+    /// climbs to the cap that the next genuine outage then waits out.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Zero here, not one.</b> The single spurious wake the case above allows
+    /// is the refused-to-success transition, where the pre-completed wait belongs
+    /// to an attempt that never awaits it. Here the wait completed is the live
+    /// attempt's own, so every failed connect that follows is the defect rather
+    /// than the bounded part of it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_stale_disconnect_landing_mid_connect_does_not_end_the_connection_it_landed_in()
+    {
+        using LoopUnderTest loop = LoopUnderTest.Start(
+            client => client.RaiseStaleDisconnectDuringNextConnect(), LoopUnderTest.Patient());
+
+        (await LoopUnderTest.WaitUntilAsync(
+            () => loop.Client.IsConnected && loop.Client.SubscribedTopics.Count == 1)).ShouldBeTrue(
+            "the loop never reached a connected, subscribed client, so there is nothing to disturb");
+
+        // The whole window is observed rather than exited at the threshold, for
+        // the reason the case above gives: what is in doubt is the rate.
+        await Task.Delay(StaleWindow);
+
+        loop.FailedConnects.ShouldBe(
+            0,
+            $"\"could not connect\" errors written in {StaleWindow.TotalSeconds:F0}s after a stale "
+            + "disconnect arrived while the live attempt was still inside its CONNECT. That event was "
+            + "captured with ClientWasConnected=false, so it describes a connection that never existed "
+            + "and cannot be this attempt's drop. Each error is ThrowIfConnected refusing to reconnect "
+            + "a live client, and nothing closes that client — so the cycle does not end.");
+
+        loop.Client.SubscribedTopics.Count.ShouldBe(
+            1,
+            "the connection the stale event landed in was established and subscribed once. A second "
+            + "SUBSCRIBE would mean the loop tore it down and rebuilt it on a drop that never happened.");
+
+        loop.Client.IsConnected.ShouldBeTrue(
+            "arrange check — a stale disconnect is an event, not a disconnection. If the client is "
+            + "down, this test is measuring an ordinary reconnect rather than the case it was written "
+            + "for.");
+    }
+
+    /// <summary>
     /// <b>The yardstick <c>ResetIfHeld</c> measures against is a constant, so a
     /// peer can sit just above it forever.</b> A connection held for
     /// <c>first + ε</c> clears the backoff every single time, which puts the next
