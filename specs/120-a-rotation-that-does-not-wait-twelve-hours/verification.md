@@ -133,3 +133,104 @@ there, resolved by keeping #2235's
 `Result<WhepAuthSubject, WhepAuthFailure>.Failure(WhepAuthFailure.TokenRejected)`
 return and inserting the `RequestRefreshIfAStaleDocumentCouldExplain(exception)`
 call above it. The private method itself is untouched by that merge.
+
+---
+
+# Addendum — rebased onto #2235 (spec 119 / #2160), now merged
+
+The prediction held exactly: two conflicting hunks in `WhepAuthValidator.cs`,
+both in `ValidateAsync`'s catch arms, and the private method merged untouched.
+
+**Resolution.** `catch (SecurityTokenException exception)` keeps #2235's
+`Result<WhepAuthSubject, WhepAuthFailure>.Failure(WhepAuthFailure.TokenRejected)`
+with `RequestRefreshIfAStaleDocumentCouldExplain(exception)` inserted above it.
+The `catch (ArgumentException)` arm keeps its `Result` return and gains the
+malformed-token note below. No `ILogger` was added — #2235's is already there and
+is not used by this change.
+
+**The test files needed a migration, not an adjustment.** `ValidateAsync` now
+returns `Result<…>` rather than `Option<…>`, and the internal seam takes a logger,
+so `Option<WhepAuthSubject>` → `Result<WhepAuthSubject, WhepAuthFailure>`,
+`.HasValue` → `.IsSuccess`, and `NullLogger<WhepAuthValidator>.Instance` at each
+construction — the same migration #2235 applied to `WhepValidatorIssuerTests` and
+`WhepValidatorAudienceTests`. **No assertion changed direction and no
+`customMessage` changed**, which is the property that matters: every
+`ShouldBeTrue`/`ShouldBeFalse` still asserts what it asserted before. Folded into
+the test commit so each commit still builds on its own (ADR-0087).
+
+## The reds, re-proven on the rebased tree
+
+Not "still failing" — failing for the same reason, on the same assertion. The
+`WhepAuthValidator.cs` from the test commit, against the rebased tests:
+
+```
+...WhepValidatorRotationTests.A_token_signed_with_the_rotated_key_is_authorized_on_a_later_call [FAIL]
+   Shouldly.ShouldAssertException : laterCall.IsSuccess
+    should be
+True
+    but was
+False
+...WhepValidatorRotationTests.A_token_carrying_the_rotated_issuer_is_authorized_on_a_later_call [FAIL]
+   Shouldly.ShouldAssertException : laterCall.IsSuccess
+    should be
+True
+    but was
+False
+Failed!  - Failed: 2, Passed: 32, Skipped: 0, Total: 34
+```
+
+With the fix: `Passed! - Failed: 0, Passed: 34, Total: 34`.
+
+## The restraint, re-proven against what it forbids
+
+The discriminator replaced by an unconditional refresh, on the rebased shape:
+
+```
+Failed ...A_token_minted_for_another_audience_does_not_provoke_a_discovery_refetch [539 ms]
+Failed ...An_expired_token_does_not_provoke_a_discovery_refetch [194 ms]
+Failed!  - Failed: 2, Passed: 1, Skipped: 0, Total: 3
+```
+
+Same two move, same one does not, for the reason now recorded on the test itself.
+
+## #2235's behaviour intact
+
+`WhepValidatorUnreachableRealmTests`, all six passing unmodified:
+
+```
+Passed An_unreachable_realm_refuses_instead_of_throwing
+Passed An_unreachable_realm_is_logged_once_with_the_exception
+Passed A_cancelled_request_stays_cancelled
+Passed A_reachable_realm_still_authorizes_the_same_token
+Passed An_outage_is_logged_once_however_many_viewers_are_refused
+Passed A_recovery_is_logged_and_a_second_outage_speaks_again
+```
+
+`IdentityProviderUnavailable` still reaches the Application layer as its own
+failure — `StreamDistribution.Application.Tests` 65/65, including
+`AuthorizeWhepIdentityUnavailableTests`. Cancellation still escapes, and outage
+logging is still one `Warning` per transition rather than per authorize. Nothing
+this change touches is inside #2235's config-fetch `try`.
+
+## Where the three facts now live
+
+Carried out of the report and into the code, so they survive without this file:
+
+1. **Malformed does not exercise the discriminator** — on
+   `A_malformed_token_does_not_provoke_a_discovery_refetch`, and in the
+   `catch (ArgumentException)` comment.
+2. **8.19.2 refreshes on a background task and hands the caller the stale
+   document** — on the `WhepValidatorRotationTests` class doc, which is why the
+   reds poll a bounded window instead of asserting on call 2.
+3. **The same-`kid` gap (IDX10511) has no test** — on the
+   `WhepValidatorRefreshRestraintTests` class doc, and in the private method's
+   own summary.
+
+## Build and tests, after the rebase
+
+- `dotnet build -c Release` (solution): **0 Warning(s), 0 Error(s)**.
+- `StreamDistribution.Infrastructure.Tests` **34/34**,
+  `StreamDistribution.Application.Tests` **65/65**,
+  `StreamDistribution.Domain.Tests` **140/140**,
+  `Architecture.Tests` **360/360**.
+- Neither interval assigned anywhere in `src/`, unchanged by the rebase.
