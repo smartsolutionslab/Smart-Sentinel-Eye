@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SmartSentinelEye.AuditObservability.Infrastructure.Persistence;
 using SmartSentinelEye.Integration.Tests.Fixtures;
+using Xunit.Abstractions;
 
 namespace SmartSentinelEye.Integration.Tests.AuditObservability;
 
@@ -16,7 +17,7 @@ namespace SmartSentinelEye.Integration.Tests.AuditObservability;
 /// hot path, then runs a warm-up + measured loop of the real read endpoint.
 /// </summary>
 [Collection(AspireCollection.Name)]
-public class NFR002_AuditSearchLatencyTests(AspireFixture aspire)
+public class NFR002_AuditSearchLatencyTests(AspireFixture aspire, ITestOutputHelper output)
 {
     private const int SeedRows = 100_000;
     private const int WarmupIterations = 100;
@@ -52,6 +53,13 @@ public class NFR002_AuditSearchLatencyTests(AspireFixture aspire)
         double p50 = elapsedMs[MeasureIterations / 2];
         double p99 = elapsedMs[(int)Math.Ceiling(MeasureIterations * 0.99) - 1];
         double max = elapsedMs[^1];
+
+        // Reported on the success path as well as the failure path (#2149): the
+        // customMessage below is built only when the assertion fails, so a green
+        // run measured 1 000 requests and then threw the numbers away.
+        output.WriteLine(
+            $"GET /audit over a 24h window, {SeedRows} seeded rows, {MeasureIterations} requests: "
+            + $"p50 = {p50:F1} ms, p99 = {p99:F1} ms, max = {max:F1} ms (budget {P99BudgetMs} ms p99)");
 
         p99.ShouldBeLessThan(
             P99BudgetMs,

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using SmartSentinelEye.AuditObservability.Infrastructure.Persistence;
 using SmartSentinelEye.Integration.Tests.Fixtures;
 using SmartSentinelEye.ServiceDefaults.Persistence;
+using Xunit.Abstractions;
 
 namespace SmartSentinelEye.Integration.Tests.ServiceDefaults;
 
@@ -20,7 +21,7 @@ namespace SmartSentinelEye.Integration.Tests.ServiceDefaults;
 /// </para>
 /// </summary>
 [Collection(AspireCollection.Name)]
-public class PostgresConnectionBudgetIntegrationTests(AspireFixture aspire)
+public class PostgresConnectionBudgetIntegrationTests(AspireFixture aspire, ITestOutputHelper output)
 {
     /// <summary>
     /// The budget is meaningless if the server allows fewer connections than the
@@ -40,6 +41,12 @@ public class PostgresConnectionBudgetIntegrationTests(AspireFixture aspire)
             .ToListAsync();
 
         allowed.ShouldHaveSingleItem();
+
+        // The observation, not just the verdict (#2149).
+        output.WriteLine(
+            $"postgres max_connections = {allowed[0]} "
+            + $"(budget assumes at least {PostgresConnectionBudget.ServerMaxConnections})");
+
         allowed[0].ShouldBeGreaterThanOrEqualTo(
             PostgresConnectionBudget.ServerMaxConnections,
             $"AppHost starts Postgres with max_connections; the budget assumes at least "
@@ -70,6 +77,16 @@ public class PostgresConnectionBudgetIntegrationTests(AspireFixture aspire)
             .ToListAsync();
 
         used.ShouldHaveSingleItem();
+
+        // The count is the whole point of the assertion and was visible only on
+        // failure (#2149). A fixture figure far below the ceiling is what says
+        // the caps are holding, and it is what makes the margin knowable.
+        output.WriteLine(
+            $"pg_stat_activity = {used[0]} connections against a service ceiling of "
+            + $"{PostgresConnectionBudget.ServiceCeiling} (pool cap "
+            + $"{PostgresConnectionBudget.MaxPoolSize}, server allows "
+            + $"{PostgresConnectionBudget.ServerMaxConnections})");
+
         used[0].ShouldBeLessThan(
             PostgresConnectionBudget.ServiceCeiling,
             $"{used[0]} connections are open against a service ceiling of "

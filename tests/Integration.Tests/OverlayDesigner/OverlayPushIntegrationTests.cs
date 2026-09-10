@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.SignalR.Client;
 using SmartSentinelEye.Integration.Tests.Fixtures;
 using SmartSentinelEye.LayoutComposition.Infrastructure.Broadcasting;
+using Xunit.Abstractions;
 
 namespace SmartSentinelEye.Integration.Tests.OverlayDesigner;
 
@@ -14,7 +15,7 @@ namespace SmartSentinelEye.Integration.Tests.OverlayDesigner;
 /// <c>OverlayRevisionPublished</c> carrying the new Label within 1 s.
 /// </summary>
 [Collection(AspireCollection.Name)]
-public class OverlayPushIntegrationTests(AspireFixture aspire) : IAsyncLifetime
+public class OverlayPushIntegrationTests(AspireFixture aspire, ITestOutputHelper output) : IAsyncLifetime
 {
     private const int PushBudgetMilliseconds = 1000;
 
@@ -110,6 +111,13 @@ public class OverlayPushIntegrationTests(AspireFixture aspire) : IAsyncLifetime
             alphaFrames.GetOrAdd(siblingIdentifier, _ => new()).Task.WaitAsync(budget.Token),
             betaFrames.GetOrAdd(siblingIdentifier, _ => new()).Task.WaitAsync(budget.Token));
         sw.Stop();
+
+        // Recorded on the success path too, for the reason in #2149: the
+        // customMessage below is built only on failure, so the warm-path figure
+        // this budget was chosen from was invisible to every green run.
+        output.WriteLine(
+            $"publish->push to 2 clients (warm): {sw.Elapsed.TotalMilliseconds:F0} ms "
+            + $"(budget {PushBudgetMilliseconds} ms)");
 
         sw.Elapsed.TotalMilliseconds.ShouldBeLessThan(
             PushBudgetMilliseconds,

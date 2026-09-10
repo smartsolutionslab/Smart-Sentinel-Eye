@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using SmartSentinelEye.Integration.Tests.Fixtures;
+using Xunit.Abstractions;
 
 namespace SmartSentinelEye.Integration.Tests.StreamDistribution;
 
@@ -14,7 +15,7 @@ namespace SmartSentinelEye.Integration.Tests.StreamDistribution;
 /// dominant operator-controlled term in that latency budget.
 /// </summary>
 [Collection(AspireCollection.Name)]
-public class WhepHandshakeLatencyTests(AspireFixture aspire) : IAsyncLifetime
+public class WhepHandshakeLatencyTests(AspireFixture aspire, ITestOutputHelper output) : IAsyncLifetime
 {
     private const int Iterations = 20;
     private const int P95BudgetMilliseconds = 3000;
@@ -64,8 +65,14 @@ public class WhepHandshakeLatencyTests(AspireFixture aspire) : IAsyncLifetime
         double p95 = elapsedMs[(int)Math.Ceiling(Iterations * 0.95) - 1];
         double p50 = elapsedMs[Iterations / 2];
 
-        // Surface the measured numbers in the test output. xUnit doesn't
-        // capture stdout by default but the assertion's message does.
+        // Surface the measurement whether or not it passes. The assertion's
+        // customMessage is built only when the assertion fails, so a green run
+        // used to discard the figure it had just produced (#2149).
+        output.WriteLine(
+            $"POST /streams/authorize over {Iterations} opens: p50 = {p50:F0} ms, "
+            + $"p95 = {p95:F0} ms, max = {elapsedMs[^1]:F0} ms "
+            + $"(budget {P95BudgetMilliseconds} ms)");
+
         p95.ShouldBeLessThan(
             P95BudgetMilliseconds,
             $"p50 = {p50:F0} ms, p95 = {p95:F0} ms, max = {elapsedMs[^1]:F0} ms");
