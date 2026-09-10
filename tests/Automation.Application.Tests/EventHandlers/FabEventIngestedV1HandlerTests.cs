@@ -189,6 +189,12 @@ public class FabEventIngestedV1HandlerTests
         await handler.Handle(PlcCycleStart(fab: "munich"), CancellationToken.None);
 
         bus.Published.ShouldBeEmpty();
+
+        // The bus stays empty for *any* lookup key that misses, so the line
+        // above cannot tell "the dresden rule was correctly skipped" from "the
+        // handler asked for a fab nobody has rules in". The key it asked for
+        // can (#2151): it must be the fab the event came from.
+        cache.Lookups.ShouldBe([("munich", "plc", "PlcCycleStart")]);
     }
 
     [Fact]
@@ -250,6 +256,15 @@ public class FabEventIngestedV1HandlerTests
         await handler.Handle(PlcCycleStart(fab: fab), CancellationToken.None);
 
         bus.Published.ShouldBeEmpty();
+
+        // "Triggered nothing rather than all" has exactly one representation at
+        // this seam: the handler never asked. A fallback that carried on under
+        // some substitute fab publishes nothing too — the substitute's bucket
+        // is empty — so the line above is green for the defect it names
+        // (#2151). An empty lookup log is not.
+        cache.Lookups.ShouldBeEmpty(
+            "an unusable fab must stop the handler before it consults the rule "
+            + "cache at all; falling back to any other fab is the #1252 shape");
     }
 
     /// <summary>
