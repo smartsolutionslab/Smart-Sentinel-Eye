@@ -119,10 +119,10 @@ public sealed class WhepValidatorIssuerTests : IDisposable
     {
         WhepAuthValidator validator = ValidatorWithStubbedMetadata();
 
-        Option<WhepAuthSubject> subject =
+        Result<WhepAuthSubject, WhepAuthFailure> subject =
             await validator.ValidateAsync(TokenIssuedBy(RealmIssuer), CancellationToken.None);
 
-        subject.HasValue.ShouldBeTrue(
+        subject.IsSuccess.ShouldBeTrue(
             customMessage: "the WHEP hook refused a token minted by the realm it validates against. "
             + "It is comparing 'iss' to the URL it dials Keycloak on instead of to the issuer the "
             + "discovery document reports, so behind an ingress every WHEP open 401s and the whole "
@@ -141,10 +141,10 @@ public sealed class WhepValidatorIssuerTests : IDisposable
     {
         WhepAuthValidator validator = ValidatorWithStubbedMetadata();
 
-        Option<WhepAuthSubject> subject =
+        Result<WhepAuthSubject, WhepAuthFailure> subject =
             await validator.ValidateAsync(TokenIssuedBy(DialledAuthority), CancellationToken.None);
 
-        subject.HasValue.ShouldBeFalse(
+        subject.IsSuccess.ShouldBeFalse(
             customMessage: "the WHEP hook accepted a token whose issuer is the URL it dials "
             + "Keycloak on, which the discovery document says is not the realm's issuer. The nine "
             + "REST APIs accept exactly one issuer — JwtBearerHandler concatenates onto a null — so "
@@ -162,11 +162,11 @@ public sealed class WhepValidatorIssuerTests : IDisposable
     {
         WhepAuthValidator validator = ValidatorWithStubbedMetadata();
 
-        Option<WhepAuthSubject> subject = await validator.ValidateAsync(
+        Result<WhepAuthSubject, WhepAuthFailure> subject = await validator.ValidateAsync(
             TokenIssuedBy("https://keycloak.attacker.example/realms/smart-sentinel-eye"),
             CancellationToken.None);
 
-        subject.HasValue.ShouldBeFalse(
+        subject.IsSuccess.ShouldBeFalse(
             customMessage: "the WHEP hook accepted a token from an issuer neither the discovery "
             + "document nor the configuration names. Issuer validation is off, or is comparing "
             + "against something that matches anything (#2095 FR-003).");

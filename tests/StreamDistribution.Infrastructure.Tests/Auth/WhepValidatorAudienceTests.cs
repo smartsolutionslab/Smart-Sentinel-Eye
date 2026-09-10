@@ -85,10 +85,10 @@ public sealed class WhepValidatorAudienceTests : IDisposable
     {
         WhepAuthValidator validator = ValidatorWithStubbedMetadata();
 
-        Option<WhepAuthSubject> subject =
+        Result<WhepAuthSubject, WhepAuthFailure> subject =
             await validator.ValidateAsync(TokenFor("some-other-api"), CancellationToken.None);
 
-        subject.HasValue.ShouldBeFalse(
+        subject.IsSuccess.ShouldBeFalse(
             customMessage: "the WHEP hook authorized a token minted for another API. The audience "
             + "settings must survive from CreateParameters into the parameters ValidateAsync hands "
             + "the handler; WhepAudienceTests only inspects the factory, so a mutation on the clone "
@@ -106,10 +106,10 @@ public sealed class WhepValidatorAudienceTests : IDisposable
     {
         WhepAuthValidator validator = ValidatorWithStubbedMetadata();
 
-        Option<WhepAuthSubject> subject = await validator.ValidateAsync(
+        Result<WhepAuthSubject, WhepAuthFailure> subject = await validator.ValidateAsync(
             TokenFor(AuthenticationDefaults.ApiAudience), CancellationToken.None);
 
-        subject.HasValue.ShouldBeTrue(
+        subject.IsSuccess.ShouldBeTrue(
             customMessage: "the WHEP hook refused a token minted for this API. Either the audience "
             + "the hook names has drifted from AuthenticationDefaults.ApiAudience, or the refusal "
             + "test above is passing for a reason other than the audience (#2093).");
