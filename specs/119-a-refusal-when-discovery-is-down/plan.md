@@ -59,17 +59,27 @@ vocabulary is the opposite of one.
 The mapping stays in the handler, where every other WHEP refusal is decided.
 Infrastructure keeps reporting facts, not statuses.
 
-## D4 — the catch is narrow, and cancellation is separated inside it
+## D4 — the catch is narrow, and the narrowness is what keeps cancellation
 
 Only the `GetConfigurationAsync` await is wrapped, so an
 `InvalidOperationException` from anywhere else — the token handler, the
 `Result` struct's own guards — still propagates as the bug it would be.
 
-`ConfigurationManager.GetConfigurationNonBlockingAsync` catches *everything* the
-retriever threw and rewraps it as IDX20803, so a cancelled fetch and a refused
-socket arrive as the same type. The catch therefore calls
-`cancellationToken.ThrowIfCancellationRequested()` **first**: a caller that went
-away leaves as a cancellation, not as a refusal (FR-004).
+**This plan first said the catch needed a `ThrowIfCancellationRequested()` ahead
+of it**, on the reasoning that `ConfigurationManager` rewraps everything the
+retriever threw as IDX20803, cancellations included. The counterfactual says
+otherwise, and it was run: with the catch narrowed to
+`InvalidOperationException`, a cancelled request surfaces as
+`OperationCanceledException` in every shape that could be built — a retriever
+throwing it directly, a fetch cancelled in flight, and a retriever wrapping it in
+`IOException` exactly as `HttpDocumentRetriever` does. `ConfigurationManager`
+raises the cancellation itself. The extra line was therefore dead code, and it is
+not in the fix.
+
+What the guard against FR-004 actually is: the catch stays narrow.
+`A_cancelled_request_stays_cancelled` fails — measured, both ways — the moment
+that catch is widened to `catch (Exception)`, which is the mistake worth having a
+test for.
 
 ## D5 — logged in Infrastructure, where the exception is
 

@@ -1,5 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -19,6 +20,7 @@ namespace SmartSentinelEye.StreamDistribution.Infrastructure.Auth;
 public sealed class WhepAuthValidator : IWhepAuthValidator
 {
     private readonly IConfigurationManager<OpenIdConnectConfiguration> oidc;
+    private readonly ILogger<WhepAuthValidator> logger;
     private readonly TokenValidationParameters parameters;
     // Diverges from the bearer pipeline, which uses JsonWebTokenHandler. That should
     // eventually back both sides: Microsoft positions this one as the legacy path, and
@@ -29,8 +31,8 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
     // needs its own adversarial pass over malformed inputs (spec 089 D4).
     private readonly JwtSecurityTokenHandler handler = new();
 
-    public WhepAuthValidator(IOptions<WhepAuthOptions> options)
-        : this(MetadataSourceFor(options))
+    public WhepAuthValidator(IOptions<WhepAuthOptions> options, ILogger<WhepAuthValidator> logger)
+        : this(MetadataSourceFor(options), logger)
     {
     }
 
@@ -40,11 +42,15 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
     /// <c>internal</c>: a public constructor taking a metadata source would be a
     /// public way to point this token validator at another issuer.
     /// </summary>
-    internal WhepAuthValidator(IConfigurationManager<OpenIdConnectConfiguration> metadata)
+    internal WhepAuthValidator(
+        IConfigurationManager<OpenIdConnectConfiguration> metadata,
+        ILogger<WhepAuthValidator> logger)
     {
         Ensure.That(metadata).IsNotNull();
+        Ensure.That(logger).IsNotNull();
 
         oidc = metadata;
+        this.logger = logger;
 
         parameters = CreateParameters();
 
@@ -99,9 +105,25 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
 
     public async Task<Result<WhepAuthSubject, WhepAuthFailure>> ValidateAsync(string bearerToken, CancellationToken cancellationToken)
     {
+        OpenIdConnectConfiguration configuration;
         try
         {
-            OpenIdConnectConfiguration configuration = await oidc.GetConfigurationAsync(cancellationToken);
+            configuration = await oidc.GetConfigurationAsync(cancellationToken);
+        }
+        catch (InvalidOperationException exception)
+        {
+            // Narrow on purpose, and measured rather than assumed: a cancelled
+            // request surfaces here as OperationCanceledException — ConfigurationManager
+            // raises it even when the retriever wrapped the cancellation — so this
+            // catch lets a caller that went away leave as a cancellation. Widening it
+            // to catch Exception reports that caller as a refused viewer instead;
+            // A_cancelled_request_stays_cancelled fails on exactly that edit.
+            logger.WhepIdentityProviderUnreachable(exception);
+            return Result<WhepAuthSubject, WhepAuthFailure>.Failure(WhepAuthFailure.IdentityProviderUnavailable);
+        }
+
+        try
+        {
             TokenValidationParameters validationParameters = parameters.Clone();
             validationParameters.ValidIssuers = [configuration.Issuer];
             validationParameters.IssuerSigningKeys = configuration.SigningKeys;

@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
@@ -8,6 +9,7 @@ using SmartSentinelEye.ServiceDefaults;
 using SmartSentinelEye.Shared.Kernel;
 using SmartSentinelEye.StreamDistribution.Application.Auth;
 using SmartSentinelEye.StreamDistribution.Infrastructure.Auth;
+using SmartSentinelEye.StreamDistribution.Infrastructure.Tests.Fakes;
 
 namespace SmartSentinelEye.StreamDistribution.Infrastructure.Tests.Auth;
 
@@ -43,6 +45,8 @@ public sealed class WhepValidatorUnreachableRealmTests : IDisposable
 
     private readonly RSA signingKey = RSA.Create(2048);
 
+    private readonly CapturingLogger<WhepAuthValidator> logs = new();
+
     public void Dispose() => signingKey.Dispose();
 
     /// <summary>
@@ -68,19 +72,40 @@ public sealed class WhepValidatorUnreachableRealmTests : IDisposable
     }
 
     /// <summary>
-    /// <b>Cancellation stays cancellation.</b> Separate from the case above
-    /// because the two arrive as the <em>same</em> exception type:
-    /// <c>ConfigurationManager</c> rewraps a cancelled fetch as IDX20803 too. A
-    /// fix written as a bare catch turns a caller that went away into a 401 —
-    /// this is the test that says so, and it was run against exactly that
-    /// mistake before being committed.
+    /// The outage is swallowed into a refusal, so the exception is the only thing
+    /// left that says <em>why</em> the realm was unreachable. A swallowed
+    /// exception with no trace is a review blocker; this is the assertion that
+    /// keeps it from becoming one (FR-005).
+    /// </summary>
+    [Fact]
+    public async Task An_unreachable_realm_is_logged_once_with_the_exception()
+    {
+        WhepAuthValidator validator = ValidatorOver(new UnreachableRealm());
+
+        await validator.ValidateAsync(AToken(), CancellationToken.None);
+
+        (LogLevel Level, string Message, Exception? Exception) entry = logs.Entries.ShouldHaveSingleItem();
+        entry.Level.ShouldBe(LogLevel.Warning);
+        entry.Exception.ShouldNotBeNull().Message.ShouldContain(
+            "IDX20803",
+            customMessage: "the log records that the realm was unreachable but not why. IDX20803 "
+            + "names the address and wraps the transport failure — DNS, refused, TLS — and nothing "
+            + "else survives the refusal (spec 119 FR-005).");
+    }
+
+    /// <summary>
+    /// <b>Cancellation stays cancellation.</b> A caller that went away must not be
+    /// counted as a refused viewer. What protects it is the <em>narrowness</em> of
+    /// the catch, so this test is aimed at the edit that would remove that: with
+    /// <c>catch (Exception)</c> in place of <c>catch (InvalidOperationException)</c>
+    /// it fails, and it was run against exactly that mistake before being
+    /// committed.
     /// </summary>
     [Fact]
     public async Task A_cancelled_request_stays_cancelled()
     {
         WhepAuthValidator validator = ValidatorOver(new CancellingRealm());
-        using CancellationTokenSource cancelled = new();
-        await cancelled.CancelAsync();
+        using CancellationTokenSource cancelled = new(TimeSpan.FromMilliseconds(50));
 
         await Should.ThrowAsync<OperationCanceledException>(
             () => validator.ValidateAsync(AToken(), cancelled.Token));
@@ -105,11 +130,13 @@ public sealed class WhepValidatorUnreachableRealmTests : IDisposable
             + "nothing about the outage.");
     }
 
-    private static WhepAuthValidator ValidatorOver(IDocumentRetriever retriever) =>
-        new(new ConfigurationManager<OpenIdConnectConfiguration>(
-            $"{Authority}/.well-known/openid-configuration",
-            new OpenIdConnectConfigurationRetriever(),
-            retriever));
+    private WhepAuthValidator ValidatorOver(IDocumentRetriever retriever) =>
+        new(
+            new ConfigurationManager<OpenIdConnectConfiguration>(
+                $"{Authority}/.well-known/openid-configuration",
+                new OpenIdConnectConfigurationRetriever(),
+                retriever),
+            logs);
 
     private static string DiscoveryDocument =>
         $$"""{"issuer":"{{Authority}}","jwks_uri":"{{JwksUri}}"}""";
@@ -155,12 +182,37 @@ public sealed class WhepValidatorUnreachableRealmTests : IDisposable
                 new HttpRequestException("No connection could be made because the target machine actively refused it."));
     }
 
+    /// <summary>
+    /// A cancelled fetch as the production retriever delivers it.
+    /// <c>HttpDocumentRetriever.GetDocumentAsync</c> wraps <em>every</em> exception
+    /// its request threw in <c>IOException(IDX20804)</c> — a cancellation
+    /// included — and <c>ConfigurationManager</c> then wraps that in
+    /// <c>InvalidOperationException(IDX20803)</c>. So a caller that went away and
+    /// a realm that is down arrive at the catch as one type, and only the token
+    /// tells them apart.
+    ///
+    /// <para>
+    /// Measured, not assumed: an <c>OperationCanceledException</c> thrown
+    /// <em>straight</em> out of a retriever propagates unwrapped and needs no
+    /// guard at all. It is the wrapping that creates the confusion, so it is the
+    /// wrapping this reproduces — a stub that threw the bare exception would pass
+    /// with the guard deleted.
+    /// </para>
+    /// </summary>
     private sealed class CancellingRealm : IDocumentRetriever
     {
-        public Task<string> GetDocumentAsync(string address, CancellationToken cancel)
+        public async Task<string> GetDocumentAsync(string address, CancellationToken cancel)
         {
-            cancel.ThrowIfCancellationRequested();
-            return Task.FromResult(DiscoveryDocument);
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancel);
+            }
+            catch (Exception exception)
+            {
+                throw new IOException($"IDX20804: Unable to retrieve document from: '{address}'.", exception);
+            }
+
+            return DiscoveryDocument;
         }
     }
 

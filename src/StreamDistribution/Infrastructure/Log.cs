@@ -54,4 +54,10 @@ internal static partial class Log
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "MediaMTX health probe failed for path {Path}; skipping this tick.")]
     public static partial void HealthProbeFailed(this ILogger logger, Exception exception, MediaMtxPath path);
+
+    // Every WHEP open is refused for as long as this holds, so the exception is
+    // carried: IDX20803 names the address that could not be reached and wraps the
+    // transport failure that says why — DNS, refused, or TLS (spec 119 FR-005).
+    [LoggerMessage(Level = LogLevel.Warning, Message = "The realm's OIDC discovery document could not be obtained; no WHEP bearer token can be checked until it can. Every viewer stays refused, and this is not a bad credential.")]
+    public static partial void WhepIdentityProviderUnreachable(this ILogger logger, Exception exception);
 }

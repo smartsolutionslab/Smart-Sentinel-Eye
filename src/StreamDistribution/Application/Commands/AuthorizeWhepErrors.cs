@@ -51,6 +51,32 @@ public abstract record AuthorizeWhepError(string Code, string Message, HttpStatu
             "WHEP_ACTION_UNKNOWN",
             "The request named no recognised action.",
             HttpStatusCode.Forbidden);
+
+    /// <summary>
+    /// The realm could not be reached, so the bearer token was never judged.
+    /// Nothing is admitted — this is a refusal like every other member here.
+    ///
+    /// <para>
+    /// <c>401</c> and not <c>403</c>: the outage is not terminal, and telling a
+    /// client to stop trying is wrong at the moment retrying is what should
+    /// happen. <c>401</c> and not a <c>5xx</c>: MediaMTX handles those
+    /// differently and nobody here has observed how, which is the whole of issue
+    /// #2160 — and the nine REST APIs were <em>measured</em> answering <c>401</c>
+    /// for this exact condition, so this keeps the hook and the APIs agreed
+    /// (spec 119 D1).
+    /// </para>
+    ///
+    /// <para>
+    /// Distinct from <see cref="Unauthorized"/> because that one says the token is
+    /// "missing, malformed, or expired", which is false here and sends an
+    /// operator hunting a credential while Keycloak is the thing that is down.
+    /// </para>
+    /// </summary>
+    public sealed record IdentityProviderUnavailable()
+        : AuthorizeWhepError(
+            "WHEP_IDENTITY_PROVIDER_UNAVAILABLE",
+            "The identity provider could not be reached; the bearer token was not checked.",
+            HttpStatusCode.Unauthorized);
 }
 
 /// <summary>
@@ -75,4 +101,7 @@ public static class AuthorizeWhepFailures
 
     public static AuthorizeWhepError ActionUnknown() =>
         new AuthorizeWhepError.ActionUnknown();
+
+    public static AuthorizeWhepError IdentityProviderUnavailable() =>
+        new AuthorizeWhepError.IdentityProviderUnavailable();
 }

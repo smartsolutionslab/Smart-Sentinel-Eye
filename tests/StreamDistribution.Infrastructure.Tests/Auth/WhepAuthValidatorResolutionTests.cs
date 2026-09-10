@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -15,13 +16,13 @@ namespace SmartSentinelEye.StreamDistribution.Infrastructure.Tests.Auth;
 ///
 /// <para>
 /// <b>Why this is decisive rather than reassuring.</b> The container is given
-/// <em>both</em> dependencies — <c>IOptions&lt;WhepAuthOptions&gt;</c> and an
-/// <see cref="IConfigurationManager{T}"/>. If MS.DI considered non-public
-/// constructors it would see two single-parameter constructors, both
-/// satisfiable and neither a superset of the other, and throw on the ambiguity
-/// instead of resolving. Resolution succeeding is therefore evidence that the
-/// internal constructor is invisible to it, not merely that the public one
-/// still works.
+/// <em>both</em> distinguishing dependencies — <c>IOptions&lt;WhepAuthOptions&gt;</c>
+/// and an <see cref="IConfigurationManager{T}"/> — alongside the logger both
+/// constructors take (spec 119). If MS.DI considered non-public constructors it
+/// would see two two-parameter constructors, both satisfiable and neither a
+/// superset of the other, and throw on the ambiguity instead of resolving.
+/// Resolution succeeding is therefore evidence that the internal constructor is
+/// invisible to it, not merely that the public one still works.
 /// </para>
 ///
 /// <para>
@@ -36,6 +37,7 @@ public sealed class WhepAuthValidatorResolutionTests
     public void The_container_resolves_the_validator_through_its_public_options_constructor()
     {
         ServiceCollection services = [];
+        services.AddLogging();
         services.AddSingleton(
             Options.Create(new WhepAuthOptions
             {
