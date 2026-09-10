@@ -66,15 +66,18 @@ public sealed class AuthorizeWhepCommandHandler(
             return Failure(AuthorizeWhepFailures.Unauthorized());
         }
 
-        Option<WhepAuthSubject> subject = await whepAuth.ValidateAsync(bearerToken, cancellationToken);
+        Result<WhepAuthSubject, WhepAuthFailure> authentication =
+            await whepAuth.ValidateAsync(bearerToken, cancellationToken);
 
-        if (!subject.HasValue)
+        if (authentication.IsFailure)
         {
             return Failure(AuthorizeWhepFailures.Unauthorized());
         }
 
-        if (!subject.Value.Scopes.Contains(RequiredScope, StringComparer.Ordinal)
-            && !subject.Value.Scopes.Contains(LegacyManagementBundle, StringComparer.Ordinal))
+        WhepAuthSubject subject = authentication.Value;
+
+        if (!subject.Scopes.Contains(RequiredScope, StringComparer.Ordinal)
+            && !subject.Scopes.Contains(LegacyManagementBundle, StringComparer.Ordinal))
         {
             return Failure(AuthorizeWhepFailures.Forbidden());
         }

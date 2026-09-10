@@ -97,7 +97,7 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
         NameClaimType = "preferred_username",
     };
 
-    public async Task<Option<WhepAuthSubject>> ValidateAsync(string bearerToken, CancellationToken cancellationToken)
+    public async Task<Result<WhepAuthSubject, WhepAuthFailure>> ValidateAsync(string bearerToken, CancellationToken cancellationToken)
     {
         try
         {
@@ -111,24 +111,24 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
             string? subject = principal.FindFirst("sub")?.Value;
             if (subject is null)
             {
-                return Option<WhepAuthSubject>.None;
+                return Result<WhepAuthSubject, WhepAuthFailure>.Failure(WhepAuthFailure.TokenRejected);
             }
 
             string scopeClaim = principal.FindFirst("scope")?.Value ?? string.Empty;
             string[] scopes = scopeClaim.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
-            return Option<WhepAuthSubject>.Some(new WhepAuthSubject(subject, scopes));
+            return Result<WhepAuthSubject, WhepAuthFailure>.Success(new WhepAuthSubject(subject, scopes));
         }
         catch (SecurityTokenException)
         {
-            return Option<WhepAuthSubject>.None;
+            return Result<WhepAuthSubject, WhepAuthFailure>.Failure(WhepAuthFailure.TokenRejected);
         }
         catch (ArgumentException)
         {
             // Some malformed-token paths in JwtSecurityTokenHandler surface
             // as ArgumentException rather than SecurityTokenException. Treat
             // both as anonymous so MediaMTX gets a clean 401.
-            return Option<WhepAuthSubject>.None;
+            return Result<WhepAuthSubject, WhepAuthFailure>.Failure(WhepAuthFailure.TokenRejected);
         }
     }
 }
