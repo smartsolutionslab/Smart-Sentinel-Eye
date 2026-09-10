@@ -99,7 +99,7 @@ internal sealed class MqttConnectionLoop
             await Task.Delay(delay, cancellationToken);
         }
 
-        DropSignal drop = new(client, logger);
+        DropSignal drop = new(logger);
         client.DisconnectedAsync += drop.OnDisconnectedAsync;
 
         try
@@ -255,9 +255,9 @@ internal sealed class MqttConnectionLoop
     /// One attempt's wait for its own connection to go.
     ///
     /// <para>
-    /// <b>The event is the nudge; the client's state is the authority.</b> A
-    /// disconnect event does not prove this connection ended — MQTTnet 5
-    /// dispatches the handler fire-and-forget from the
+    /// <b>The event is the nudge; the args say whether there was a connection to
+    /// lose.</b> A disconnect event does not prove this connection ended —
+    /// MQTTnet 5 dispatches the handler fire-and-forget from the
     /// <c>DisconnectInternal</c> a refused CONNECT performs, so one can arrive
     /// while a later connection is up and subscribed. Taken for a drop it makes
     /// the loop reconnect a live client, which
@@ -269,16 +269,27 @@ internal sealed class MqttConnectionLoop
     /// </para>
     ///
     /// <para>
-    /// Reading <c>IsConnected</c> here is not the polling the loop avoids — it
-    /// is asked once, on an event, and it is decisive:
-    /// <c>DisconnectIsPendingOrFinished</c> moves the connection status off
-    /// <c>Connected</c> before <c>DisconnectCore</c> runs, and
-    /// <c>DisconnectCore</c> sets it to <c>Disconnected</c> before it builds the
-    /// event args. A genuine drop therefore cannot reach this handler with the
-    /// client still reporting a connection.
+    /// <b><c>ClientWasConnected</c> is captured at the disconnect and carried on
+    /// the args, so it does not depend on when this handler runs.</b> That is
+    /// the whole reason it is read instead of the client. Asking
+    /// <c>IsConnected</c> here answered a different question — <i>is there a
+    /// connection now</i> — and it happened to suppress a stale event only while
+    /// one was up. A stale event landing while this attempt was still inside its
+    /// CONNECT found no connection, and completed the wait of the attempt about
+    /// to succeed (#2130). The args have no such window: a refused CONNACK
+    /// reports <c>false</c> however late it is delivered, and a genuine drop
+    /// reports <c>true</c>. Measured off the real client, on all three paths
+    /// this loop can take, in <c>MqttClientWasConnectedContractTests</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// The subscribe-failure disconnect above is one of those three, and it
+    /// needs no special case: it goes through the public <c>DisconnectAsync</c>,
+    /// which captures <c>IsConnected</c> while the client is still up, so the
+    /// drop it asks for is honoured.
     /// </para>
     /// </summary>
-    private sealed class DropSignal(IMqttClient client, ILogger logger)
+    private sealed class DropSignal(ILogger logger)
     {
         private readonly TaskCompletionSource dropped = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -288,7 +299,7 @@ internal sealed class MqttConnectionLoop
         {
             logger.MqttSubscriberDisconnected(args.Reason.ToString());
 
-            if (!client.IsConnected)
+            if (args.ClientWasConnected)
             {
                 dropped.TrySetResult();
             }
