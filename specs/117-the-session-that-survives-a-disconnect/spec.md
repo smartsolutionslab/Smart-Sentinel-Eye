@@ -46,6 +46,26 @@ Two further defects of the existing pins:
   assertion can go red, and this repo has found assertions that could not
   (#199).
 
+### One correction to the issue's record
+
+#2128 dumps the two builders' defaults as
+
+```
+v5  ProtocolVersion=V500  CleanSession=False  SessionExpiryInterval=0
+v4  ProtocolVersion=V311  CleanSession=False  SessionExpiryInterval=0
+```
+
+The protocol half is right and is the whole cause. **`CleanSession=False` is
+not** what `MqttClientOptionsBuilder` produces — measured on 5.2.0.1603 while
+proving this guard red, a builder with no `.WithCleanSession(...)` call yields
+`V500 with cleanSession=True`. The dump almost certainly read a bare
+`MqttClientOptions`, whose `CleanSession` is a `bool` sitting at its `default`.
+
+It matters here rather than being pedantry: had the default been `false`,
+deleting `.WithCleanSession(false)` would have been harmless and this spec would
+be guarding nothing. It is `true`, so the deletion is a live regression — and
+until this change it was a **green** one.
+
 ## Scope
 
 **In:** one property — *the subscriber's session survives a disconnect* —
