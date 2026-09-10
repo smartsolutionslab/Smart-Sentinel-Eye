@@ -1,4 +1,5 @@
 using System.Globalization;
+using Polly.Timeout;
 using SmartSentinelEye.AuditObservability.Infrastructure.Persistence;
 using SmartSentinelEye.Integration.Tests.Fixtures;
 using Xunit.Abstractions;
@@ -50,8 +51,8 @@ namespace SmartSentinelEye.Integration.Tests.AuditObservability;
 /// taken under otherwise rests on which shell launched it — and an environment
 /// variable that never reached the service processes would make all three arms
 /// agree, for the one reason that would look like a finding. So each drive
-/// reports what severities its driver actually emitted, and whether EF's
-/// <c>Executed DbCommand</c> appeared.
+/// reports which of three marker lines its driver actually emitted — see
+/// <see cref="ArmMarkers"/> — one per boundary between the arms.
 /// </para>
 /// </summary>
 [Collection(AspireCollection.Name)]
@@ -67,11 +68,51 @@ public class IngestThroughputTests(AspireFixture aspire, ITestOutputHelper outpu
     /// </summary>
     private const string Driver = "system-variables";
 
-    /// <summary>The opening of EF Core's <c>CommandExecuted</c> message.</summary>
-    private const string SqlMarker = "Executed DbCommand";
+    /// <summary>
+    /// Three lines whose presence or absence names the arm, **each one a message
+    /// body rather than a severity header**.
+    ///
+    /// <para>
+    /// The header a console formatter writes — <c>info: Some.Category[0]</c> —
+    /// does not reach this fixture's tail; only the message lines beneath it do,
+    /// which is what <see cref="LogTailDeliversIntegrationTests"/> matches on.
+    /// Counting severities was therefore a counter that read zero under every
+    /// arm, and a counter that cannot vary is not evidence.
+    /// </para>
+    ///
+    /// <para>
+    /// Each marker discriminates one boundary. <c>Executed DbCommand</c> is EF's
+    /// <c>CommandExecuted</c> (20101) at <c>Information</c> — the SQL text the
+    /// category override removes. <c>Opening connection to database</c> is EF's
+    /// <c>ConnectionOpening</c> at <c>Debug</c>, so it separates a <c>Debug</c>
+    /// default from an <c>Information</c> one. <c>Archived variable</c> is this
+    /// service's own <c>Information</c> log, so it separates <c>Information</c>
+    /// from <c>Warning</c>.
+    /// </para>
+    /// </summary>
+    private static readonly (string Marker, string Evidences)[] ArmMarkers =
+    [
+        ("Executed DbCommand", "EF's SQL text — Information, unless the command category is pinned"),
+        ("Opening connection to database", "EF connection tracing — Debug"),
+        ("Archived variable", "this service's own Information log"),
+    ];
 
-    /// <summary>The console formatter's severity prefixes, in level order.</summary>
-    private static readonly string[] Severities = ["trce:", "dbug:", "info:", "warn:", "fail:", "crit:"];
+    /// <summary>
+    /// How long the first request of a boot is given to be answered at all.
+    ///
+    /// <para>
+    /// <b>Not a measurement, and outside every timed span.</b> The fixture's
+    /// clients carry the standard resilience handler, whose per-attempt timeout
+    /// is 10 s and which — correctly, under ADR-0143 — does not retry a
+    /// <c>POST</c>. The first <c>POST</c> against a service that has just booted
+    /// pays the EF model build, the JIT of the whole write path and, on the noisy
+    /// arm, the logging of all of it: at <c>Default: Debug</c> it exceeded 10 s
+    /// and killed the run before a single event was published. So the warm-up's
+    /// own create is retried here, and what it cost is printed rather than
+    /// absorbed.
+    /// </para>
+    /// </summary>
+    private static readonly TimeSpan ColdStartDeadline = TimeSpan.FromMinutes(3);
 
     [Trait("Category", "Measurement")]
     [Fact]
@@ -87,6 +128,8 @@ public class IngestThroughputTests(AspireFixture aspire, ITestOutputHelper outpu
 
         await using AuditObservabilityDbContext context =
             await aspire.CreateAuditObservabilityDbContextAsync();
+
+        output.WriteLine(await WarmAsync(variables, CancellationToken.None));
 
         List<Drive> drives = [];
 
@@ -117,6 +160,48 @@ public class IngestThroughputTests(AspireFixture aspire, ITestOutputHelper outpu
                 + "it ran against a backlog and measured that instead: "
                 + string.Join(", ", drives.Select(drive => $"{drive.Landed}/{IngestRunShape.MeasuredEvents}")));
     }
+
+    /// <summary>
+    /// Gets one create answered before anything is timed, and says what that
+    /// cost — see <see cref="ColdStartDeadline"/>.
+    ///
+    /// <para>
+    /// A create that times out may still have succeeded on the server, so a
+    /// retry can leave one variable behind that this run does not know to
+    /// archive. Accepted rather than solved: the fixture's database is ephemeral
+    /// and dies with the run, and the residue #2004 is about is the kind a
+    /// run-mode stack keeps forever.
+    /// </para>
+    /// </summary>
+    private async Task<string> WarmAsync(HttpClient variables, CancellationToken cancellationToken)
+    {
+        DateTimeOffset started = DateTimeOffset.UtcNow;
+        DateTimeOffset deadline = started + ColdStartDeadline;
+        int attempts = 0;
+
+        while (true)
+        {
+            attempts++;
+
+            try
+            {
+                string name = await IngestSpanMeasurement.DefineAsync(variables, cancellationToken);
+                await VariableRequests.ArchiveAllAsync(variables, [name], cancellationToken);
+
+                return string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"cold start (untimed)                  : first create answered after "
+                    + $"{(DateTimeOffset.UtcNow - started).TotalSeconds:F1} s over {attempts} attempt(s)");
+            }
+            catch (Exception cold) when (IsColdStart(cold) && DateTimeOffset.UtcNow < deadline)
+            {
+                output.WriteLine($"  cold start: attempt {attempts} refused with {cold.GetType().Name}");
+            }
+        }
+    }
+
+    private static bool IsColdStart(Exception thrown) =>
+        thrown is TimeoutRejectedException or TaskCanceledException or HttpRequestException;
 
     /// <summary>
     /// One warm-up, one unpaced fifty-writer drive, and the drain that follows
@@ -172,14 +257,15 @@ public class IngestThroughputTests(AspireFixture aspire, ITestOutputHelper outpu
             .Split('\n', StringSplitOptions.RemoveEmptyEntries);
 
         string counted = string.Join(
-            ", ",
-            Severities.Select(severity => $"{severity[..4]} {Count(lines, severity)}"));
+            Environment.NewLine,
+            ArmMarkers.Select(marker =>
+                $"    {Count(lines, marker.Marker),4} × '{marker.Marker}' — {marker.Evidences}"));
 
         return string.Create(
             CultureInfo.InvariantCulture,
             $"""
-               driver log, last {lines.Length,3} lines   : {counted}
-               '{SqlMarker}'          : {Count(lines, SqlMarker)}
+               driver log, last {lines.Length,3} lines   :
+             {counted}
              """);
     }
 
