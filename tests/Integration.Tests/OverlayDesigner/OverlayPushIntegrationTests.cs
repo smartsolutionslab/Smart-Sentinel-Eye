@@ -17,6 +17,33 @@ namespace SmartSentinelEye.Integration.Tests.OverlayDesigner;
 [Collection(AspireCollection.Name)]
 public class OverlayPushIntegrationTests(AspireFixture aspire, ITestOutputHelper output) : IAsyncLifetime
 {
+    /// <summary>
+    /// <b>Threshold 1 000 ms. Observed 110 ms and 57 ms</b> for
+    /// publish→push reaching two clients over the warmed path (dev box,
+    /// Release, 2026-09-10, issue #2149) — about <b>9–18×</b>
+    /// inside.
+    ///
+    /// <para>
+    /// <b>Read that margin together with the warmup below.</b> It is a
+    /// steady-state figure by construction: the first frame to a fresh client
+    /// on a fresh stack costs ~2 s, which would breach this budget twice over.
+    /// So the ~9–18× headroom describes the warm path only, and the
+    /// cold path is excluded by design rather than by luck.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Spec 004 promised the figure</b> (<c>plan.md:73</c>: the PR will
+    /// report measured publish-overlay → kiosk-render) and PR #417 records
+    /// none — its box for the integration tests passing is left unchecked.
+    /// These are the first two observations in the tree.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>A local SLO, not one of §IV's six legs.</b> Spec 004 is the render
+    /// substrate; <i>"the budget itself starts ticking with spec 005's
+    /// variable binding"</i> (plan.md:73).
+    /// </para>
+    /// </summary>
     private const int PushBudgetMilliseconds = 1000;
 
     public async Task InitializeAsync()

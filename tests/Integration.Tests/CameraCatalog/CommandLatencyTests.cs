@@ -15,6 +15,42 @@ public class CommandLatencyTests(AspireFixture aspire) : IAsyncLifetime
 {
     private const int SampleCount = 100;
     private const int WarmupCount = 10;
+    /// <summary>
+    /// <b>Threshold 200 ms p95 — and the tightest margin of the seven budgets
+    /// spec 123 measured.</b> Three observations on one dev box within twenty
+    /// minutes (2026-09-10, issue #2149):
+    ///
+    /// <list type="bullet">
+    /// <item>median 73.4 ms, <b>p95 219.4 ms — red</b>, on the first run after
+    /// the machine had been busy;</item>
+    /// <item>median 16.4 ms, p95 115.0 ms — green, 1.7× inside;</item>
+    /// <item>median 19.7 ms, p95 49.1 ms — green.</item>
+    /// </list>
+    ///
+    /// <para>
+    /// <b>Spec 001 promised this figure and it survives only in PR #90</b>
+    /// (2026-05-26): <i>median 19.7 ms, p95 98.8 ms</i> — a 2× margin then,
+    /// recorded in the PR's ADR-0031 latency section and nowhere in the tree.
+    /// Against that single figure, this box spreads from <b>half it to more than
+    /// twice it</b> across three runs an hour apart — which is why one
+    /// observation is not a margin, and why FR-004 asks for two.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>The budget is not changed here, in either direction</b> (#2141,
+    /// ADR-0144). What is written down is that it is close: this test breaches
+    /// on a cold, contended dev box while passing on CI's Linux runner, so the
+    /// margin is real but thin, and a cold-run red here is evidence about the
+    /// box before it is evidence about the code.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Not one of constitution §IV's six legs.</b> §IV budgets an
+    /// asynchronous event-to-overlay path; this is a synchronous HTTP command.
+    /// The distinction is spec 116's (#2119), drawn for the sibling layout
+    /// budget for the same reason.
+    /// </para>
+    /// </summary>
     private const int BudgetMilliseconds = 200;
 
     public Task InitializeAsync() => aspire.ResetCameraCatalogAsync();

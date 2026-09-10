@@ -25,12 +25,49 @@ public class AelInterpreterBenchmarkTests(ITestOutputHelper output)
     private const int Batches = 10;
     private const int BatchSize = 10_000;
 
-    // ≈ 100 ms expected per batch (10 µs × 10 000); 5× headroom for the
-    // shared CI runner. The order-of-magnitude expectation is what NFR-002
-    // asks for, not a tight production envelope.
+    /// <summary>
+    /// Gate on the median batch. <b>Threshold 500 ms; observed 20.7 ms,
+    /// 26.7, 25.4 and 23.4 ms</b> across four consecutive Release runs on a
+    /// dev box (2026-09-10, issue #2149), so the budget sits roughly <b>19×</b>
+    /// above the slowest median anyone has recorded — 2.07 to 2.67 µs/eval.
+    ///
+    /// <para>
+    /// <b>The ≈ 100 ms this comment used to cite was never a run.</b> It is
+    /// ADR-0099's requirement — <c>≤ 10 µs p99/eval</c>
+    /// (<c>docs/adr/0099-hand-rolled-ael.md:26</c>) — arithmetic'd out to a
+    /// batch, and the "5× headroom" it claimed was 500 ÷ that requirement.
+    /// Measured, the interpreter is about <b>4× inside</b> the requirement,
+    /// which is why the real margin is 19× rather than 5×.
+    /// </para>
+    ///
+    /// <para>
+    /// The margin is left where it is, deliberately and by someone else's
+    /// decision (#2149, #2141): a threshold is not tightened in the pass that
+    /// first measures it. What made the number generous is on the record —
+    /// #967's single-sample version equalled the expected runtime, so one GC
+    /// pause in the one timed window turned it red, and the fix bought
+    /// headroom rather than precision.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Not one of constitution §IV's six legs.</b> The interpreter runs
+    /// inside the projection half of <i>Event → overlay state (RabbitMQ +
+    /// projection) ≤ 200 ms</i>, so a regression here would consume that leg's
+    /// budget — but this constant is a component throughput expectation
+    /// (NFR-002), not a leg budget, and 100 000 evals do not occur on one
+    /// event's path.
+    /// </para>
+    /// </summary>
     private const double MedianBudgetMilliseconds = 500;
 
-    // Gross-regression guard for the slowest batch.
+    /// <summary>
+    /// Gross-regression guard for the slowest batch. <b>Threshold 1 000 ms;
+    /// slowest batch observed at 27.4, 39.8, 38.3 and 41.2 ms</b> across four
+    /// runs — a <b>24×</b> margin, wider than the median gate's because
+    /// this one exists to catch an order-of-magnitude regression (a
+    /// reintroduced allocation per eval, a lost cache) rather than to describe
+    /// the tail.
+    /// </summary>
     private const double CeilingMilliseconds = 1_000;
 
     [Fact]

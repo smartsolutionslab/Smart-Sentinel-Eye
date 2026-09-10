@@ -29,6 +29,15 @@ public class PostgresConnectionBudgetIntegrationTests(AspireFixture aspire, ITes
     /// Postgres' default of 100 and held 97 of them idle, so the first burst of
     /// real load exhausted it — and the write that failed belonged to a context
     /// that had consumed almost none of them.
+    ///
+    /// <para>
+    /// <b>Threshold ≥ 500; observed exactly 500</b>, twice (dev box,
+    /// 2026-09-10, issue #2149). <b>The margin is zero and that is correct</b>:
+    /// this is not a headroom assertion but an equality check across a number
+    /// written in two places, because <c>AppHost</c> cannot reference
+    /// <c>ServiceDefaults</c>. A figure above 500 would mean the two had
+    /// drifted apart, not that things were going well.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task The_running_server_allows_what_the_budget_assumes()
@@ -64,6 +73,23 @@ public class PostgresConnectionBudgetIntegrationTests(AspireFixture aspire, ITes
     /// whatever else the suite is doing when this runs. What it must never be is
     /// close to the limit while idle-ish — that was the state that made the
     /// original failure look like an unrelated context's bug.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Ceiling 378 ((20 × 2) + 2) × 9; observed 91 and 91
+    /// connections</b> with the whole fixture up (dev box, 2026-09-10, issue
+    /// #2149) — about <b>4.2×</b> of headroom, and a quarter of the
+    /// <c>max_connections</c> 500 the server allows. Set that against the 97
+    /// of 100 this budget was created to stop
+    /// (<see cref="PostgresConnectionBudget"/>): the figure that matters is not
+    /// the ratio but that it is a *fraction* of the ceiling while every service
+    /// is connected.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>A resource budget, not a latency one</b> — none of constitution §IV's
+    /// six legs applies. It is the only budget in spec 123's scope that
+    /// measures a count.
     /// </para>
     /// </summary>
     [Fact]

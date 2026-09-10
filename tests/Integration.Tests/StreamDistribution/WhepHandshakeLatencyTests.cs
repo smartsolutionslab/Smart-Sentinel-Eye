@@ -18,6 +18,31 @@ namespace SmartSentinelEye.Integration.Tests.StreamDistribution;
 public class WhepHandshakeLatencyTests(AspireFixture aspire, ITestOutputHelper output) : IAsyncLifetime
 {
     private const int Iterations = 20;
+    /// <summary>
+    /// <b>Threshold 3 000 ms p95. Observed p95 13 ms and 20 ms</b> over
+    /// the two runs of 20 opens that first measured it (dev box, Release,
+    /// 2026-09-10, issue #2149) — p50 6 ms / 6 ms, max 22 ms /
+    /// 26 ms. The budget sits roughly <b>115–230×</b> above
+    /// anything this hook has been seen to cost.
+    ///
+    /// <para>
+    /// <b>The margin is recorded, not defended.</b> #2149 opens with this
+    /// test: a 3 s bound over a ~13 ms operation is indistinguishable from a
+    /// guard until somebody divides, and for months nobody could, because the
+    /// observation existed nowhere — not here, not in <c>specs/002</c>, not in
+    /// the landing commit, and not in PR #196, which restates the bound and
+    /// reports no figure. Whether 3 s is the right number is a decision for a
+    /// human, not for the pass that first measured it (#2141).
+    /// </para>
+    ///
+    /// <para>
+    /// What it was sized for: the operator-visible <i>click-to-first-frame</i>
+    /// experience, of which this auth hook is one term — spec 002 defers real
+    /// WebRTC negotiation to a browser harness. <b>Not one of constitution
+    /// §IV's six legs</b>, which budget a running stream's event-to-overlay
+    /// path; this is stream open.
+    /// </para>
+    /// </summary>
     private const int P95BudgetMilliseconds = 3000;
 
     public async Task InitializeAsync()
