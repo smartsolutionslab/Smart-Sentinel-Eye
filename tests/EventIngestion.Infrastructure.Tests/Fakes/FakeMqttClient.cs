@@ -30,6 +30,7 @@ internal sealed class FakeMqttClient : IMqttClient
 
     private int refusals;
     private TimeSpan? holdFor;
+    private bool staleDuringNextConnect;
 
     public event Func<MqttApplicationMessageReceivedEventArgs, Task>? ApplicationMessageReceivedAsync;
 
@@ -124,6 +125,24 @@ internal sealed class FakeMqttClient : IMqttClient
         }
     }
 
+    /// <summary>
+    /// Delivers that same stale disconnect from <b>inside</b> the next CONNECT,
+    /// before it is answered — the mirror of
+    /// <see cref="RaiseStaleDisconnectAsync"/>, which delivers it to a client
+    /// that is already up.
+    ///
+    /// <para>
+    /// This is the arrival the loop cannot see coming. The attempt has attached
+    /// its handler and is waiting on a network round trip, so the client reports
+    /// no connection; a guard reading <c>IsConnected</c> therefore takes the
+    /// stale event for a drop of a connection that has not happened yet, and
+    /// completes the wait of the attempt that is about to succeed. Delivering it
+    /// from inside the call makes that interleaving a fact of the test rather
+    /// than a thread-pool starvation it would have to provoke.
+    /// </para>
+    /// </summary>
+    public void RaiseStaleDisconnectDuringNextConnect() => staleDuringNextConnect = true;
+
     /// <summary>Drops an established connection, as a broker restart does.</summary>
     public async Task DropAsync()
     {
@@ -174,6 +193,12 @@ internal sealed class FakeMqttClient : IMqttClient
         MqttClientOptions options, CancellationToken cancellationToken = default)
     {
         await Task.Yield();
+
+        if (staleDuringNextConnect)
+        {
+            staleDuringNextConnect = false;
+            await RaiseStaleDisconnectAsync();
+        }
 
         if (IsConnected)
         {
