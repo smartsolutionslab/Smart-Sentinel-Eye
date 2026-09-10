@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.SignalR.Client;
 using SmartSentinelEye.Integration.Tests.Fixtures;
 using SmartSentinelEye.LayoutComposition.Infrastructure.Broadcasting;
+using Xunit.Abstractions;
 
 namespace SmartSentinelEye.Integration.Tests.LayoutComposition;
 
@@ -13,7 +14,7 @@ namespace SmartSentinelEye.Integration.Tests.LayoutComposition;
 /// <c>LayoutRevisionArchived</c> push within 1 s.
 /// </summary>
 [Collection(AspireCollection.Name)]
-public class SignalRRevocationIntegrationTests(AspireFixture aspire) : IAsyncLifetime
+public class SignalRRevocationIntegrationTests(AspireFixture aspire, ITestOutputHelper output) : IAsyncLifetime
 {
     private const int RevocationBudgetMilliseconds = 1000;
 
@@ -74,6 +75,13 @@ public class SignalRRevocationIntegrationTests(AspireFixture aspire) : IAsyncLif
         LayoutRevisionArchivedHubMessage[] both =
             await Task.WhenAll(alphaSeen.Task.WaitAsync(budget.Token), betaSeen.Task.WaitAsync(budget.Token));
         sw.Stop();
+
+        // Recorded on the success path too: the customMessage below exists only
+        // when the assertion fails, so the figure this budget was chosen from
+        // was never observable from a green run (#2149).
+        output.WriteLine(
+            $"archive->push to 2 clients: {sw.Elapsed.TotalMilliseconds:F0} ms "
+            + $"(budget {RevocationBudgetMilliseconds} ms)");
 
         sw.Elapsed.TotalMilliseconds.ShouldBeLessThan(
             RevocationBudgetMilliseconds,

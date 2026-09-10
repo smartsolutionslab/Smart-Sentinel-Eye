@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime;
 using SmartSentinelEye.Automation.Application.Ael;
+using Xunit.Abstractions;
 
 namespace SmartSentinelEye.Automation.Application.Tests.Ael;
 
@@ -19,7 +20,7 @@ namespace SmartSentinelEye.Automation.Application.Tests.Ael;
 /// Total work is unchanged (100 000 evals). See issue #967.
 /// </para>
 /// </summary>
-public class AelInterpreterBenchmarkTests
+public class AelInterpreterBenchmarkTests(ITestOutputHelper output)
 {
     private const int Batches = 10;
     private const int BatchSize = 10_000;
@@ -71,6 +72,14 @@ public class AelInterpreterBenchmarkTests
         Array.Sort(batchMilliseconds);
         double median = batchMilliseconds[Batches / 2];
         double slowest = batchMilliseconds[^1];
+
+        // Reported whether or not it passes (#2149): both customMessages below
+        // are built only on failure, so a green run discarded the throughput it
+        // had just measured, and the margin was unknowable from the tree.
+        output.WriteLine(
+            $"{Batches} batches x {BatchSize} evals: median = {median:F1} ms "
+            + $"({median * 1000 / BatchSize:F2} us/eval), slowest = {slowest:F1} ms "
+            + $"(budgets: median {MedianBudgetMilliseconds} ms, ceiling {CeilingMilliseconds} ms)");
 
         // Gate on the median batch; guard the slowest only against gross
         // regression — see the class remarks for why the single-sample gate
