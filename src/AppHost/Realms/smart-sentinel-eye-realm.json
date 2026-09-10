@@ -339,6 +339,23 @@
         "sse-identity",
         "sse-audience"
       ]
+    },
+    {
+      "clientId": "system-variables-seeder",
+      "name": "Smart Sentinel Eye - Reverse-index seeder (service account)",
+      "description": "Spec 005 T061, delivered in spec 126. Read-only account SystemVariables uses at startup to list published overlays and seed the reverse index. No sse-groups: OverlayDesigner runs no fab guard and an overlay is fab-neutral (ADR-0115).",
+      "enabled": true,
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "secret": "dev-only-system-variables-seeder-secret",
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "sse-identity",
+        "sse-audience",
+        "sse.overlays.read"
+      ]
     }
   ],
   "users": [
