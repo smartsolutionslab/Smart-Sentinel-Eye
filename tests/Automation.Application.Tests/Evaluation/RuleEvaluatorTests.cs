@@ -244,6 +244,14 @@ public class RuleEvaluatorTests
         // Before spec 013 this returned the dresden rule's effect, and the
         // caller then attributed the resulting change to munich.
         effects.ShouldBeEmpty();
+
+        // And the emptiness is the evaluator's doing, not the cache's. The fab
+        // is part of the lookup key, so *any* wrong key comes back empty too —
+        // an evaluator that hard-coded the fab it asks for would satisfy the
+        // line above while matching some third fab's rules on every real event
+        // (#2151). What the caller asked for is the half of this seam the
+        // caller controls.
+        cache.Lookups.ShouldBe([("munich", "plc", "PlcCycleStart")]);
     }
 
     [Fact]
@@ -287,5 +295,11 @@ public class RuleEvaluatorTests
             "plc", "PlcCycleStart", Context(PlcCycleStartContext));
 
         effects.ShouldBeEmpty();
+
+        // berlin has no bucket, so this assertion is empty for whatever key the
+        // evaluator asked for — including munich's, which holds a rule that
+        // would have fired. The key asked for is what separates "berlin has no
+        // rules" from "the evaluator does not look up the fab it was given".
+        cache.Lookups.ShouldBe([("berlin", "plc", "PlcCycleStart")]);
     }
 }
