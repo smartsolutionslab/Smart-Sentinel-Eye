@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
@@ -187,7 +188,7 @@ public sealed class WhepValidatorIssuerTests : IDisposable
             new OpenIdConnectConfigurationRetriever(),
             new StubbedMetadata(DiscoveryDocument, JsonWebKeySet()));
 
-        return new WhepAuthValidator(metadata);
+        return new WhepAuthValidator(metadata, NullLogger<WhepAuthValidator>.Instance);
     }
 
     /// <summary>

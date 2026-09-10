@@ -71,7 +71,7 @@ public sealed class AuthorizeWhepCommandHandler(
 
         if (authentication.IsFailure)
         {
-            return Failure(AuthorizeWhepFailures.Unauthorized());
+            return Failure(RefusalFor(authentication.Error));
         }
 
         WhepAuthSubject subject = authentication.Value;
@@ -91,6 +91,17 @@ public sealed class AuthorizeWhepCommandHandler(
 
         return Success(path);
     }
+
+    /// <summary>
+    /// Both are 401 and neither admits anything; they differ in what they tell
+    /// the operator reading the response. Saying "missing, malformed, or expired"
+    /// about a token nothing ever read sends them hunting a credential while the
+    /// realm is the thing that is down (spec 119 FR-002).
+    /// </summary>
+    private static AuthorizeWhepError RefusalFor(WhepAuthFailure failure) =>
+        failure == WhepAuthFailure.IdentityProviderUnavailable
+            ? AuthorizeWhepFailures.IdentityProviderUnavailable()
+            : AuthorizeWhepFailures.Unauthorized();
 
     /// <summary>
     /// The refusal is identical either way — <c>WHEP_ACTION_UNKNOWN</c>, 403,
