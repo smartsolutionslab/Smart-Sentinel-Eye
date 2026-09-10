@@ -162,8 +162,10 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
 
             return Result<WhepAuthSubject, WhepAuthFailure>.Success(new WhepAuthSubject(subject, scopes));
         }
-        catch (SecurityTokenException)
+        catch (SecurityTokenException exception)
         {
+            RequestRefreshIfAStaleDocumentCouldExplain(exception);
+
             return Result<WhepAuthSubject, WhepAuthFailure>.Failure(WhepAuthFailure.TokenRejected);
         }
         catch (ArgumentException)
@@ -171,7 +173,51 @@ public sealed class WhepAuthValidator : IWhepAuthValidator
             // Some malformed-token paths in JwtSecurityTokenHandler surface
             // as ArgumentException rather than SecurityTokenException. Treat
             // both as anonymous so MediaMTX gets a clean 401.
+            //
+            // No refresh, and this arm is wider than it looks: in
+            // Microsoft.IdentityModel 8.19.2 SecurityTokenMalformedException
+            // (IDX12741) derives from ArgumentException, so a token that is not a
+            // JWT lands here and never reaches the discriminator below. Measured,
+            // not read from the hierarchy — under an unconditional refresh in the
+            // SecurityTokenException arm the malformed case still re-read nothing
+            // (#2161). Nothing here is curable by a fresher document anyway.
+
             return Result<WhepAuthSubject, WhepAuthFailure>.Failure(WhepAuthFailure.TokenRejected);
+        }
+    }
+
+    /// <summary>
+    /// Mirrors what <c>JwtBearerHandler</c> does for the nine REST APIs, which is
+    /// why they recover from a key rotation on their next request while this hook
+    /// waited out the twelve-hour <c>AutomaticRefreshInterval</c> (#2161).
+    ///
+    /// <para>
+    /// The discrimination is the point, not an optimisation.
+    /// <c>/streams/authorize</c> is <c>AllowAnonymous</c> and nothing rate-limits
+    /// it, so refreshing on every rejection turns a kiosk reconnect loop
+    /// replaying an expired token into a JWKS storm that the five-minute
+    /// <c>RefreshInterval</c> floor throttles rather than stops. Only two
+    /// failures are curable by a fresher document: a <c>kid</c> the cached JWKS
+    /// does not carry, and an <c>iss</c> the cached document does not name — the
+    /// second being the field spec 089 moved into discovery.
+    /// </para>
+    ///
+    /// <para>
+    /// Deliberately excluded, and measured rather than assumed:
+    /// <c>SecurityTokenInvalidSignatureException</c> (IDX10511), which is what a
+    /// rotation that <em>reuses</em> a <c>kid</c> produces. There the key
+    /// resolved and the signature did not match, so the document this hook holds
+    /// is the one the realm published and a re-read returns it unchanged.
+    /// </para>
+    /// </summary>
+    private void RequestRefreshIfAStaleDocumentCouldExplain(SecurityTokenException exception)
+    {
+        if (exception is SecurityTokenSignatureKeyNotFoundException or SecurityTokenInvalidIssuerException)
+        {
+            // Marks the cache due; the next call re-reads. No in-request retry,
+            // so the caller that met the stale document still gets its 401 —
+            // exactly as it would from the bearer pipeline.
+            oidc.RequestRefresh();
         }
     }
 }
