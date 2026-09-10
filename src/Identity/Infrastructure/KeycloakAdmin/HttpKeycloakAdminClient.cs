@@ -33,9 +33,16 @@ public sealed class HttpKeycloakAdminClient(
     IOptions<KeycloakAdminOptions> options,
     ILogger<HttpKeycloakAdminClient> logger) : IKeycloakAdminClient
 {
+    // WhenWritingNull, not WhenWritingDefault. The wider condition dropped every
+    // property equal to its type's default — so every `false` — and an omitted
+    // flag is not an off flag: Keycloak applies its own default, which for
+    // `standardFlowEnabled` is `true`, and which left the disable PUT below
+    // sending `{}` and the client enabled (issues #2165, #2207). Nothing this
+    // client serialises has a nullable member, so narrowing rather than removing
+    // costs nothing today and keeps absent meaning absent if one is added.
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
     public async Task<KeycloakClientCredentials> CreateClientAsync(
