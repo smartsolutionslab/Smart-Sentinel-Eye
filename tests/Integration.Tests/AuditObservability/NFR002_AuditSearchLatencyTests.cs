@@ -22,6 +22,27 @@ public class NFR002_AuditSearchLatencyTests(AspireFixture aspire, ITestOutputHel
     private const int SeedRows = 100_000;
     private const int WarmupIterations = 100;
     private const int MeasureIterations = 1_000;
+    /// <summary>
+    /// <b>Threshold 200 ms p99. Observed p99 55.8 ms and 33.3 ms</b>
+    /// over 1 000 requests against 100 000 seeded rows, twice (dev box,
+    /// Release, 2026-09-10, issue #2149) — p50 12.8 ms / 12.5 ms,
+    /// max 97.0 ms / 63.7 ms, so the budget sits about
+    /// <b>3.6–6.0×</b> above the worst p99 recorded.
+    ///
+    /// <para>
+    /// One of the healthier margins among the nine budgets #2149 found
+    /// unmeasured, and worth reading with its shape in mind: the max sits at about
+    /// half the budget, so the tail is the part of this measurement doing real
+    /// work — which is what a p99 gate over a hypertable is for. The figure is dev-box hot
+    /// tier, not CI.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>A local SLO</b> (spec 009 NFR-002) for the read path — <b>not one of
+    /// constitution §IV's six legs</b>, which budget the event-to-overlay path
+    /// rather than a cross-cutting audit query.
+    /// </para>
+    /// </summary>
     private const double P99BudgetMs = 200;
 
     [Fact]

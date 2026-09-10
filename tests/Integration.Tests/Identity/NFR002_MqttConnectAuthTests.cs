@@ -76,6 +76,18 @@ public class NFR002_MqttConnectAuthTests(AspireFixture aspire, ITestOutputHelper
     /// coverage, and a failure to connect at all still fails the test. Only the
     /// two thresholds are withheld, because neither is portable: the observed
     /// local p99 exceeds even the gross-regression ceiling.
+    ///
+    /// <para>
+    /// <b>By how much, since a relation without a number is what #2149 is
+    /// about.</b> Three consecutive runs on this dev box (Release, 2026-09-10)
+    /// measured <b>p50 33.2 / 27.4 / 32.3 ms</b> against the 15 ms
+    /// median budget and <b>p99 102.0 / 102.8 / 83.9 ms</b> against
+    /// the 50 ms ceiling — max 110.9 / 129.7 / 106.9 ms. Both are
+    /// exceeded by roughly <b>2×</b>, consistently, which is what makes this a
+    /// property of Docker Desktop's VM hop rather than a flake, and is the
+    /// evidence behind <see cref="BudgetsApplyHere"/> rather than a claim about
+    /// it.
+    /// </para>
     /// </remarks>
     private static bool BudgetsApplyHere =>
         Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true";

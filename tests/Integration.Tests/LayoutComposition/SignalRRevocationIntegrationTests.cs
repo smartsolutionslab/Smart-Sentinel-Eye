@@ -16,6 +16,28 @@ namespace SmartSentinelEye.Integration.Tests.LayoutComposition;
 [Collection(AspireCollection.Name)]
 public class SignalRRevocationIntegrationTests(AspireFixture aspire, ITestOutputHelper output) : IAsyncLifetime
 {
+    /// <summary>
+    /// <b>Threshold 1 000 ms. Observed 283 ms and 95 ms</b> for
+    /// archive→push reaching two connected clients (dev box, Release,
+    /// 2026-09-10, issue #2149) — a margin of about <b>3.5–10.5×</b>.
+    ///
+    /// <para>
+    /// <b>Spec 003 promised this measurement and no record of it exists.</b>
+    /// <c>specs/003-layout-composition/plan.md:75</c> says the PR will report
+    /// the measured archive-to-force-disconnect; PR #303 restates
+    /// <i>"within 1 s"</i> and gives no figure. The two above are the first
+    /// written down.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>A local SLO, not one of constitution §IV's six legs</b> — and on
+    /// that, spec 003 is its own authority: <i>"an operator-action latency
+    /// (≤ 1 s) — not the 800 ms event-to-overlay budget"</i> (plan.md:75). It
+    /// shares the RabbitMQ + SignalR transport with §IV's <i>Event → overlay
+    /// state ≤ 200 ms</i> leg while budgeting five times looser, which is the
+    /// clearest sign the two are not the same thing.
+    /// </para>
+    /// </summary>
     private const int RevocationBudgetMilliseconds = 1000;
 
     public async Task InitializeAsync()
