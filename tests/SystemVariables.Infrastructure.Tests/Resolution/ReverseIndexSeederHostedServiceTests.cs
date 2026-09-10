@@ -207,6 +207,117 @@ public class ReverseIndexSeederHostedServiceTests
             + "named client's handler pipeline");
     }
 
+    // ---- a refused token mint (#2158, found at phase 5) ----
+
+    /// <summary>
+    /// The refusal a broken deployment actually produces. The bearer is minted
+    /// by <c>ClientCredentialsTokenProvider</c> inside the named client's
+    /// handler pipeline, so a missing, disabled or wrong-secret
+    /// <c>system-variables-seeder</c> is refused by <b>Keycloak</b>, not by
+    /// overlay-designer: the mint's <c>EnsureSuccessStatusCode()</c> throws an
+    /// <see cref="HttpRequestException"/> carrying the 401, which surfaces out
+    /// of the seeder's <c>GetAsync</c> as an exception rather than as a
+    /// response.
+    ///
+    /// <para>
+    /// So the status branch of FR-004 never runs, and the most likely
+    /// misconfiguration of all takes the catch-all instead — <c>SeedFailed</c>
+    /// at <c>Warning</c>, promising a repair that cannot happen. Same defect,
+    /// different door. Observed on the dev stack at phase 5, against a Keycloak
+    /// that did not yet hold the client.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_refused_token_mint_is_logged_as_an_error()
+    {
+        FailedSeed seed = await RunThrowingAsync(RefusedMint());
+
+        seed.Logger.Entries.Count.ShouldBe(1, FailureTranscript(seed));
+        seed.Logger.Entries[0].Level.ShouldBe(
+            LogLevel.Error,
+            "a 401 thrown out of the token mint is the same refused credential as a 401 "
+            + "response, and no more able to repair itself. " + FailureTranscript(seed));
+    }
+
+    /// <summary>
+    /// The words, for the same reason as
+    /// <see cref="A_refused_seed_does_not_promise_a_self_heal"/>: nothing
+    /// republishes an overlay that was already published, so the index stays
+    /// empty for the life of the host. Today this path says "Self-heal will
+    /// kick in as overlay V1 events arrive", which is a promise the process
+    /// cannot keep.
+    ///
+    /// <para>
+    /// Only the affirmative promises are banned, so a replacement is free to
+    /// say the opposite.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_refused_token_mint_does_not_promise_a_self_heal()
+    {
+        FailedSeed seed = await RunThrowingAsync(RefusedMint());
+
+        string message = seed.Logger.Entries.Single().Message;
+
+        message.Contains("will populate", StringComparison.OrdinalIgnoreCase).ShouldBeFalse(
+            $"a refused mint does not self-heal, but the message promises it does: '{message}'");
+        message.Contains("will kick in", StringComparison.OrdinalIgnoreCase).ShouldBeFalse(
+            $"a refused mint does not self-heal, but the message promises it does: '{message}'");
+    }
+
+    /// <summary>
+    /// The discriminator for the throwing path, and the reason the fix cannot
+    /// be "lift the catch-all to <c>Error</c>". A transport failure carrying no
+    /// status — overlay-designer unreachable, DNS not up yet, connection
+    /// refused during a rolling start — is the outage case FR-005 keeps at
+    /// <c>Warning</c>, and it genuinely does self-heal from
+    /// <c>OverlayRevisionPublishedV1</c> events.
+    ///
+    /// <para>
+    /// Green before this change and green after it. An implementation that
+    /// discriminates on the exception's <c>StatusCode</c> passes this and the
+    /// two facts above; one that raises every caught exception fails here and
+    /// nowhere else.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_transport_failure_that_is_not_a_refusal_stays_a_warning()
+    {
+        HttpRequestException unreachable = new("overlay-designer unreachable");
+
+        FailedSeed seed = await RunThrowingAsync(unreachable);
+
+        seed.Logger.Entries.Count.ShouldBe(1, FailureTranscript(seed));
+        seed.Logger.Entries[0].Level.ShouldBe(
+            LogLevel.Warning,
+            "an unreachable overlay-designer is an outage, which the republish events do repair. "
+            + FailureTranscript(seed));
+        seed.Logger.Entries[0].Exception.ShouldBeSameAs(
+            unreachable, "the outage branch still carries the cause. " + FailureTranscript(seed));
+        seed.Logger.Entries[0].Message.Contains("refused", StringComparison.OrdinalIgnoreCase)
+            .ShouldBeFalse(
+                "an outage is not a refused credential and must not be reported as one. "
+                + FailureTranscript(seed));
+    }
+
+    /// <summary>
+    /// FR-006 for the throwing path.
+    /// <see cref="A_refused_seed_leaves_the_host_started"/> covers a 401
+    /// <i>response</i>; a 401 that arrives as an exception is a different
+    /// branch, and the trade ADR-0116 settled is the same one — a degraded
+    /// index beats no SystemVariables at all. Green today, and it is what keeps
+    /// "make the refusal loud" from becoming "make the refusal fatal".
+    /// </summary>
+    [Fact]
+    public async Task A_refused_token_mint_leaves_the_host_started()
+    {
+        // No throw: StartAsync completing is the host starting.
+        FailedSeed seed = await RunThrowingAsync(RefusedMint());
+
+        seed.Index.AllOverlays().ShouldBeEmpty(
+            "a refused mint leaves the index as it was; it does not fail");
+    }
+
     // ---- scaffolding ----
 
     private static async Task<Seed> RunAsync(HttpStatusCode status, string body = "{}")
@@ -271,5 +382,58 @@ public class ReverseIndexSeederHostedServiceTests
             RequestedNames.Add(name);
             return client;
         }
+    }
+
+    /// <summary>
+    /// The shape <c>EnsureSuccessStatusCode()</c> throws inside
+    /// <c>ClientCredentialsTokenProvider.MintAsync</c> when Keycloak refuses
+    /// the client, after ADR-0143's <c>RetryEveryMethod</c> attempts are spent.
+    /// </summary>
+    private static HttpRequestException RefusedMint() =>
+        new(
+            "Response status code does not indicate success: 401 (Unauthorized).",
+            inner: null,
+            statusCode: HttpStatusCode.Unauthorized);
+
+    /// <summary>
+    /// The throwing sibling of <see cref="RunAsync"/>, kept separate so the
+    /// answering runner and its stub stay exactly as the existing facts left
+    /// them. There is no <c>Authorization</c> header to observe here: the
+    /// failure happens in the handler pipeline before a request is answered.
+    /// </summary>
+    private static async Task<FailedSeed> RunThrowingAsync(Exception failure)
+    {
+        ThrowingOverlayDesigner transport = new(failure);
+        SingleClientFactory factory = new(
+            new HttpClient(transport) { BaseAddress = new Uri("http://overlay-designer") });
+        InMemoryReverseIndex index = new();
+        CapturingLogger<ReverseIndexSeederHostedService> logger = new();
+
+        ReverseIndexSeederHostedService seeder = new(factory, index, logger);
+        await seeder.StartAsync(CancellationToken.None);
+
+        return new FailedSeed(logger, index);
+    }
+
+    /// <summary>Everything that was logged, so a failure names the level and the words.</summary>
+    private static string FailureTranscript(FailedSeed seed) =>
+        "logged: " + string.Join(
+            " | ", seed.Logger.Entries.Select(entry => $"[{entry.Level}] {entry.Message}"));
+
+    private sealed record FailedSeed(
+        CapturingLogger<ReverseIndexSeederHostedService> Logger,
+        InMemoryReverseIndex Index);
+
+    /// <summary>
+    /// A transport that never answers. Stands in for the whole named client's
+    /// pipeline: in production the exception is raised by the token handler in
+    /// front of the request, and the seeder cannot tell the difference — both
+    /// arrive out of <c>client.GetAsync(...)</c>.
+    /// </summary>
+    private sealed class ThrowingOverlayDesigner(Exception failure) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromException<HttpResponseMessage>(failure);
     }
 }
